@@ -1,0 +1,12 @@
+[package]
+name = "tron-zero-client"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+shared = { path = "../shared", package = "tron-zero-shared" }
+bevy.workspace = true
+lightyear = { workspace = true, features = ["udp"] }
+bevy_egui.workspace = true
+bevy_kira_audio.workspace = true
+tracing.workspace = true
