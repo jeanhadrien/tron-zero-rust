@@ -8335,7 +8335,7 @@ name = "tron-zero-shared"
 version = "0.1.0"
 dependencies = [
  "bevy_ecs",
- "glam 0.33.2",
+ "glam 0.32.1",
  "lightyear",
  "serde",
 ]
