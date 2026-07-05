@@ -30,12 +30,10 @@ pub fn follow_player(
     player: Query<&Position, (With<Player>, With<InputMarker<PlayerInput>>)>,
     mut camera: Query<&mut Transform, With<Camera2d>>,
 ) {
-    let Ok(pos) = player.single() else {
-        return;
-    };
-    let Ok(mut transform) = camera.single_mut() else {
-        return;
-    };
-    transform.translation.x = pos.0.x;
-    transform.translation.y = pos.0.y;
+    for pos in &player {
+        for mut transform in &mut camera {
+            transform.translation.x = pos.0.x;
+            transform.translation.y = pos.0.y;
+        }
+    }
 }

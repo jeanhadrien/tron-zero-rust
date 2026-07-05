@@ -3,6 +3,7 @@
 //! Runs the authoritative simulation, replicates state to clients,
 //! and processes client inputs via lightyear.
 
+mod bot;
 mod systems;
 
 use bevy::prelude::*;
@@ -34,9 +35,11 @@ fn main() {
     app.add_systems(
         FixedUpdate,
         (
+            bot::bot_brain_input.before(shared::apply_turn),
             shared::apply_turn,
             shared::move_players,
             shared::collide_with_arena,
+            bot::bot_spawner,
         )
             .chain(),
     );
@@ -46,7 +49,10 @@ fn main() {
     );
 
     // Spawn the arena once on startup (replicated to all clients).
-    app.add_systems(Startup, systems::spawn_server_arena_and_start);
+    app.add_systems(
+        Startup,
+        (systems::spawn_server_arena_and_start, bot::setup_bots).chain(),
+    );
 
     app.run();
 }

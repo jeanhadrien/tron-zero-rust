@@ -17,6 +17,4 @@ pub use components::trail::*;
 pub use constants::*;
 pub use lightyear::prelude::input::native::ActionState;
 pub use math::*;
-pub use systems::SimSet;
-pub use systems::arena::*;
 pub use systems::player::*;
