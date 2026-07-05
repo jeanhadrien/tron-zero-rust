@@ -300,18 +300,18 @@ pub fn apply_turn(
             &Position,
             &mut TrailPointNextOrder,
             &mut TrailPointCount,
-            &ActionState<PlayerInput>,
+            &mut ActionState<PlayerInput>,
             &IsAlive,
         ),
         With<Player>,
     >,
 ) {
-    for (entity, mut dir, pos, mut next_order, mut count, input, alive) in &mut players {
+    for (entity, mut dir, pos, mut next_order, mut count, mut input, alive) in &mut players {
         if !alive.0 {
             continue;
         }
-        let input = input.0;
-        if input == PlayerInput::None {
+        let turn = input.0;
+        if turn == PlayerInput::None {
             continue;
         }
         commands.spawn((
@@ -324,12 +324,13 @@ pub fn apply_turn(
         next_order.0 += 1;
         count.0 += 1;
 
-        dir.0 = match input {
+        dir.0 = match turn {
             PlayerInput::TurnLeft => rotate_left(dir.0),
             PlayerInput::TurnRight => rotate_right(dir.0),
             PlayerInput::None => dir.0,
         };
         dir.0 = dir.0.normalize_or_zero();
+        input.0 = PlayerInput::None;
     }
 }
 
@@ -355,6 +356,40 @@ pub fn move_players(
     }
 }
 
+/// Clamp players to the arena boundaries. If a player is outside, mark them
+/// for death and clamp position to the edge.
+pub fn collide_with_arena(
+    arena: Query<&ArenaSize, With<Arena>>,
+    mut players: Query<(
+        &mut Position,
+        &mut Velocity,
+        &mut ShouldHandleDeath,
+        &mut IsAlive,
+    ), With<Player>>,
+) {
+    let Ok(arena) = arena.single() else {
+        return;
+    };
+    let hw = arena.width * 0.5;
+    let hh = arena.height * 0.5;
+
+    for (mut pos, mut vel, mut should_die, mut alive) in &mut players {
+        if !alive.0 {
+            continue;
+        }
+        let clamped = pos.0.clamp(
+            Vec2::new(-hw, -hh),
+            Vec2::new(hw, hh),
+        );
+        if clamped != pos.0 {
+            pos.0 = clamped;
+            vel.0 = Vec2::ZERO;
+            alive.0 = false;
+            should_die.0 = true;
+        }
+    }
+}
+
 /// Bevy system set ordering for the fixed simulation.
 ///
 /// `Turn` runs before `Move` so a turn input is reflected in the same tick's
@@ -363,4 +398,5 @@ pub fn move_players(
 pub enum SimSet {
     Turn,
     Move,
+    Collision,
 }

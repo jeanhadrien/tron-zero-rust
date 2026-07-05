@@ -4,10 +4,11 @@
 //! interpolation is planned for the polish phase.
 
 use bevy::prelude::*;
-use shared::{Player, Position};
+use lightyear::prelude::input::native::InputMarker;
+use shared::{Player, PlayerInput, Position};
 
 pub fn follow_player(
-    player: Query<&Position, With<Player>>,
+    player: Query<&Position, (With<Player>, With<InputMarker<PlayerInput>>)>,
     mut camera: Query<&mut Transform, With<Camera2d>>,
 ) {
     let Ok(pos) = player.single() else {

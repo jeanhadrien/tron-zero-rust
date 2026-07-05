@@ -40,8 +40,6 @@ pub fn register_protocol(app: &mut App) {
     app.component::<WallSegments>().replicate_once();
 
     // ActionState is local per-tick state (written by input systems, read by
-    // apply_turn). It must exist on both sides but its value is independently
-    // maintained — replicate_once sends the initial `None`, side-stepping
-    // per-tick replication overhead.
-    app.component::<ActionState<PlayerInput>>().replicate_once();
+    // apply_turn). Not replicated — the lightyear input system handles
+    // transmitting the value. Both sides add it manually on their entity.
 }

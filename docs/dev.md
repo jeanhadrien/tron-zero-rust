@@ -6,6 +6,7 @@ Day-to-day development on Windows. Builds run natively on Windows for fast itera
 
 - **Windows Rust** — install via `https://win.rustup.rs/x86_64` (MSVC host). Pins to `stable` via `rust-toolchain.toml`.
 - **MSVC C++ build tools** — Visual Studio 2022 Build Tools with the `VC.Tools.x86.x64` workload. rustup detects it automatically.
+- **cargo-watch** — `cargo install cargo-watch` (hot-reload on file save).
 - Open a **new** shell after install so `%USERPROFILE%\.cargo\bin` is on PATH. Verify: `where cargo` prints `C:\Users\<you>\.cargo\bin\cargo.exe`.
 
 ## Repo location
@@ -23,6 +24,17 @@ cargo check -p tron-zero-client   # type-check only, no codegen — fastest feed
 cargo clippy --workspace -- -D warnings
 cargo fmt -- --check
 ```
+
+### Hot-reload (auto restart on save)
+
+In two separate terminals:
+
+```
+cargo watch -c -w crates -x "run -p tron-zero-server"
+cargo watch -c -w crates -x "run -p tron-zero-client"
+```
+
+`-c` clears output on restart, `-w crates` ignores `target/`. Split panes in Windows Terminal with `Alt+Shift+D` / `Alt+Shift+-`.
 
 ## What to expect
 

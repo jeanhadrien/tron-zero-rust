@@ -1,37 +1,45 @@
 //! Keyboard → turn-input mapping.
 //!
-//! Writes the current key press to the local player's `ActionState<PlayerInput>`
-//! each fixed tick. Runs in lightyear's `WriteClientInputs` set so the input
-//! is buffered for the current tick and replicated to the server.
+//! `buffer_keyboard_input` (Update) reads `just_pressed` every frame and stores
+//! the turn in `PendingInput`. `read_keyboard` (FixedPreUpdate) consumes that
+//! buffer into the local player's `ActionState<PlayerInput>` each sim tick.
 //!
-//! One key tap = one turn: Bevy's `just_pressed` clears after the first
-//! `FixedPreUpdate` invocation in the frame, so catch-up ticks don't
-//! generate spurious turns.
+//! Decoupling avoids skipped turns on high-refresh-rate monitors where frames
+//! with zero sim ticks would clear `just_pressed` before any tick can consume it.
 
 use bevy::prelude::*;
+use lightyear::prelude::input::native::InputMarker;
 use shared::ActionState;
-use shared::Player;
 use shared::PlayerInput;
 
-/// Write keyboard state to the local player's `ActionState` component.
-/// Runs in `FixedPreUpdate::WriteClientInputs` — one invocation per sim tick.
-pub fn read_keyboard(
+#[derive(Resource, Default)]
+pub struct PendingInput(pub Option<PlayerInput>);
+
+pub fn buffer_keyboard_input(
     keys: Res<ButtonInput<KeyCode>>,
-    mut players: Query<&mut ActionState<PlayerInput>, With<Player>>,
+    mut pending: ResMut<PendingInput>,
 ) {
-    // MVP: single player. Pick the first (or only) player entity.
+    if pending.0.is_some() {
+        return;
+    }
+    if keys.just_pressed(KeyCode::ArrowLeft) || keys.just_pressed(KeyCode::KeyA) {
+        pending.0 = Some(PlayerInput::TurnLeft);
+    } else if keys.just_pressed(KeyCode::ArrowRight) || keys.just_pressed(KeyCode::KeyD) {
+        pending.0 = Some(PlayerInput::TurnRight);
+    }
+}
+
+pub fn read_keyboard(
+    mut pending: ResMut<PendingInput>,
+    mut players: Query<&mut ActionState<PlayerInput>, With<InputMarker<PlayerInput>>>,
+) {
     let Some(mut action) = players.iter_mut().next() else {
         return;
     };
-
-    // Don't overwrite an input the simulation hasn't processed yet.
     if action.0 != PlayerInput::None {
         return;
     }
-
-    if keys.just_pressed(KeyCode::ArrowLeft) || keys.just_pressed(KeyCode::KeyA) {
-        action.0 = PlayerInput::TurnLeft;
-    } else if keys.just_pressed(KeyCode::ArrowRight) || keys.just_pressed(KeyCode::KeyD) {
-        action.0 = PlayerInput::TurnRight;
+    if let Some(input) = pending.0.take() {
+        action.0 = input;
     }
 }

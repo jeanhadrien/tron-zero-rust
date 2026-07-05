@@ -27,9 +27,12 @@ fn main() {
 
     // New client observer — runs after RawConnectionPlugin sets up Connected + ClientOf.
     app.add_observer(on_client_connected);
+    // Disconnect observer — cleans up zombie player entities.
+    app.add_observer(on_client_disconnected);
 
     // Simulation systems in FixedUpdate.
-    app.add_systems(FixedUpdate, (shared::apply_turn, shared::move_players).chain());
+    app.add_systems(FixedUpdate, (shared::apply_turn, shared::move_players, shared::collide_with_arena).chain());
+    app.add_systems(FixedUpdate, mark_trail_points_for_replication.after(shared::apply_turn));
 
     // Spawn the arena once on startup (replicated to all clients).
     app.add_systems(Startup, spawn_server_arena_and_start);
@@ -100,6 +103,11 @@ fn on_client_connected(
             PredictionTarget::to_clients(NetworkTarget::Single(remote_id.0)),
             // All other clients interpolate it.
             InterpolationTarget::to_clients(NetworkTarget::AllExceptSingle(remote_id.0)),
+            // Routes this client's inputs to this entity's ActionState.
+            ControlledBy {
+                owner: trigger.entity,
+                lifetime: Lifetime::SessionBased,
+            },
         ))
         .id();
 
@@ -110,5 +118,31 @@ fn on_client_connected(
         shared::Position(Vec2::ZERO),
         shared::Direction(Vec2::new(1.0, 0.0)),
         ChildOf(player),
+        Replicate::to_clients(NetworkTarget::All),
     ));
+}
+
+/// When a client disconnects (Connected removed), find their player entity
+/// via `ControlledBy.owner` and despawn it along with its TrailPoint children.
+fn on_client_disconnected(
+    trigger: On<Remove, Connected>,
+    players: Query<(Entity, &ControlledBy)>,
+    mut commands: Commands,
+) {
+    for (entity, controlled_by) in &players {
+        if controlled_by.owner == trigger.entity {
+            commands.entity(entity).despawn();
+        }
+    }
+}
+
+/// Ensure trail points spawned by `apply_turn` carry `Replicate` so lightyear
+/// sends them to clients. Runs after `apply_turn` each tick.
+fn mark_trail_points_for_replication(
+    new_trail_points: Query<Entity, (With<shared::TrailPoint>, Without<Replicate>)>,
+    mut commands: Commands,
+) {
+    for entity in &new_trail_points {
+        commands.entity(entity).insert(Replicate::to_clients(NetworkTarget::All));
+    }
 }

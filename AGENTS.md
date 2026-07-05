@@ -4,7 +4,13 @@
 
 Do not build the project yourself.
 
+## Docs 
+
+Use docs/index.md for library doc URLs instead of reading source directly
+
 ## Rust Development Guide
+
+Below are generic Rust gotchas that can help you. Don't get too caught up in those.
 
 ### Gotchas (vs other languages)
 
