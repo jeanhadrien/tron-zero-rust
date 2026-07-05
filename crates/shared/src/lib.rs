@@ -4,8 +4,14 @@
 //! Both client and server depend on this crate so the simulation stays
 //! identical across peers.
 
+pub mod protocol;
+
 use bevy_ecs::prelude::*;
+use bevy_reflect::Reflect;
 use glam::Vec2;
+use serde::{Deserialize, Serialize};
+
+pub use lightyear::prelude::input::native::ActionState;
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -35,25 +41,42 @@ pub const ROTATION_ANGLE: f32 = core::f32::consts::FRAC_PI_2;
 /// Arena defaults (world units).
 pub const ARENA_WIDTH: f32 = 2400.0;
 pub const ARENA_HEIGHT: f32 = 2400.0;
+
 // ---------------------------------------------------------------------------
 // Components
 // ---------------------------------------------------------------------------
 
 /// Marker for a player entity (the lightcycle).
-#[derive(Component, Default)]
-#[require(Position, Direction, Velocity, SpeedMult, TargetSpeedMult, IsAlive, PlayerColor, Rubber, IsSliding, IsColliding, ShouldHandleDeath, TrailPointCount, TrailPointNextOrder)]
+#[derive(Component, Default, Serialize, Deserialize, Reflect)]
+#[require(
+    PlayerId,
+    Position,
+    Direction,
+    Velocity,
+    SpeedMult,
+    TargetSpeedMult,
+    IsAlive,
+    PlayerColor,
+    Rubber,
+    IsSliding,
+    IsColliding,
+    ShouldHandleDeath,
+    TrailPointCount,
+    TrailPointNextOrder,
+    ActionState<PlayerInput>
+)]
 pub struct Player;
 
-/// Stable identity across respawns. Not used in the MVP yet but reserved.
-#[derive(Component, Clone, Debug)]
+/// Stable identity across respawns.
+#[derive(Component, Clone, Debug, Default, Serialize, Deserialize, Reflect)]
 pub struct PlayerId(pub String);
 
 /// World position.
-#[derive(Component, Clone, Copy, Debug, Default)]
+#[derive(Component, Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Reflect)]
 pub struct Position(pub Vec2);
 
 /// Unit heading. Constrained to ±X / ±Y; turns are 90° component swaps.
-#[derive(Component, Clone, Copy, Debug)]
+#[derive(Component, Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Reflect)]
 pub struct Direction(pub Vec2);
 
 impl Default for Direction {
@@ -64,11 +87,11 @@ impl Default for Direction {
 
 /// Per-tick displacement × 1000 (Position advances by `Velocity / 1000` each
 /// tick). Kept for parity with the JS codebase's fixed-point convention.
-#[derive(Component, Clone, Copy, Debug, Default)]
+#[derive(Component, Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Reflect)]
 pub struct Velocity(pub Vec2);
 
 /// Current speed multiplier (1.0 = base speed).
-#[derive(Component, Clone, Copy, Debug, Default)]
+#[derive(Component, Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Reflect)]
 pub struct SpeedMult(pub f32);
 
 impl SpeedMult {
@@ -79,7 +102,7 @@ impl SpeedMult {
 
 /// Target speed multiplier the actual `SpeedMult` drifts toward (inertia).
 /// Boosted while sliding; decays toward 1.0 in open space.
-#[derive(Component, Clone, Copy, Debug)]
+#[derive(Component, Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Reflect)]
 pub struct TargetSpeedMult(pub f32);
 
 impl Default for TargetSpeedMult {
@@ -89,15 +112,15 @@ impl Default for TargetSpeedMult {
 }
 
 /// Packed RGB `(r<<16)|(g<<8)|b`.
-#[derive(Component, Clone, Copy, Debug, Default)]
+#[derive(Component, Clone, Copy, Debug, Default, Serialize, Deserialize, Reflect)]
 pub struct PlayerColor(pub u32);
 
 /// Alive flag. Toggled on death, the entity persists for respawn.
-#[derive(Component, Clone, Copy, Debug, Default)]
+#[derive(Component, Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Reflect)]
 pub struct IsAlive(pub bool);
 
 /// Rubber meter. Clamped to `[0, BASE_RUBBER]`. Reaching 0 → death.
-#[derive(Component, Clone, Copy, Debug)]
+#[derive(Component, Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Reflect)]
 pub struct Rubber(pub f32);
 
 impl Default for Rubber {
@@ -108,20 +131,20 @@ impl Default for Rubber {
 
 /// True while a side sensor ray is within `SLOW_DOWN_DISTANCE` of an obstacle
 /// (sliding/grinding). Triggers acceleration.
-#[derive(Component, Clone, Copy, Debug, Default)]
+#[derive(Component, Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Reflect)]
 pub struct IsSliding(pub bool);
 
 /// True while the front sensor ray is within `SLOW_DOWN_DISTANCE` of an
 /// obstacle (rubber zone engaged).
-#[derive(Component, Clone, Copy, Debug, Default)]
+#[derive(Component, Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Reflect)]
 pub struct IsColliding(pub bool);
 
 /// Guards one-shot death handling next Phase 1.
-#[derive(Component, Clone, Copy, Debug, Default)]
+#[derive(Component, Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Reflect)]
 pub struct ShouldHandleDeath(pub bool);
 
 /// Mirrors the player's child `TrailPoint` count for cheap zero-checks.
-#[derive(Component, Clone, Copy, Debug, Default)]
+#[derive(Component, Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Reflect)]
 pub struct TrailPointCount(pub u32);
 
 // ---------------------------------------------------------------------------
@@ -130,26 +153,26 @@ pub struct TrailPointCount(pub u32);
 
 /// Marker for a trail point — a static vertex left at each turn site.
 /// Child of the `Player` entity that spawned it.
-#[derive(Component, Default)]
+#[derive(Component, Default, Serialize, Deserialize, Reflect)]
 #[require(Position, Direction, TrailPointOrder)]
 pub struct TrailPoint;
 
 /// Sort key for trail rendering. Assigned monotonically by the parent
 /// player's `TrailPointNextOrder` counter.
-#[derive(Component, Clone, Copy, Debug, Default)]
+#[derive(Component, Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Reflect)]
 pub struct TrailPointOrder(pub u32);
 
 /// Monotonic counter for the next `TrailPointOrder` value. Lives on the
 /// player so it rolls back with the player under lightyear prediction.
-#[derive(Component, Clone, Copy, Debug, Default)]
+#[derive(Component, Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Reflect)]
 pub struct TrailPointNextOrder(pub u32);
 
 // ---------------------------------------------------------------------------
 // Input
 // ---------------------------------------------------------------------------
 
-/// Client → server turn input (lightyear `Input` in the full design).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+/// Client → server turn input (lightyear `Input` type).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, Reflect)]
 pub enum PlayerInput {
     #[default]
     None,
@@ -157,22 +180,21 @@ pub enum PlayerInput {
     TurnRight,
 }
 
-/// Single-slot pending input consumed each tick. The client's input manager
-/// writes here; the turn system drains it.
-#[derive(Resource, Default)]
-pub struct PendingInput(pub PlayerInput);
+impl bevy_ecs::entity::MapEntities for PlayerInput {
+    fn map_entities<M: EntityMapper>(&mut self, _entity_mapper: &mut M) {}
+}
 
 // ---------------------------------------------------------------------------
 // Arena
 // ---------------------------------------------------------------------------
 
 /// Marker for the single arena entity.
-#[derive(Component, Default)]
+#[derive(Component, Default, Serialize, Deserialize, Reflect)]
 #[require(ArenaSize, WallSegments)]
 pub struct Arena;
 
 /// Arena dimensions in world units.
-#[derive(Component, Clone, Copy, Debug)]
+#[derive(Component, Clone, Copy, Debug, Serialize, Deserialize, Reflect)]
 pub struct ArenaSize {
     pub width: f32,
     pub height: f32,
@@ -188,7 +210,7 @@ impl Default for ArenaSize {
 }
 
 /// Boundary wall segments as `(x1, y1, x2, y2)` line segments.
-#[derive(Component, Clone, Debug, Default)]
+#[derive(Component, Clone, Debug, Default, Serialize, Deserialize, Reflect)]
 pub struct WallSegments(pub Vec<[f32; 4]>);
 
 // ---------------------------------------------------------------------------
@@ -211,7 +233,6 @@ pub fn rotate_right(v: Vec2) -> Vec2 {
 pub fn arena_walls(width: f32, height: f32) -> Vec<[f32; 4]> {
     let hw = width * 0.5;
     let hh = height * 0.5;
-    // bottom, right, top, left
     vec![
         [-hw, -hh, hw, -hh],
         [hw, -hh, hw, hh],
@@ -248,12 +269,11 @@ pub fn setup_local_player(mut commands: Commands) {
             SpeedMult::base(),
             PlayerColor(0x00FFCC),
             IsAlive(true),
-            TrailPointCount(1), // one initial trail point spawned below
-            TrailPointNextOrder(1), // 0 reserved for the initial point below
+            TrailPointCount(1),
+            TrailPointNextOrder(1),
         ))
         .id();
 
-    // Initial trail point at the spawn location.
     commands.spawn((
         TrailPoint,
         TrailPointOrder(0),
@@ -266,9 +286,12 @@ pub fn setup_local_player(mut commands: Commands) {
 /// Apply a pending turn input: spawn a `TrailPoint` at the current position
 /// (capturing the pre-turn heading), then rotate `Direction` by ±90°.
 ///
+/// Each player entity carries its own `ActionState<PlayerInput>` — the client
+/// writes the local player's input, the server receives and injects it via
+/// lightyear's input system. Remote/non-owner entities stay at `None`.
+///
 /// Runs in `FixedUpdate` before movement so the turn takes effect this tick.
 pub fn apply_turn(
-    mut pending: ResMut<PendingInput>,
     mut commands: Commands,
     mut players: Query<
         (
@@ -277,21 +300,20 @@ pub fn apply_turn(
             &Position,
             &mut TrailPointNextOrder,
             &mut TrailPointCount,
+            &ActionState<PlayerInput>,
             &IsAlive,
         ),
         With<Player>,
     >,
 ) {
-    let input = pending.0;
-    pending.0 = PlayerInput::None;
-    if input == PlayerInput::None {
-        return;
-    }
-    for (entity, mut dir, pos, mut next_order, mut count, alive) in &mut players {
+    for (entity, mut dir, pos, mut next_order, mut count, input, alive) in &mut players {
         if !alive.0 {
             continue;
         }
-        // Spawn a trail point at the current position with the pre-turn heading.
+        let input = input.0;
+        if input == PlayerInput::None {
+            continue;
+        }
         commands.spawn((
             TrailPoint,
             TrailPointOrder(next_order.0),
@@ -307,7 +329,6 @@ pub fn apply_turn(
             PlayerInput::TurnRight => rotate_right(dir.0),
             PlayerInput::None => dir.0,
         };
-        // Re-normalise to kill any float drift: heading stays axis-aligned.
         dir.0 = dir.0.normalize_or_zero();
     }
 }
@@ -318,7 +339,10 @@ pub fn apply_turn(
 /// × 1000), `Position += Velocity / 1000`. At `SpeedMult = 1` this is
 /// `BASE_SPEED` world-units per second.
 pub fn move_players(
-    mut players: Query<(&mut Position, &mut Velocity, &Direction, &SpeedMult, &IsAlive), With<Player>>,
+    mut players: Query<
+        (&mut Position, &mut Velocity, &Direction, &SpeedMult, &IsAlive),
+        With<Player>,
+    >,
 ) {
     for (mut pos, mut vel, dir, speed, alive) in &mut players {
         if !alive.0 {

@@ -1,12 +1,6 @@
-# Agent (you)
+# Rust Dev Guide
 
-## Building
-
-Do not build the project yourself.
-
-## Rust Development Guide
-
-### Gotchas (vs other languages)
+## Gotchas (vs other languages)
 
 - **Moves are real** — non-`Copy` value passed anywhere = old binding dead.
 - **No `&mut` coexisting** with any other ref.
@@ -18,7 +12,7 @@ Do not build the project yourself.
 - **Drop order** — fields dropped in declaration order, not reverse.
 - **Avoid `.unwrap()`** in production — use `?`, `.ok_or(...)`, or match.
 
-### Performance
+## Performance
 
 - **Allocations matter most** — pre-allocate (`with_capacity`), reuse buffers, avoid `format!()` in hot paths.
 - **Generics > `dyn Trait`** for hot paths (monomorphization = static dispatch, no vtable).
@@ -30,7 +24,7 @@ Do not build the project yourself.
 - **SIMD isn't automatic** — structure loops for auto-vectorization, or reach for `std::simd` (nightly).
 - **`tokio::spawn` for I/O, `rayon` for CPU** — don't block in async.
 
-### Maintainability
+## Maintainability
 
 - **Encode invariants in types** — illegal states unrepresentable. Newtypes over raw primitives.
 - **`pub` sparingly** — default private, `pub(crate)` for internals.

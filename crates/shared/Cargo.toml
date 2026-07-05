@@ -4,7 +4,9 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+bevy_app.workspace = true
 bevy_ecs.workspace = true
+bevy_reflect.workspace = true
 glam.workspace = true
 serde.workspace = true
-lightyear.workspace = true
+lightyear = { workspace = true, features = ["input_native"] }
