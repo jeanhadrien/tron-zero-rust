@@ -1,0 +1,27 @@
+{
+  "packages": {
+    "crates/shared": {
+      "component": "shared",
+      "release-type": "rust"
+    },
+    "crates/server": {
+      "component": "server",
+      "release-type": "rust"
+    },
+    "crates/client": {
+      "component": "client",
+      "release-type": "rust"
+    }
+  },
+  "plugins": [
+    {
+      "type": "cargo-workspace",
+      "merge": false
+    },
+    {
+      "type": "linked-versions",
+      "groupName": "tron-zero",
+      "components": ["shared", "server", "client"]
+    }
+  ]
+}

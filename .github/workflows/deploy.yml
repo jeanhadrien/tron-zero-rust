@@ -2,14 +2,10 @@ name: deploy
 
 on:
   workflow_call:
-    inputs:
-      tag_name:
-        required: true
-        type: string
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
       - name: placeholder
-        run: echo "Deploy placeholder for ${{ inputs.tag_name }}"
+        run: echo "Deploy placeholder — release created"
