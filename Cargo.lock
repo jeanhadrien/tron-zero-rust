@@ -8308,7 +8308,7 @@ dependencies = [
 
 [[package]]
 name = "tron-zero-client"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "bevy",
  "bevy_egui",
@@ -8320,7 +8320,7 @@ dependencies = [
 
 [[package]]
 name = "tron-zero-server"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "bevy",
  "lightyear",
@@ -8332,7 +8332,7 @@ dependencies = [
 
 [[package]]
 name = "tron-zero-shared"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "bevy_app",
  "bevy_ecs",
