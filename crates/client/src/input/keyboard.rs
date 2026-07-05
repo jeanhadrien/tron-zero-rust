@@ -15,10 +15,7 @@ use shared::PlayerInput;
 #[derive(Resource, Default)]
 pub struct PendingInput(pub Option<PlayerInput>);
 
-pub fn buffer_keyboard_input(
-    keys: Res<ButtonInput<KeyCode>>,
-    mut pending: ResMut<PendingInput>,
-) {
+pub fn buffer_keyboard_input(keys: Res<ButtonInput<KeyCode>>, mut pending: ResMut<PendingInput>) {
     if pending.0.is_some() {
         return;
     }

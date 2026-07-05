@@ -3,17 +3,16 @@
 //! Connects to a lightyear server via UDP / raw connection, sends keyboard
 //! inputs, predicts the local lightcycle, and renders the arena + players.
 
-mod camera;
 mod input;
 mod render;
 
 use bevy::prelude::*;
 use core::net::{IpAddr, Ipv4Addr, SocketAddr};
 use core::time::Duration;
-use lightyear::prelude::*;
-use lightyear::prelude::client::*;
 use lightyear::prelude::client::input::InputSystems;
+use lightyear::prelude::client::*;
 use lightyear::prelude::input::native::InputMarker;
+use lightyear::prelude::*;
 
 fn main() {
     let mut app = App::new();
@@ -45,7 +44,15 @@ fn main() {
     );
 
     // Simulation: same systems as the server, running on the predicted entity.
-    app.add_systems(FixedUpdate, (shared::apply_turn, shared::move_players, shared::collide_with_arena).chain());
+    app.add_systems(
+        FixedUpdate,
+        (
+            shared::apply_turn,
+            shared::move_players,
+            shared::collide_with_arena,
+        )
+            .chain(),
+    );
 
     // Rendering.
     app.add_systems(Startup, render::setup_camera);
@@ -55,7 +62,7 @@ fn main() {
             render::draw_arena,
             render::draw_trails,
             render::draw_players,
-            camera::follow_player,
+            render::follow_player,
         ),
     );
 
@@ -68,10 +75,7 @@ fn spawn_client(mut commands: Commands) {
         .spawn((
             RawClient,
             UdpIo::default(),
-            LocalAddr(SocketAddr::new(
-                IpAddr::V4(Ipv4Addr::UNSPECIFIED),
-                0,
-            )),
+            LocalAddr(SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0)),
             PeerAddr(SocketAddr::new(
                 IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
                 5000,
@@ -91,7 +95,10 @@ fn spawn_client(mut commands: Commands) {
 fn handle_controlled_spawn(
     trigger: On<Add, Controlled>,
     mut commands: Commands,
-    players: Query<(&shared::Player, Option<&ControlledBy>), Without<InputMarker<shared::PlayerInput>>>,
+    players: Query<
+        (&shared::Player, Option<&ControlledBy>),
+        Without<InputMarker<shared::PlayerInput>>,
+    >,
     clients: Query<(), With<Client>>,
 ) {
     let entity = trigger.entity;
@@ -99,10 +106,12 @@ fn handle_controlled_spawn(
         return;
     };
     // Only tag if this entity is controlled by the local client.
-    if let Some(cb) = controlled_by {
-        if clients.get(cb.owner).is_err() {
-            return;
-        }
+    if let Some(cb) = controlled_by
+        && clients.get(cb.owner).is_err()
+    {
+        return;
     }
-    commands.entity(entity).insert(InputMarker::<shared::PlayerInput>::default());
+    commands
+        .entity(entity)
+        .insert(InputMarker::<shared::PlayerInput>::default());
 }

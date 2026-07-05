@@ -1,14 +1,18 @@
 # Agent (you)
 
-## Building
+## Project Development
 
 Do not build the project yourself.
+
+- cargo check — fast compilation check without producing binaries (syntax + type checking)
+- cargo clippy — linting (catches errors + idiomatic issues)
+- cargo fmt — formatting
 
 ## Docs 
 
 Use docs/index.md for library doc URLs instead of reading source directly
 
-## Rust Development Guide
+## Generic Rust Development
 
 Below are generic Rust gotchas that can help you. Don't get too caught up in those.
 
