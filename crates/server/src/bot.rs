@@ -77,6 +77,9 @@ pub fn setup_bots(mut commands: Commands) {
 /// Write random turn decisions into each alive bot's `ActionState` every
 /// `TURN_DECISION_MIN_TICKS..=TURN_DECISION_MAX_TICKS` ticks.
 ///
+/// Always sets `ActionState.0` each tick so `apply_turn` (which reads
+/// immutably) sees the correct value. On non-decision ticks, writes `None`.
+///
 /// Runs before `apply_turn` so the turn takes effect this tick.
 #[allow(clippy::type_complexity)]
 pub fn bot_brain_input(
@@ -94,6 +97,8 @@ pub fn bot_brain_input(
             brain.turn_timer = (rand::random::<u32>()
                 % (TURN_DECISION_MAX_TICKS - TURN_DECISION_MIN_TICKS + 1))
                 + TURN_DECISION_MIN_TICKS;
+        } else {
+            input.0 = PlayerInput::None;
         }
     }
 }
@@ -177,7 +182,7 @@ fn spawn_bot_entity(commands: &mut Commands, bot_number: u32) -> Entity {
             TrailPointCount(1),
             TrailPointNextOrder(1),
             Replicate::to_clients(NetworkTarget::All),
-            InterpolationTarget::to_clients(NetworkTarget::All),
+            PredictionTarget::to_clients(NetworkTarget::All),
         ))
         .id();
 

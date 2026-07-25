@@ -33,7 +33,7 @@ fn main() {
     app.add_observer(handle_controlled_spawn);
 
     // Spawn the client connection entity and connect to the server.
-    app.add_systems(Startup, spawn_client);
+    app.add_systems(Startup, (spawn_client, configure_input_delay).chain());
 
     // Input: buffer key presses every frame, consume per fixed tick.
     app.init_resource::<input::PendingInput>();
@@ -44,6 +44,9 @@ fn main() {
     );
 
     // Simulation: same systems as the server, running on the predicted entity.
+    // Runs in FixedUpdate, which is strictly after FixedPreUpdate (where
+    // lightyear's WriteClientInputs → BufferClientInputs chains), so ActionState
+    // is already populated for this tick.
     app.add_systems(
         FixedUpdate,
         (
@@ -114,4 +117,14 @@ fn handle_controlled_spawn(
     commands
         .entity(entity)
         .insert(InputMarker::<shared::PlayerInput>::default());
+}
+
+/// Configure a fixed 1-tick input delay so the server has the client's input
+/// buffered before it simulates that tick. Without this, late packets cause
+/// `get_predict` to fall back to the last action — dropping or duplicating
+/// discrete turn events.
+fn configure_input_delay(client: Single<Entity, With<Client>>, mut commands: Commands) {
+    commands.entity(client.into_inner()).insert(
+        InputTimelineConfig::default().with_input_delay(InputDelayConfig::fixed_input_delay(1)),
+    );
 }

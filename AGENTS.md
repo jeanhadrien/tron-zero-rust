@@ -8,10 +8,6 @@ Do not build the project yourself.
 - cargo clippy — linting (catches errors + idiomatic issues)
 - cargo fmt — formatting
 
-## Docs 
-
-Use docs/index.md for library doc URLs instead of reading source directly
-
 ## Generic Rust Development
 
 Below are generic Rust gotchas that can help you. Don't get too caught up in those.

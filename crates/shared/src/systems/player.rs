@@ -31,13 +31,13 @@ pub fn apply_turn(
             &Position,
             &mut TrailPointNextOrder,
             &mut TrailPointCount,
-            &mut ActionState<PlayerInput>,
+            &ActionState<PlayerInput>,
             &IsAlive,
         ),
         With<Player>,
     >,
 ) {
-    for (entity, mut dir, pos, mut next_order, mut count, mut input, alive) in &mut players {
+    for (entity, mut dir, pos, mut next_order, mut count, input, alive) in &mut players {
         if !alive.0 {
             continue;
         }
@@ -61,7 +61,6 @@ pub fn apply_turn(
             PlayerInput::None => dir.0,
         };
         dir.0 = dir.0.normalize_or_zero();
-        input.0 = PlayerInput::None;
     }
 }
 
