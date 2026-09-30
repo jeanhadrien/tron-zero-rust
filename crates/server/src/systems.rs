@@ -66,7 +66,9 @@ pub fn on_client_connected(
     };
 
     // Enable replication on this client's link entity.
-    commands.entity(trigger.entity).insert(ReplicationSender);
+    commands
+        .entity(trigger.entity)
+        .insert((ReplicationSender, crate::session::SessionLease::default()));
 
     // Spawn allocation is serialized in FixedUpdate against live geometry.
     // Keep one controlled entity even when the arena has no safe space.

@@ -18,6 +18,9 @@ rewriting the networking stack.
   Rollback does not consume the live keyboard queue.
 - Player-owned trail geometry participates in replication and prediction.
 - Opponents use step interpolation; collision prediction uses confirmed history.
+- A localhost-only overlay now owns explicit connect/cancel/disconnect/retry,
+  with separate connection/menu state, session heartbeats, readiness gating,
+  and client/server timeouts. Runtime lifecycle checks remain outstanding.
 
 Local responsiveness is not proof of online correctness. Runtime multiplayer,
 packet-impairment, and load behavior remain unverified. Existing regression tests
@@ -137,8 +140,11 @@ instead of pretending controls remain guaranteed.
 ## P2: connection and deployment hardening
 
 - [ ] Replace hardcoded loopback address/port with explicit configuration.
-- [ ] Add connecting/synchronizing/degraded/disconnected feedback and actionable
-  error reporting, with documented timeout and reconnect behavior.
+- [x] Add localhost connecting/synchronizing/disconnected feedback, explicit
+  retry, and documented heartbeat/connection timeouts. Runtime smoke checks
+  remain required; degraded-network diagnostics are still pending.
+- [ ] Add a server browser fetching a remote master-server list. Reuse the
+  connection lifecycle, not a second network client or separate gameplay scene.
 - [ ] Review production transport/session authentication and admission control;
   current links use `RawClient` / `RawServer`. Do not treat server authority as
   a substitute for authenticated sessions and bounded input processing.

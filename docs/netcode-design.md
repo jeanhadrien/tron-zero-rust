@@ -2,6 +2,25 @@
 
 ## Current Rust MVP implementation
 
+The client now starts disconnected and connects to localhost only on request.
+Menu visibility is separate from the connection lifecycle: opening the overlay
+captures fresh gameplay input but does not stop simulation or networking.
+`crates\client\src\connection.rs` owns connect, readiness, timeout, and teardown;
+`menu.rs` owns the overlay. A future master-server browser can feed the same
+connection entry point; discovery is not implemented.
+
+Raw UDP's local `Connected` marker does not prove a remote server is present.
+An application heartbeat runs every second, with a 5-second liveness timeout
+on both peers and a 10-second client connection/synchronization deadline.
+Gameplay readiness additionally requires input timeline sync and replicated
+arena/local-rider state. A leave message is flushed before client unlink;
+server lease expiry handles dropped leave messages and abrupt exits.
+Local rider readiness uses the replicated `Controlled` marker, not the
+server-side `ControlledBy` relationship. Input-marker setup runs after replication
+and tolerates either arrival order of `Player` and `Controlled`.
+This is basic lifecycle handling, not authenticated admission or a replacement
+for the turn-delivery hardening tracked in `NETWORK.md`.
+
 The sections below describe broader design goals, not a complete inventory of
 implemented features. The Rust MVP uses Lightyear 0.28 at 120 Hz with the following
 simulation contract:

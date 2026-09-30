@@ -4,6 +4,7 @@
 //! and processes client inputs via lightyear.
 
 mod bot;
+mod session;
 mod systems;
 
 use bevy::prelude::*;
@@ -35,6 +36,14 @@ fn main() {
     app.add_systems(
         PreUpdate,
         systems::collect_respawn_requests.after(lightyear::prelude::MessageSystems::Receive),
+    );
+    app.add_systems(
+        PreUpdate,
+        session::receive_session_requests.after(lightyear::prelude::MessageSystems::Receive),
+    );
+    app.add_systems(
+        PostUpdate,
+        session::close_sessions.after(lightyear::prelude::LinkSystems::Send),
     );
 
     // Simulation systems in FixedUpdate.

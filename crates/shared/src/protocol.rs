@@ -30,7 +30,32 @@ pub struct RespawnReply {
 
 pub struct RespawnChannel;
 
+pub const SESSION_HEARTBEAT_SECS: f64 = 1.0;
+pub const SESSION_TIMEOUT_SECS: f64 = 5.0;
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+pub enum SessionRequest {
+    Heartbeat { nonce: u64 },
+    Leave { nonce: u64 },
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+pub struct SessionReply {
+    pub nonce: u64,
+}
+
+pub struct SessionChannel;
+
 pub fn register_protocol(app: &mut App) {
+    app.add_channel::<SessionChannel>(ChannelSettings {
+        mode: ChannelMode::OrderedReliable(ReliableSettings::default()),
+        ..Default::default()
+    })
+    .add_direction(NetworkDirection::Bidirectional);
+    app.register_message::<SessionRequest>()
+        .add_direction(NetworkDirection::ClientToServer);
+    app.register_message::<SessionReply>()
+        .add_direction(NetworkDirection::ServerToClient);
     app.add_channel::<RespawnChannel>(ChannelSettings {
         mode: ChannelMode::OrderedReliable(ReliableSettings::default()),
         ..Default::default()

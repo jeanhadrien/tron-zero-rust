@@ -10,6 +10,7 @@
 
 use std::collections::VecDeque;
 
+use crate::menu::MenuState;
 use bevy::ecs::message::MessageReader;
 use bevy::input::keyboard::KeyboardInput;
 use bevy::prelude::*;
@@ -52,12 +53,13 @@ type InputReady = (
     With<NativeBuffer<PlayerInput>>,
 );
 
-#[allow(clippy::type_complexity)]
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 pub fn buffer_keyboard_input(
     mut key_events: MessageReader<KeyboardInput>,
     mut pending: ResMut<PendingInput>,
     mut lifecycle: ResMut<InputLifecycle>,
     mut respawn: ResMut<RespawnUi>,
+    menu: Res<MenuState>,
     clients: Query<
         (Entity, Has<Rollback>),
         (With<Client>, With<Connected>, With<IsSynced<InputTimeline>>),
@@ -97,6 +99,11 @@ pub fn buffer_keyboard_input(
             respawn.pending_generation = None;
             respawn.outcome = None;
         }
+    }
+    if menu.captures_input() {
+        pending.0.clear();
+        key_events.clear();
+        return;
     }
     let can_turn = lifecycle.observed.is_some_and(|(_, alive, _)| alive);
     for event in key_events.read() {
@@ -160,6 +167,7 @@ pub fn read_keyboard(
     >,
     mut pending: ResMut<PendingInput>,
     mut lifecycle: ResMut<InputLifecycle>,
+    menu: Res<MenuState>,
     mut players: Query<
         (
             Entity,
@@ -185,6 +193,9 @@ pub fn read_keyboard(
         return;
     };
     lifecycle.observe(Some((entity, alive.0, life.map(|l| l.0))), &mut pending);
+    if menu.captures_input() {
+        pending.0.clear();
+    }
     // Always set the value for this tick so lightyear can buffer it and
     // apply_turn reads the correct input. None means "no turn this tick",
     // matching lightyear's continuous-input contract.
@@ -207,6 +218,10 @@ mod tests {
         world.init_resource::<PendingInput>();
         world.init_resource::<InputLifecycle>();
         world.init_resource::<RespawnUi>();
+        world.insert_resource(MenuState {
+            open: false,
+            block_this_frame: false,
+        });
         let client = world
             .spawn((
                 Client::default(),
@@ -479,5 +494,63 @@ mod tests {
         );
         assert!(world.run_system_once(read_keyboard).is_err());
         assert_eq!(world.resource::<PendingInput>().0.len(), 2);
+    }
+
+    #[test]
+    fn menu_consumes_physical_keys_and_neutralizes_fresh_ticks() {
+        let (mut world, _, player) = setup();
+        world.init_resource::<Messages<KeyboardInput>>();
+        world.resource_mut::<MenuState>().open = true;
+        world
+            .resource_mut::<PendingInput>()
+            .0
+            .push_back(PlayerInput::TurnRight);
+        world.get_mut::<ActionState<PlayerInput>>(player).unwrap().0 = PlayerInput::TurnLeft;
+        world.write_message(KeyboardInput {
+            key_code: KeyCode::KeyA,
+            logical_key: Key::Unidentified(bevy::input::keyboard::NativeKey::Unidentified),
+            state: ButtonState::Pressed,
+            text: None,
+            repeat: false,
+            window: Entity::PLACEHOLDER,
+        });
+        world.run_system_once(buffer_keyboard_input).unwrap();
+        world.run_system_once(read_keyboard).unwrap();
+        assert!(world.resource::<PendingInput>().0.is_empty());
+        assert_eq!(
+            world.get::<ActionState<PlayerInput>>(player).unwrap().0,
+            PlayerInput::None
+        );
+    }
+
+    #[test]
+    fn menu_enter_and_space_never_request_respawn_even_on_closing_frame() {
+        for open in [true, false] {
+            let (mut world, client, player) = setup();
+            world.init_resource::<Messages<KeyboardInput>>();
+            world.insert_resource(MenuState {
+                open,
+                block_this_frame: true,
+            });
+            world
+                .entity_mut(client)
+                .insert(MessageSender::<RespawnRequest>::default());
+            world
+                .entity_mut(player)
+                .insert((IsAlive(false), LifeGeneration(4)));
+            for key_code in [KeyCode::Space, KeyCode::Enter, KeyCode::NumpadEnter] {
+                world.write_message(KeyboardInput {
+                    key_code,
+                    logical_key: Key::Unidentified(bevy::input::keyboard::NativeKey::Unidentified),
+                    state: ButtonState::Pressed,
+                    text: None,
+                    repeat: false,
+                    window: Entity::PLACEHOLDER,
+                });
+            }
+            world.run_system_once(buffer_keyboard_input).unwrap();
+            assert!(world.resource::<RespawnUi>().pending_generation.is_none());
+            assert!(!world.get::<IsAlive>(player).unwrap().0);
+        }
     }
 }

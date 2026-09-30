@@ -37,6 +37,12 @@ pub fn follow_player(
     player: Query<&Position, LocalPlayer>,
     mut camera: Query<&mut Transform, With<Camera2d>>,
 ) {
+    if player.is_empty() {
+        for mut transform in &mut camera {
+            transform.translation.x = 0.0;
+            transform.translation.y = 0.0;
+        }
+    }
     for pos in &player {
         for mut transform in &mut camera {
             transform.translation.x = pos.0.x;

@@ -57,7 +57,46 @@ The WASM web client target (`wasm32-unknown-unknown`) is not set up yet — see 
 
 ## Gameplay smoke check
 
-With a server and client running, use **A / Left Arrow** and **D / Right Arrow**
+### Menu and localhost connection
+
+The client starts disconnected, with a menu over an empty grid. Start the
+server separately, then click **Connect to Localhost** (or press Enter) to join
+`127.0.0.1:5000`. There is no automatic connection or server process launch.
+Only localhost is exposed for now; address entry, saved servers, and fetching
+a server list from a master-server endpoint are deferred.
+
+- The menu distinguishes connecting, synchronizing, and ready. A locally opened
+  UDP socket alone is not readiness: the server must answer, timeline sync must
+  complete, and the arena and controlled rider must arrive.
+  Pending status identifies the clock, arena, or controlled rider/input buffer.
+  Client logs record these transitions; the server logs its first valid heartbeat.
+- Connecting/synchronizing offers **Cancel**. An attempt times out after
+  10 seconds; an established session stops after 5 seconds without a heartbeat
+  reply. Errors remain visible, and **Connect to Localhost** retries explicitly.
+- **Escape** toggles the translucent overlay during play. **Resume** or Enter
+  closes it. The live session and camera continue behind it: your rider keeps
+  moving and can die. This is not a pause or invulnerability mode.
+- While the menu is open, turning and respawn keys are captured and queued turns
+  are cleared. The frame that closes the menu is also captured, so Enter cannot
+  simultaneously resume and respawn. The death prompt returns after Resume.
+- **Disconnect** leaves the session and returns to the menu. Lightyear removes
+  replicated entities before reconnection becomes available. The camera, menu,
+  and death overlay are reused; input and respawn UI state are reset.
+- A leave message is flushed before closing the client socket. Delivery is
+  best-effort at shutdown; the server's 5-second heartbeat lease removes
+  abandoned riders/links if the leave is lost or the client exits abruptly.
+
+Manual checks: connect with no server, cancel and retry, then start the server
+and connect. Open/close the overlay during rapid turns and while dead; check
+that no menu keys become turns or respawn requests. Disconnect/reconnect several
+times and confirm one controlled rider, one camera, and no old trails. Stop the
+server during play and verify a timeout with a retry option. With a second
+client, verify the departing rider disappears (within the lease timeout if the
+leave is lost). These runtime checks have not been executed by the agent.
+
+### Riding and respawning
+
+After connecting, use **A / Left Arrow** and **D / Right Arrow**
 to turn left and right relative to the rider's heading.
 
 Each physical keypress queues one relative turn; holding a key does not repeat.
@@ -102,8 +141,26 @@ rollback. Local prediction adds no configured input-delay ticks.
   cleanup on both views. Check rapid consecutive turns for duplicate trails or
   visible disagreement after server corrections.
 
-Rubber/speed HUD gauges remain a separate MVP milestone. Death feedback and
-manual human respawn are implemented; multiplayer respawn, latency/rollback,
+### Player HUD
+
+Native Bevy UI shows remaining rubber (bar and percentage) at bottom left and
+the current speed multiplier (for example `1.25x`) at bottom right. Rubber turns
+amber at 50% and red at 20%; the bar follows depletion/regeneration immediately,
+without smoothing. Speed reads the local predicted `SpeedMult`, including
+collision slowdown; unlike the JS HUD, it does not freeze the pre-collision value.
+There are no slide/collision indicators or gameplay control hints.
+
+The meters are hidden while dead, outside a ready session, or while the menu is
+open. Death uses a centered panel with the existing respawn instructions and
+server-response feedback. All HUD entities persist across reconnects; they read
+the current local predicted rider, not remote/confirmed copies.
+
+Manual checks: resize the window, deplete/recover rubber, accelerate alongside a
+wall, die and respawn, then disconnect/reconnect. Check that meters remain inside
+the window, reset with the new life, and disappear behind the menu without
+covering it. These visual checks require running the client.
+
+Death feedback and manual human respawn are implemented; multiplayer respawn, latency/rollback,
 no-space retries and disconnect behavior still need the runtime smoke checks
 above. `cargo check/clippy --tests` compile regression coverage only; they do
 not execute tests or establish multiplayer runtime correctness.

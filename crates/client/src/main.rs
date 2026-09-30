@@ -3,11 +3,12 @@
 //! Connects to a lightyear server via UDP / raw connection, sends keyboard
 //! inputs, predicts the local lightcycle, and renders the arena + players.
 
+mod connection;
 mod input;
+mod menu;
 mod render;
 
 use bevy::prelude::*;
-use core::net::{IpAddr, Ipv4Addr, SocketAddr};
 use core::time::Duration;
 use lightyear::prelude::client::input::InputSystems;
 use lightyear::prelude::client::*;
@@ -27,13 +28,33 @@ fn main() {
     // Register components + input type so protocol checksums match the server.
     shared::protocol::register_protocol(&mut app);
 
-    // When the player entity arrives and Controlled is added (via ControlledBy
-    // replication), tag it with InputMarker so lightyear's input pipeline picks
-    // it up for buffering and transmission.
-    app.add_observer(handle_controlled_spawn);
-
-    // Spawn the client connection entity and connect to the server.
-    app.add_systems(Startup, (spawn_client, configure_input_delay).chain());
+    app.init_resource::<connection::Session>();
+    app.init_resource::<menu::MenuState>();
+    app.add_systems(Startup, menu::setup_menu);
+    app.add_systems(
+        PreUpdate,
+        (
+            menu::begin_input_frame,
+            attach_local_input,
+            connection::monitor_connection,
+            menu::menu_controls,
+        )
+            .chain()
+            .after(bevy::input::InputSystems)
+            .after(bevy::ui::UiSystems::Focus)
+            .after(MessageSystems::Receive)
+            .after(ReplicationSystems::Receive)
+            .before(input::buffer_keyboard_input),
+    );
+    app.add_systems(
+        Update,
+        (connection::finish_disconnect, menu::update_menu).chain(),
+    );
+    app.add_systems(Update, connection::send_leave);
+    app.add_systems(
+        PostUpdate,
+        connection::unlink_session.after(LinkSystems::Send),
+    );
 
     // Input: buffer key presses every frame, consume per fixed tick.
     app.init_resource::<input::PendingInput>();
@@ -59,7 +80,14 @@ fn main() {
     app.add_systems(FixedUpdate, shared::simulate_players);
 
     // Rendering.
-    app.add_systems(Startup, (render::setup_camera, render::setup_death_overlay));
+    app.add_systems(
+        Startup,
+        (
+            render::setup_camera,
+            render::setup_death_overlay,
+            render::setup_hud,
+        ),
+    );
     app.add_systems(
         Update,
         (
@@ -68,63 +96,73 @@ fn main() {
             render::draw_players,
             render::follow_player,
             render::update_death_overlay,
+            render::update_hud,
         ),
     );
 
     app.run();
 }
 
-/// Spawn the client link entity and trigger connection.
-fn spawn_client(mut commands: Commands) {
-    let client = commands
-        .spawn((
-            RawClient,
-            UdpIo::default(),
-            LocalAddr(SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0)),
-            PeerAddr(SocketAddr::new(
-                IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
-                5000,
-            )),
-            // Required by lightyear's prediction systems to initialize
-            // PredictionResource (needed before replication data arrives).
-            PredictionManager::default(),
-        ))
-        .id();
-    commands.trigger(Connect { entity: client });
-    commands.trigger(LinkStart { entity: client });
-}
-
-/// When the predicted player entity receives `Controlled` (replicated from the
-/// server's `ControlledBy`), insert `InputMarker` so lightyear's
-/// `buffer_action_state` and `prepare_input_message` systems pick it up.
-fn handle_controlled_spawn(
-    trigger: On<Add, Controlled>,
+/// Reconcile after replication, regardless of Player/Controlled arrival order.
+#[allow(clippy::type_complexity)]
+fn attach_local_input(
     mut commands: Commands,
     players: Query<
-        (&shared::Player, Option<&ControlledBy>),
-        Without<InputMarker<shared::PlayerInput>>,
+        (Entity, Option<&ControlledBy>),
+        (
+            With<shared::Player>,
+            With<Controlled>,
+            Without<InputMarker<shared::PlayerInput>>,
+        ),
     >,
-    clients: Query<(), With<Client>>,
+    clients: Query<Entity, (With<Client>, With<Connected>)>,
 ) {
-    let entity = trigger.entity;
-    let Ok((_, controlled_by)) = players.get(entity) else {
+    let Ok(client) = clients.single() else {
         return;
     };
-    // Only tag if this entity is controlled by the local client.
-    if let Some(cb) = controlled_by
-        && clients.get(cb.owner).is_err()
-    {
-        return;
+    for (entity, owner) in &players {
+        if owner.is_none_or(|owner| owner.owner == client) {
+            commands
+                .entity(entity)
+                .insert(InputMarker::<shared::PlayerInput>::default());
+        }
     }
-    commands
-        .entity(entity)
-        .insert(InputMarker::<shared::PlayerInput>::default());
 }
 
-/// Predict turns without a local input-delay tick. Lightyear's timeline lead
-/// and synchronization margin still allow inputs to travel to the server.
-fn configure_input_delay(client: Single<Entity, With<Client>>, mut commands: Commands) {
-    commands.entity(client.into_inner()).insert(
-        InputTimelineConfig::default().with_input_delay(InputDelayConfig::no_input_delay()),
-    );
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bevy::ecs::system::RunSystemOnce;
+
+    #[test]
+    fn local_input_setup_handles_both_replication_orders() {
+        for control_first in [true, false] {
+            let mut world = World::new();
+            world.spawn((Client::default(), RemoteId(PeerId::Server), Connected));
+            let player = world.spawn_empty().id();
+            if control_first {
+                world.entity_mut(player).insert(Controlled);
+            } else {
+                world.entity_mut(player).insert(shared::Player);
+            }
+            world.run_system_once(attach_local_input).unwrap();
+            assert!(
+                world
+                    .get::<InputMarker<shared::PlayerInput>>(player)
+                    .is_none()
+            );
+            if control_first {
+                world.entity_mut(player).insert(shared::Player);
+            } else {
+                world.entity_mut(player).insert(Controlled);
+            }
+            world.run_system_once(attach_local_input).unwrap();
+            assert!(
+                world
+                    .get::<InputMarker<shared::PlayerInput>>(player)
+                    .is_some()
+            );
+            assert!(world.get::<ControlledBy>(player).is_none());
+        }
+    }
 }
