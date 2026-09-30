@@ -8,6 +8,7 @@ pub mod components;
 pub mod constants;
 pub mod math;
 pub mod protocol;
+pub mod spawn;
 pub mod systems;
 
 // Re-export everything at the crate root for ergonomic access.

@@ -23,8 +23,7 @@ use crate::constants::BASE_RUBBER;
     IsSliding,
     IsColliding,
     ShouldHandleDeath,
-    TrailPointCount,
-    TrailPointNextOrder,
+    super::trail::Trail,
     ActionState<PlayerInput>
 )]
 pub struct Player;
@@ -101,18 +100,25 @@ pub struct IsSliding(pub bool);
 #[derive(Component, Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Reflect)]
 pub struct IsColliding(pub bool);
 
-/// Guards one-shot death handling next Phase 1.
+/// Armed while alive; cleared when death cleanup has run.
 #[derive(Component, Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Reflect)]
 pub struct ShouldHandleDeath(pub bool);
 
-/// Mirrors the player's child `TrailPoint` count for cheap zero-checks.
+/// Human life identity: a connection nonce in the high 64 bits and a life
+/// counter in the low 64 bits. Prediction restores both during rollback.
 #[derive(Component, Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Reflect)]
-pub struct TrailPointCount(pub u32);
+pub struct LifeGeneration(pub u128);
 
-/// Monotonic counter for the next `TrailPointOrder` value. Lives on the
-/// player so it rolls back with the player under lightyear prediction.
-#[derive(Component, Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Reflect)]
-pub struct TrailPointNextOrder(pub u32);
+impl LifeGeneration {
+    pub fn for_session(nonce: u64) -> Self {
+        Self((nonce as u128) << 64)
+    }
+
+    pub fn next(self) -> Option<Self> {
+        // Never let the life counter overflow into another connection nonce.
+        ((self.0 as u64) != u64::MAX).then(|| Self(self.0 + 1))
+    }
+}
 
 /// Client → server turn input (lightyear `Input` type).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, Reflect)]
@@ -121,6 +127,28 @@ pub enum PlayerInput {
     None,
     TurnLeft,
     TurnRight,
+    TurnLeftFor(u128),
+    TurnRightFor(u128),
+}
+
+impl PlayerInput {
+    pub fn for_life(self, generation: u128) -> Self {
+        match self {
+            Self::TurnLeft => Self::TurnLeftFor(generation),
+            Self::TurnRight => Self::TurnRightFor(generation),
+            _ => Self::None,
+        }
+    }
+
+    /// Untagged inputs are for bots only; humans must match the current life.
+    pub fn eligible_turn(self, life: Option<&LifeGeneration>) -> Self {
+        match (self, life) {
+            (Self::TurnLeftFor(generation), Some(life)) if generation == life.0 => Self::TurnLeft,
+            (Self::TurnRightFor(generation), Some(life)) if generation == life.0 => Self::TurnRight,
+            (Self::TurnLeft | Self::TurnRight, None) => self,
+            _ => Self::None,
+        }
+    }
 }
 
 impl bevy_ecs::entity::MapEntities for PlayerInput {

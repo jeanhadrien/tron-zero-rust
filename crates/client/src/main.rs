@@ -37,7 +37,15 @@ fn main() {
 
     // Input: buffer key presses every frame, consume per fixed tick.
     app.init_resource::<input::PendingInput>();
-    app.add_systems(Update, input::buffer_keyboard_input);
+    app.init_resource::<input::InputLifecycle>();
+    app.init_resource::<input::RespawnUi>();
+    app.add_systems(
+        PreUpdate,
+        (input::receive_respawn_replies, input::buffer_keyboard_input)
+            .chain()
+            .after(bevy::input::InputSystems)
+            .after(MessageSystems::Receive),
+    );
     app.add_systems(
         FixedPreUpdate,
         input::read_keyboard.in_set(InputSystems::WriteClientInputs),
@@ -47,18 +55,11 @@ fn main() {
     // Runs in FixedUpdate, which is strictly after FixedPreUpdate (where
     // lightyear's WriteClientInputs → BufferClientInputs chains), so ActionState
     // is already populated for this tick.
-    app.add_systems(
-        FixedUpdate,
-        (
-            shared::apply_turn,
-            shared::move_players,
-            shared::collide_with_arena,
-        )
-            .chain(),
-    );
+    app.insert_resource(shared::SimulationRole::Client);
+    app.add_systems(FixedUpdate, shared::simulate_players);
 
     // Rendering.
-    app.add_systems(Startup, render::setup_camera);
+    app.add_systems(Startup, (render::setup_camera, render::setup_death_overlay));
     app.add_systems(
         Update,
         (
@@ -66,6 +67,7 @@ fn main() {
             render::draw_trails,
             render::draw_players,
             render::follow_player,
+            render::update_death_overlay,
         ),
     );
 
@@ -119,12 +121,10 @@ fn handle_controlled_spawn(
         .insert(InputMarker::<shared::PlayerInput>::default());
 }
 
-/// Configure a fixed 1-tick input delay so the server has the client's input
-/// buffered before it simulates that tick. Without this, late packets cause
-/// `get_predict` to fall back to the last action — dropping or duplicating
-/// discrete turn events.
+/// Predict turns without a local input-delay tick. Lightyear's timeline lead
+/// and synchronization margin still allow inputs to travel to the server.
 fn configure_input_delay(client: Single<Entity, With<Client>>, mut commands: Commands) {
     commands.entity(client.into_inner()).insert(
-        InputTimelineConfig::default().with_input_delay(InputDelayConfig::fixed_input_delay(1)),
+        InputTimelineConfig::default().with_input_delay(InputDelayConfig::no_input_delay()),
     );
 }

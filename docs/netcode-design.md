@@ -1,5 +1,73 @@
 # Network & Simulation Architecture (Netcode)
 
+## Current Rust MVP implementation
+
+The sections below describe broader design goals, not a complete inventory of
+implemented features. The Rust MVP uses Lightyear 0.28 at 120 Hz with the following
+simulation contract:
+
+- `SimulationRole::Server` advances all players; the client role advances only
+  `Predicted` players. Owning human clients predict their rider; other humans and
+  bots use interpolation.
+- `Trail(Vec<Vec2>)` is player-owned state, ordered from oldest endpoint through
+  corners to the current head. Consecutive pairs include the actively growing
+  segment. Spawn initializes two coincident endpoints, tail trimming advances the
+  oldest endpoint, and death clears the vector. Trail geometry is replicated and
+  predicted as a single component, so turns and trimming roll back together
+  instead of spawning untracked child entities.
+- Both sides run `simulate_players` in `FixedUpdate`. Server bot input runs before
+  it and bot lifecycle runs afterward. Client input writing precedes simulation.
+  Each tick freezes obstacle geometry before advancing any rider, avoiding
+  dependence on player iteration order.
+- Client obstacles from nonpredicted opponents use confirmed trail and alive
+  histories sampled at or before the preceding simulation tick. Opponents with
+  unavailable history are omitted until history is available. Locally predicted
+  obstacles use their live start-of-tick state.
+- Position, direction, alive state and trails use step interpolation to keep
+  corners and trail heads coherent. Smooth visual interpolation is not yet
+  implemented.
+- Human respawn uses a dedicated ordered-reliable `RespawnChannel`:
+  `RespawnRequest { generation }` is sent client → server and a
+  `RespawnReply { generation, outcome }` is returned to that connection.
+  Requests carry no player ID, position or client-selected tick. Per-link
+  receivers are drained after `MessageSystems::Receive` in `PreUpdate` into a
+  server queue because Lightyear clears receivers in `Last`, even on frames
+  without a fixed tick. The queue is processed before shared simulation in
+  `FixedUpdate`, rechecking connected session ownership, dead human eligibility
+  and generation. Accepted/no-space/ineligible outcomes are observable through
+  replies and structured server logs. Disconnect invalidates queued requests.
+- An accepted respawn atomically resets the existing entity, not its control or
+  replication targets. Serialized spawn allocation sees earlier allocations
+  in the same tick. `LifeGeneration` is replicated **and predicted**, so
+  reconciliation/rollback restores it with movement state. Human turn variants
+  carry that generation: a 128-bit value combining a server-generated random
+  64-bit connection nonce with a 64-bit life counter. Thus old-session requests
+  and turns do not normally match a reconnect, even when both riders are on the
+  same life number. Counter exhaustion is denied rather than overflowing the
+  nonce. This is a lifecycle discriminator, not transport authentication.
+  Old buffered/in-flight turns and untagged human turns are ignored. Bots keep
+  untagged turns. Input histories are not erased: rollback can still replay
+  the corresponding earlier life.
+- Physical turns are accepted only for a ready local rider, and the live queue
+  is cleared when the observed rider dies, changes life/identity, or disconnects.
+  Dead-state keys are ignored. Fresh fixed-tick writing and live-queue lifecycle
+  processing never run against rollback state; keyboard collection can continue
+  using the last fresh observed state. Respawn is not locally predicted: the
+  overlay waits for authoritative replication. Predicted death may be corrected
+  or precede authoritative death; an early request can be denied and requires a
+  new keypress. Confirmation, denial and no-safe-space states have visible prompts.
+
+Respawn life tags prevent turns crossing lives, but do not address Lightyear's
+same-life one-shot-turn fallback/repetition risk under missing input. That
+future-hardening work remains in `NETWORK.md`; it is not implemented here.
+Safe spawning checks a current-geometry corridor, not future moving opponents.
+
+Collision is against zero-thickness, start-of-tick segments. Swept front clearance
+prevents crossing that geometry, but simultaneous newly grown trail intersections
+and head-to-head movement are not swept against each other. Multiplayer rollback
+and contact behavior still require runtime playtesting; compilation alone does
+not establish network correctness.
+
 ## 1. Core Philosophy
 
 The objective is to create a highly responsive network action game. To achieve this, **the client must never wait for the server to validate an action before displaying a response.**

@@ -15,6 +15,7 @@ fn main() {
 
     // Headless: no window, event-driven I/O loop.
     app.add_plugins(MinimalPlugins);
+    app.add_plugins(bevy::log::LogPlugin::default());
     // Required by lightyear replication internals.
     app.add_plugins(bevy::state::app::StatesPlugin);
 
@@ -30,22 +31,23 @@ fn main() {
     app.add_observer(systems::on_client_connected);
     // Disconnect observer — cleans up zombie player entities.
     app.add_observer(systems::on_client_disconnected);
+    app.init_resource::<systems::PendingRespawns>();
+    app.add_systems(
+        PreUpdate,
+        systems::collect_respawn_requests.after(lightyear::prelude::MessageSystems::Receive),
+    );
 
     // Simulation systems in FixedUpdate.
+    app.insert_resource(shared::SimulationRole::Server);
     app.add_systems(
         FixedUpdate,
         (
-            bot::bot_brain_input.before(shared::apply_turn),
-            shared::apply_turn,
-            shared::move_players,
-            shared::collide_with_arena,
+            systems::handle_respawns,
+            bot::bot_brain_input,
+            shared::simulate_players,
             bot::bot_spawner,
         )
             .chain(),
-    );
-    app.add_systems(
-        FixedUpdate,
-        systems::mark_trail_points_for_replication.after(shared::apply_turn),
     );
 
     // Spawn the arena once on startup (replicated to all clients).

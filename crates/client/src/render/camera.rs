@@ -2,6 +2,7 @@
 
 use bevy::camera::ScalingMode;
 use bevy::prelude::*;
+use lightyear::prelude::Predicted;
 use lightyear::prelude::input::native::InputMarker;
 use shared::{Player, PlayerInput, Position};
 
@@ -9,6 +10,12 @@ use shared::{Player, PlayerInput, Position};
 const CAMERA_VIEW_HEIGHT: f32 = 800.0;
 /// Camera distance from the 2D plane.
 const CAMERA_Z: f32 = 999.0;
+
+type LocalPlayer = (
+    With<Player>,
+    With<InputMarker<PlayerInput>>,
+    With<Predicted>,
+);
 
 /// Spawn a 2D orthographic follow camera centred on the origin.
 pub fn setup_camera(mut commands: Commands) {
@@ -27,7 +34,7 @@ pub fn setup_camera(mut commands: Commands) {
 /// Hard-snap the camera to the local player's position each frame.
 /// Smooth interpolation is planned for the polish phase.
 pub fn follow_player(
-    player: Query<&Position, (With<Player>, With<InputMarker<PlayerInput>>)>,
+    player: Query<&Position, LocalPlayer>,
     mut camera: Query<&mut Transform, With<Camera2d>>,
 ) {
     for pos in &player {

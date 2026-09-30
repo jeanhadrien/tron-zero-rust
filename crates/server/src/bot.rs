@@ -6,10 +6,9 @@
 use bevy::prelude::*;
 use lightyear::prelude::*;
 
-use shared::components::trail::TrailPointOrder;
 use shared::{
     self, ActionState, Direction, IsAlive, Player, PlayerColor, PlayerInput, Position, SpeedMult,
-    TrailPoint, TrailPointCount, TrailPointNextOrder, Velocity,
+    Trail, Velocity,
 };
 
 const CYCLE_DURATION_TICKS: u32 = 3600;
@@ -77,10 +76,10 @@ pub fn setup_bots(mut commands: Commands) {
 /// Write random turn decisions into each alive bot's `ActionState` every
 /// `TURN_DECISION_MIN_TICKS..=TURN_DECISION_MAX_TICKS` ticks.
 ///
-/// Always sets `ActionState.0` each tick so `apply_turn` (which reads
+/// Always sets `ActionState.0` each tick so shared simulation (which reads
 /// immutably) sees the correct value. On non-decision ticks, writes `None`.
 ///
-/// Runs before `apply_turn` so the turn takes effect this tick.
+/// Runs before shared simulation so the turn takes effect this tick.
 #[allow(clippy::type_complexity)]
 pub fn bot_brain_input(
     mut bots: Query<(&mut BotBrain, &mut ActionState<PlayerInput>), (With<Player>, With<IsAlive>)>,
@@ -106,7 +105,7 @@ pub fn bot_brain_input(
 /// Handle bot lifecycle: auto-cycle after `CYCLE_DURATION_TICKS`, respawn dead
 /// bots after `RESPAWN_DELAY_TICKS`.
 ///
-/// Runs after `collide_with_arena` so death flags are current.
+/// Runs after shared simulation so death flags are current.
 #[allow(clippy::type_complexity)]
 pub fn bot_spawner(
     mut commands: Commands,
@@ -168,7 +167,7 @@ fn spawn_bot_entity(commands: &mut Commands, bot_number: u32) -> Entity {
     let color = BOT_COLORS[(bot_number - 1) as usize % BOT_COLORS.len()];
     let (pos, dir) = random_spawn();
 
-    let player = commands
+    commands
         .spawn((
             Player,
             BotBrain { turn_timer: 10 },
@@ -179,23 +178,12 @@ fn spawn_bot_entity(commands: &mut Commands, bot_number: u32) -> Entity {
             SpeedMult::base(),
             PlayerColor(color),
             IsAlive(true),
-            TrailPointCount(1),
-            TrailPointNextOrder(1),
+            Trail::new(pos),
+            shared::ShouldHandleDeath(true),
             Replicate::to_clients(NetworkTarget::All),
-            PredictionTarget::to_clients(NetworkTarget::All),
+            InterpolationTarget::to_clients(NetworkTarget::All),
         ))
-        .id();
-
-    commands.spawn((
-        TrailPoint,
-        TrailPointOrder(0),
-        Position(pos),
-        Direction(dir),
-        ChildOf(player),
-        Replicate::to_clients(NetworkTarget::All),
-    ));
-
-    player
+        .id()
 }
 
 /// Pick a random spawn position (with `SPAWN_MARGIN` from walls) and a cardinal
