@@ -5,6 +5,9 @@ name: deploy
 # (same reason as the JS repo's deploy-release.yml).
 on:
   workflow_call:
+  # Manual rebuild / attach to an existing Release (e.g. v0.2.0, whose
+  # automatic run used the old placeholder workflow).
+  workflow_dispatch:
 
 permissions:
   contents: write
