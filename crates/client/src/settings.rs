@@ -231,9 +231,17 @@ mod tests {
         let mut bindings = TurnBindings::default();
         assert!(bindings.add_key(TurnSide::Left, KeyCode::KeyQ).is_err());
         assert!(bindings.add_key(TurnSide::Left, KeyCode::KeyK).is_err());
-        assert!(bindings.rebind_key(TurnSide::Right, 0, KeyCode::KeyS).is_err());
+        assert!(
+            bindings
+                .rebind_key(TurnSide::Right, 0, KeyCode::KeyS)
+                .is_err()
+        );
         // Rebinding to the same key already in the slot is a no-op success.
-        assert!(bindings.rebind_key(TurnSide::Left, 0, KeyCode::KeyQ).is_ok());
+        assert!(
+            bindings
+                .rebind_key(TurnSide::Left, 0, KeyCode::KeyQ)
+                .is_ok()
+        );
     }
 
     #[test]
@@ -276,11 +284,23 @@ mod tests {
     fn capture_appends_at_len_and_rebinds_below_len() {
         let mut bindings = TurnBindings::default();
         let len = bindings.left.len();
-        assert!(bindings.apply_capture(TurnSide::Left, len, KeyCode::KeyT).is_ok());
+        assert!(
+            bindings
+                .apply_capture(TurnSide::Left, len, KeyCode::KeyT)
+                .is_ok()
+        );
         assert_eq!(bindings.left[len], KeyCode::KeyT);
-        assert!(bindings.apply_capture(TurnSide::Left, 0, KeyCode::KeyG).is_ok());
+        assert!(
+            bindings
+                .apply_capture(TurnSide::Left, 0, KeyCode::KeyG)
+                .is_ok()
+        );
         assert_eq!(bindings.left[0], KeyCode::KeyG);
-        assert!(bindings.apply_capture(TurnSide::Left, len + 5, KeyCode::KeyH).is_err());
+        assert!(
+            bindings
+                .apply_capture(TurnSide::Left, len + 5, KeyCode::KeyH)
+                .is_err()
+        );
     }
 
     #[test]

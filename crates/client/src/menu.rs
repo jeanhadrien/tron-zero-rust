@@ -8,6 +8,7 @@ use bevy_egui::{EguiContexts, egui};
 use crate::connection::{ConnectionPhase, Session};
 use crate::input::PendingInput;
 use crate::settings::{MAX_KEYS_PER_SIDE, RebindState, TurnBindings, TurnSide, key_label};
+use crate::theme;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum MenuScreen {
@@ -99,6 +100,10 @@ impl UiAction {
     }
 }
 
+// Theme lives in `crate::theme` so menu, HUD, and death prompt share one
+// palette: near-black navy panel over a dimmed fullscreen backdrop, cyan
+// headings, teal full-width action buttons.
+
 pub fn menu_ui(
     mut contexts: EguiContexts,
     mut commands: Commands,
@@ -119,94 +124,129 @@ pub fn menu_ui(
     let phase = session.phase;
     let status = session.status.clone();
     let mut action = UiAction::None;
-    egui::Window::new("TRON ZERO")
-        .collapsible(false)
-        .resizable(false)
+    // Fullscreen dim backdrop, then a borderless panel centered on screen.
+    let viewport = ctx.viewport_rect();
+    egui::Area::new("menu_dim".into())
+        .order(egui::Order::Background)
+        .fixed_pos(viewport.min)
+        .interactable(false)
         .show(ctx, |ui| {
-        ui.vertical_centered(|ui| match screen {
-            MenuScreen::Main => {
-                ui.heading("TRON ZERO");
-                ui.label("LOCALHOST\n127.0.0.1:5000");
-                ui.label(status.as_str());
-                let caption = primary_caption(phase);
-                if ui
-                    .add_enabled(
-                        phase != ConnectionPhase::Disconnecting,
-                        egui::Button::new(caption),
-                    )
-                    .clicked()
-                    && action.is_none()
-                {
-                    action = match phase {
-                        ConnectionPhase::Offline => UiAction::Connect,
-                        ConnectionPhase::Connecting | ConnectionPhase::Synchronizing => {
-                            UiAction::CancelConnect
-                        }
-                        ConnectionPhase::Playing => UiAction::Resume,
-                        ConnectionPhase::Disconnecting => UiAction::None,
-                    };
-                }
-                if phase == ConnectionPhase::Playing
-                    && ui.button("Disconnect").clicked()
-                    && action.is_none()
-                {
-                    action = UiAction::Disconnect;
-                }
-                if ui.button("Settings").clicked() && action.is_none() {
-                    action = UiAction::GotoSettings;
-                }
-                ui.label(
-                    "Escape: menu / resume\n\n\
-                     Online play does not pause. While this menu is open,\n\
-                     your rider keeps moving and can die.",
-                );
-            }
-            MenuScreen::Settings => {
-                ui.heading("Settings - Turn keys");
-                for (side, title) in [(TurnSide::Left, "Left"), (TurnSide::Right, "Right")] {
-                    ui.label(title);
-                    ui.horizontal_wrapped(|ui| {
-                        for (index, key) in bindings.keys(side).iter().enumerate() {
-                            let label = if rebind.capturing == Some((side, index)) {
-                                "press key...".to_owned()
-                            } else {
-                                key_label(*key)
-                            };
-                            if ui.button(label).clicked() && action.is_none() {
-                                action = UiAction::StartCapture(side, index);
-                            }
-                            if ui.small_button("x").clicked() && action.is_none() {
-                                action = UiAction::RemoveKey(side, index);
-                            }
-                        }
-                    });
-                    let len = bindings.keys(side).len();
-                    if rebind.capturing == Some((side, len)) {
-                        ui.label(format!("Press a key for {title}... (Escape cancels)"));
-                    } else if ui
-                        .add_enabled(
-                            len < MAX_KEYS_PER_SIDE,
-                            egui::Button::new("Add key"),
-                        )
-                        .clicked()
-                        && action.is_none()
-                    {
-                        action = UiAction::StartCapture(side, len);
-                    }
-                }
-                if let Some(error) = &rebind.error {
-                    ui.colored_label(egui::Color32::RED, error.as_str());
-                }
-                if ui.button("Reset defaults").clicked() && action.is_none() {
-                    action = UiAction::ResetBindings;
-                }
-                if ui.button("Back").clicked() && action.is_none() {
-                    action = UiAction::Back;
-                }
-                ui.label("Keys apply immediately. Escape cancels capture.");
-            }
+            ui.painter().rect_filled(viewport, 0.0, theme::dim());
         });
-    });
+    egui::Area::new("menu_panel".into())
+        .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+        .show(ctx, |ui| {
+            theme::panel_frame().show(ui, |ui| {
+                ui.set_min_width(404.0);
+                theme::theme_panel(ui);
+                ui.vertical_centered(|ui| match screen {
+                    MenuScreen::Main => {
+                        ui.label(
+                            egui::RichText::new("TRON ZERO")
+                                .size(34.0)
+                                .strong()
+                                .color(theme::CYAN),
+                        );
+                        ui.label(egui::RichText::new("LOCALHOST\n127.0.0.1:5000").size(20.0));
+                        ui.label(
+                            egui::RichText::new(status.as_str())
+                                .size(16.0)
+                                .color(theme::BODY),
+                        );
+                        ui.separator();
+                        let caption = primary_caption(phase);
+                        let primary = ui
+                            .add_enabled_ui(phase != ConnectionPhase::Disconnecting, |ui| {
+                                theme::action_button(ui, caption)
+                            });
+                        if primary.inner.clicked() && action.is_none() {
+                            action = match phase {
+                                ConnectionPhase::Offline => UiAction::Connect,
+                                ConnectionPhase::Connecting | ConnectionPhase::Synchronizing => {
+                                    UiAction::CancelConnect
+                                }
+                                ConnectionPhase::Playing => UiAction::Resume,
+                                ConnectionPhase::Disconnecting => UiAction::None,
+                            };
+                        }
+                        if phase == ConnectionPhase::Playing
+                            && theme::action_button(ui, "Disconnect").clicked()
+                            && action.is_none()
+                        {
+                            action = UiAction::Disconnect;
+                        }
+                        if theme::action_button(ui, "Settings").clicked() && action.is_none() {
+                            action = UiAction::GotoSettings;
+                        }
+                    }
+                    MenuScreen::Settings => {
+                        ui.label(
+                            egui::RichText::new("SETTINGS")
+                                .size(26.0)
+                                .strong()
+                                .color(theme::CYAN),
+                        );
+                        ui.separator();
+                        for (side, title) in [(TurnSide::Left, "Left"), (TurnSide::Right, "Right")]
+                        {
+                            ui.label(
+                                egui::RichText::new(title)
+                                    .size(16.0)
+                                    .strong()
+                                    .color(theme::BODY),
+                            );
+                            ui.horizontal_wrapped(|ui| {
+                                for (index, key) in bindings.keys(side).iter().enumerate() {
+                                    let label = if rebind.capturing == Some((side, index)) {
+                                        "press key...".to_owned()
+                                    } else {
+                                        key_label(*key)
+                                    };
+                                    if ui
+                                        .button(
+                                            egui::RichText::new(label)
+                                                .family(egui::FontFamily::Monospace)
+                                                .size(18.0),
+                                        )
+                                        .clicked()
+                                        && action.is_none()
+                                    {
+                                        action = UiAction::StartCapture(side, index);
+                                    }
+                                    if ui.small_button("x").clicked() && action.is_none() {
+                                        action = UiAction::RemoveKey(side, index);
+                                    }
+                                }
+                            });
+                            let len = bindings.keys(side).len();
+                            if rebind.capturing == Some((side, len)) {
+                                ui.label(
+                                    egui::RichText::new(format!("Press a key for {title}..."))
+                                        .color(theme::BODY),
+                                );
+                            } else if ui
+                                .add_enabled(len < MAX_KEYS_PER_SIDE, egui::Button::new("Add key"))
+                                .clicked()
+                                && action.is_none()
+                            {
+                                action = UiAction::StartCapture(side, len);
+                            }
+                        }
+                        if let Some(error) = &rebind.error {
+                            ui.colored_label(egui::Color32::RED, error.as_str());
+                        }
+                        ui.separator();
+                        if theme::action_button(ui, "Reset defaults").clicked() && action.is_none()
+                        {
+                            action = UiAction::ResetBindings;
+                        }
+                        if theme::action_button(ui, "Back").clicked() && action.is_none() {
+                            action = UiAction::Back;
+                        }
+                    }
+                });
+            });
+        });
     match action {
         UiAction::None => {}
         UiAction::Connect => {
@@ -264,7 +304,10 @@ mod tests {
 
     #[test]
     fn primary_captions_match_connection_phase() {
-        assert_eq!(primary_caption(ConnectionPhase::Offline), "Connect to Localhost");
+        assert_eq!(
+            primary_caption(ConnectionPhase::Offline),
+            "Connect to Localhost"
+        );
         assert_eq!(primary_caption(ConnectionPhase::Connecting), "Cancel");
         assert_eq!(primary_caption(ConnectionPhase::Synchronizing), "Cancel");
         assert_eq!(primary_caption(ConnectionPhase::Playing), "Resume");

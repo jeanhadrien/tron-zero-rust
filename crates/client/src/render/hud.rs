@@ -1,119 +1,46 @@
-//! Persistent screen-space meters driven by the local predicted rider.
+//! Bottom-anchored rubber + speed meters drawn with egui.
+//!
+//! Values come from the local predicted rider; visibility matches the old
+//! Bevy-UI HUD (Playing, menu closed, local rider alive).
 
 use bevy::prelude::*;
+use bevy_egui::{EguiContexts, egui};
 use lightyear::prelude::input::native::InputMarker;
 use lightyear::prelude::{Client, Connected, Controlled, ControlledBy, Predicted};
 use shared::{BASE_RUBBER, IsAlive, Player, PlayerInput, Rubber, SpeedMult};
 
 use crate::connection::{ConnectionPhase, Session};
 use crate::menu::MenuState;
+use crate::theme;
 
-#[derive(Component)]
-pub struct HudRoot;
+// Fixed card width (matches the old 220px Bevy-UI cards). Without the max,
+// the Area auto-sizes to content and `available_width()` below is unbounded,
+// which stretched the rubber bar across the screen.
+const CARD_WIDTH: f32 = 220.0;
 
-#[derive(Clone, Copy)]
-enum Meter {
-    Rubber,
-    Speed,
+// Same visibility rule as the old retained HUD.
+pub fn hud_visible(phase: ConnectionPhase, menu_open: bool, alive: Option<bool>) -> bool {
+    phase == ConnectionPhase::Playing && !menu_open && alive.is_some_and(|a| a)
 }
 
-#[derive(Component)]
-pub struct MeterValue {
-    meter: Meter,
-    displayed: Option<u32>,
+// Rubber fraction clamped to [0, 1]; pure so tests skip the egui context.
+pub fn rubber_fraction(rubber: f32) -> f32 {
+    (rubber / BASE_RUBBER).clamp(0.0, 1.0)
 }
 
-#[derive(Component)]
-pub struct RubberFill;
-
-const CYAN: Color = Color::srgb(0.0, 1.0, 0.8);
-
-fn rubber_color(fraction: f32) -> Color {
-    if fraction <= 0.2 {
-        Color::srgb(1.0, 0.3, 0.3)
-    } else if fraction <= 0.5 {
-        Color::srgb(1.0, 0.75, 0.25)
-    } else {
-        CYAN
-    }
+pub fn rubber_percent(fraction: f32) -> u32 {
+    (fraction * 100.0).round() as u32
 }
 
-pub fn setup_hud(mut commands: Commands) {
-    commands
-        .spawn((
-            HudRoot,
-            GlobalZIndex(10),
-            Node {
-                position_type: PositionType::Absolute,
-                bottom: px(0.0),
-                width: percent(100.0),
-                padding: UiRect::all(px(20.0)),
-                justify_content: JustifyContent::SpaceBetween,
-                align_items: AlignItems::End,
-                display: Display::None,
-                ..Default::default()
-            },
-        ))
-        .with_children(|root| {
-            for (meter, label) in [(Meter::Rubber, "RUBBER"), (Meter::Speed, "SPEED")] {
-                root.spawn((
-                    Node {
-                        width: percent(44.0),
-                        max_width: px(220.0),
-                        padding: UiRect::all(px(16.0)),
-                        flex_direction: FlexDirection::Column,
-                        row_gap: px(8.0),
-                        ..Default::default()
-                    },
-                    BackgroundColor(Color::srgba(0.03, 0.06, 0.09, 0.9)),
-                ))
-                .with_children(|card| {
-                    card.spawn((
-                        Text::new(label),
-                        TextFont {
-                            font_size: FontSize::Px(14.0),
-                            ..Default::default()
-                        },
-                        TextColor(Color::srgb(0.75, 0.82, 0.88)),
-                    ));
-                    card.spawn((
-                        MeterValue {
-                            meter,
-                            displayed: None,
-                        },
-                        Text::new(""),
-                        TextFont {
-                            font_size: FontSize::Px(30.0),
-                            ..Default::default()
-                        },
-                        TextColor(CYAN),
-                    ));
-                    if matches!(meter, Meter::Rubber) {
-                        card.spawn((
-                            Node {
-                                width: percent(100.0),
-                                height: px(6.0),
-                                ..Default::default()
-                            },
-                            BackgroundColor(Color::srgb(0.12, 0.18, 0.22)),
-                        ))
-                        .with_child((
-                            RubberFill,
-                            Node {
-                                width: percent(100.0),
-                                height: percent(100.0),
-                                ..Default::default()
-                            },
-                            BackgroundColor(CYAN),
-                        ));
-                    }
-                });
-            }
-        });
+// "1.25x" style with two decimals; matches the old `1.25x` formatting.
+pub fn format_speed(speed: f32) -> String {
+    let number = (speed.max(0.0) * 100.0).round() as u32;
+    format!("{}.{:02}x", number / 100, number % 100)
 }
 
 #[allow(clippy::type_complexity)]
-pub fn update_hud(
+pub fn hud_ui(
+    mut contexts: EguiContexts,
     session: Res<Session>,
     menu: Res<MenuState>,
     clients: Query<Entity, (With<Client>, With<Connected>)>,
@@ -126,66 +53,110 @@ pub fn update_hud(
             With<InputMarker<PlayerInput>>,
         ),
     >,
-    mut roots: Query<&mut Node, With<HudRoot>>,
-    mut fills: Query<(&mut Node, &mut BackgroundColor), (With<RubberFill>, Without<HudRoot>)>,
-    mut values: Query<(&mut Text, &mut TextColor, &mut MeterValue)>,
 ) {
     let local = clients.single().ok().and_then(|client| {
         players
             .iter()
             .find(|(_, _, _, owner)| owner.is_none_or(|owner| owner.owner == client))
     });
-    let visible = session.phase == ConnectionPhase::Playing
-        && !menu.open
-        && local.is_some_and(|(_, _, alive, _)| alive.0);
-    for mut node in &mut roots {
-        node.display = if visible {
-            Display::Flex
-        } else {
-            Display::None
-        };
+    if !hud_visible(
+        session.phase,
+        menu.open,
+        local.map(|(_, _, alive, _)| alive.0),
+    ) {
+        return;
     }
-    let Some((rubber, speed, _, _)) = local.filter(|_| visible) else {
+    let Ok(ctx) = contexts.ctx_mut() else {
         return;
     };
-    let fraction = (rubber.0 / BASE_RUBBER).clamp(0.0, 1.0);
-    let color = rubber_color(fraction);
-    for (mut node, mut background) in &mut fills {
-        node.width = percent(fraction * 100.0);
-        background.0 = color;
-    }
-    for (mut text, mut text_color, mut value) in &mut values {
-        let number = match value.meter {
-            Meter::Rubber => (fraction * 100.0).round() as u32,
-            Meter::Speed => (speed.0.max(0.0) * 100.0).round() as u32,
-        };
-        text_color.0 = match value.meter {
-            Meter::Rubber => color,
-            Meter::Speed => CYAN,
-        };
-        if value.displayed != Some(number) {
-            text.0 = match value.meter {
-                Meter::Rubber => format!("{number}%"),
-                Meter::Speed => format!("{}.{:02}x", number / 100, number % 100),
-            };
-            value.displayed = Some(number);
-        }
-    }
+    let Some((rubber, speed, _, _)) = local else {
+        return;
+    };
+    let fraction = rubber_fraction(rubber.0);
+    let color = theme::rubber_egui(fraction);
+
+    // Two cards pinned to the bottom corners; non-interactive so gameplay
+    // clicks pass through. Painted in the default Middle order — the menu
+    // hides the HUD outright when open, so it always wins any tie.
+    egui::Area::new("hud_rubber".into())
+        .anchor(egui::Align2::LEFT_BOTTOM, [20.0, -20.0])
+        .interactable(false)
+        .show(ctx, |ui| {
+            theme::card_frame().show(ui, |ui| {
+                ui.set_min_width(CARD_WIDTH);
+                ui.set_max_width(CARD_WIDTH);
+                ui.label(egui::RichText::new("RUBBER").size(14.0).color(theme::BODY));
+                ui.label(
+                    egui::RichText::new(format!("{}%", rubber_percent(fraction)))
+                        .size(30.0)
+                        .color(color),
+                );
+                let (rect, _) = ui.allocate_exact_size(
+                    egui::vec2(ui.available_width(), 6.0),
+                    egui::Sense::hover(),
+                );
+                ui.painter().rect_filled(rect, 0.0, theme::TRACK);
+                let fill = egui::Rect::from_min_size(
+                    rect.min,
+                    egui::vec2(rect.width() * fraction, rect.height()),
+                );
+                ui.painter().rect_filled(fill, 0.0, color);
+            });
+        });
+    egui::Area::new("hud_speed".into())
+        .anchor(egui::Align2::RIGHT_BOTTOM, [-20.0, -20.0])
+        .interactable(false)
+        .show(ctx, |ui| {
+            theme::card_frame().show(ui, |ui| {
+                ui.set_min_width(CARD_WIDTH);
+                ui.set_max_width(CARD_WIDTH);
+                ui.label(egui::RichText::new("SPEED").size(14.0).color(theme::BODY));
+                ui.label(
+                    egui::RichText::new(format_speed(speed.0))
+                        .size(30.0)
+                        .color(theme::CYAN),
+                );
+            });
+        });
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::theme::{CYAN_BEVY, RUBBER_AMBER_BEVY, RUBBER_RED_BEVY};
     use bevy::ecs::system::RunSystemOnce;
     use lightyear::prelude::{PeerId, RemoteId};
 
     #[test]
     fn rubber_warning_thresholds_are_inclusive() {
-        assert_eq!(rubber_color(0.51), CYAN);
-        assert_eq!(rubber_color(0.5), Color::srgb(1.0, 0.75, 0.25));
-        assert_eq!(rubber_color(0.21), Color::srgb(1.0, 0.75, 0.25));
-        assert_eq!(rubber_color(0.2), Color::srgb(1.0, 0.3, 0.3));
-        assert_eq!(rubber_color(0.0), Color::srgb(1.0, 0.3, 0.3));
+        assert_eq!(theme::rubber_bevy(0.51), CYAN_BEVY);
+        assert_eq!(theme::rubber_bevy(0.5), RUBBER_AMBER_BEVY);
+        assert_eq!(theme::rubber_bevy(0.21), RUBBER_AMBER_BEVY);
+        assert_eq!(theme::rubber_bevy(0.2), RUBBER_RED_BEVY);
+        assert_eq!(theme::rubber_bevy(0.0), RUBBER_RED_BEVY);
+    }
+
+    #[test]
+    fn rubber_math_matches_old_meters() {
+        assert_eq!(rubber_fraction(BASE_RUBBER / 2.0), 0.5);
+        assert_eq!(rubber_percent(0.5), 50);
+        assert_eq!(rubber_percent(1.0), 100);
+        assert_eq!(format_speed(1.25), "1.25x");
+        assert_eq!(format_speed(1.0), "1.00x");
+        assert_eq!(format_speed(-3.0), "0.00x");
+    }
+
+    #[test]
+    fn hud_shows_only_while_playing_with_live_rider() {
+        assert!(hud_visible(ConnectionPhase::Playing, false, Some(true)));
+        assert!(!hud_visible(ConnectionPhase::Playing, true, Some(true)));
+        assert!(!hud_visible(ConnectionPhase::Playing, false, Some(false)));
+        assert!(!hud_visible(ConnectionPhase::Playing, false, None));
+        assert!(!hud_visible(
+            ConnectionPhase::Disconnecting,
+            false,
+            Some(true)
+        ));
     }
 
     #[test]
@@ -193,13 +164,10 @@ mod tests {
         let mut world = World::new();
         world.init_resource::<Session>();
         world.init_resource::<MenuState>();
-        world.run_system_once(setup_hud).unwrap();
-        world.run_system_once(update_hud).unwrap();
-        let root = world
-            .query_filtered::<Entity, With<HudRoot>>()
-            .single(&world)
-            .unwrap();
-        assert_eq!(world.get::<Node>(root).unwrap().display, Display::None);
+
+        // No client yet: nothing visible.
+        world.run_system_once(update_probe).unwrap();
+        assert!(!world.resource::<Probe>().0);
 
         world.spawn((Client::default(), RemoteId(PeerId::Server), Connected));
         // Confirmed/remote copies must never supply the HUD values.
@@ -217,52 +185,80 @@ mod tests {
             .id();
         world.resource_mut::<Session>().phase = ConnectionPhase::Playing;
         world.resource_mut::<MenuState>().open = false;
-        world.run_system_once(update_hud).unwrap();
-        assert_eq!(world.get::<Node>(root).unwrap().display, Display::Flex);
-        let labels: Vec<_> = world
-            .query_filtered::<&Text, With<MeterValue>>()
-            .iter(&world)
-            .map(|text| text.0.as_str())
-            .collect();
-        assert!(labels.contains(&"50%"));
-        assert!(labels.contains(&"1.25x"));
+        world.run_system_once(update_probe).unwrap();
+        let probe = world.resource::<Probe>();
+        assert!(probe.0);
+        assert_eq!(probe.1, Some(50));
+        assert_eq!(probe.2.as_deref(), Some("1.25x"));
 
-        for fraction in [1.0, 0.5, 0.2, 0.0] {
-            world
-                .entity_mut(rider)
-                .insert(Rubber(BASE_RUBBER * fraction));
-            world.run_system_once(update_hud).unwrap();
-            let (node, color) = world
-                .query_filtered::<(&Node, &BackgroundColor), With<RubberFill>>()
-                .single(&world)
-                .unwrap();
-            assert_eq!(node.width, percent(fraction * 100.0));
-            assert_eq!(color.0, rubber_color(fraction));
-        }
+        world.entity_mut(rider).insert(Rubber(0.0));
+        world.run_system_once(update_probe).unwrap();
+        assert_eq!(world.resource::<Probe>().1, Some(0));
+
         world.resource_mut::<MenuState>().open = true;
-        world.run_system_once(update_hud).unwrap();
-        assert_eq!(world.get::<Node>(root).unwrap().display, Display::None);
+        world.run_system_once(update_probe).unwrap();
+        assert!(!world.resource::<Probe>().0);
+
         world.resource_mut::<MenuState>().open = false;
         world.entity_mut(rider).insert(IsAlive(false));
-        world.run_system_once(update_hud).unwrap();
-        assert_eq!(world.get::<Node>(root).unwrap().display, Display::None);
+        world.run_system_once(update_probe).unwrap();
+        assert!(!world.resource::<Probe>().0);
+
         world
             .entity_mut(rider)
             .insert((IsAlive(true), Rubber(BASE_RUBBER), SpeedMult(1.0)));
-        world.run_system_once(update_hud).unwrap();
-        let labels: Vec<_> = world
-            .query_filtered::<&Text, With<MeterValue>>()
-            .iter(&world)
-            .map(|text| text.0.as_str())
-            .collect();
-        assert!(labels.contains(&"100%"));
-        assert!(labels.contains(&"1.00x"));
+        world.run_system_once(update_probe).unwrap();
+        let probe = world.resource::<Probe>();
+        assert!(probe.0);
+        assert_eq!(probe.1, Some(100));
+        assert_eq!(probe.2.as_deref(), Some("1.00x"));
+
         world.resource_mut::<Session>().phase = ConnectionPhase::Disconnecting;
-        world.run_system_once(update_hud).unwrap();
-        assert_eq!(world.get::<Node>(root).unwrap().display, Display::None);
+        world.run_system_once(update_probe).unwrap();
+        assert!(!world.resource::<Probe>().0);
+
         world.despawn(rider);
         world.resource_mut::<Session>().phase = ConnectionPhase::Playing;
-        world.run_system_once(update_hud).unwrap();
-        assert_eq!(world.get::<Node>(root).unwrap().display, Display::None);
+        world.run_system_once(update_probe).unwrap();
+        assert!(!world.resource::<Probe>().0);
+    }
+
+    // Mirrors hud_ui's lookup + visibility without needing an egui context.
+    #[derive(Resource, Default)]
+    struct Probe(bool, Option<u32>, Option<String>);
+
+    #[allow(clippy::type_complexity)]
+    fn update_probe(
+        session: Res<Session>,
+        menu: Res<MenuState>,
+        clients: Query<Entity, (With<Client>, With<Connected>)>,
+        players: Query<
+            (&Rubber, &SpeedMult, &IsAlive, Option<&ControlledBy>),
+            (
+                With<Player>,
+                With<Controlled>,
+                With<Predicted>,
+                With<InputMarker<PlayerInput>>,
+            ),
+        >,
+        probe: Option<ResMut<Probe>>,
+    ) {
+        let local = clients.single().ok().and_then(|client| {
+            players
+                .iter()
+                .find(|(_, _, _, owner)| owner.is_none_or(|owner| owner.owner == client))
+        });
+        let visible = hud_visible(
+            session.phase,
+            menu.open,
+            local.map(|(_, _, alive, _)| alive.0),
+        );
+        let Some(mut probe) = probe else { return };
+        probe.0 = visible;
+        let Some((rubber, speed, _, _)) = local.filter(|_| visible) else {
+            return;
+        };
+        probe.1 = Some(rubber_percent(rubber_fraction(rubber.0)));
+        probe.2 = Some(format_speed(speed.0));
     }
 }

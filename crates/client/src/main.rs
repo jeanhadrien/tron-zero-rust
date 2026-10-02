@@ -8,6 +8,7 @@ mod input;
 mod menu;
 mod render;
 mod settings;
+mod theme;
 
 use bevy::prelude::*;
 use bevy_egui::{EguiPlugin, EguiPrimaryContextPass};
@@ -51,7 +52,12 @@ fn main() {
             .before(input::buffer_keyboard_input),
     );
     app.add_systems(Update, connection::finish_disconnect);
-    app.add_systems(EguiPrimaryContextPass, menu::menu_ui);
+    // egui overlays share one pass; order keeps the menu above HUD/death on
+    // any same-order tie (menu.open also hides both outright).
+    app.add_systems(
+        EguiPrimaryContextPass,
+        (render::hud_ui, render::death_ui, menu::menu_ui),
+    );
     app.add_systems(Update, connection::send_leave);
     app.add_systems(
         PostUpdate,
@@ -82,14 +88,7 @@ fn main() {
     app.add_systems(FixedUpdate, shared::simulate_players);
 
     // Rendering.
-    app.add_systems(
-        Startup,
-        (
-            render::setup_camera,
-            render::setup_death_overlay,
-            render::setup_hud,
-        ),
-    );
+    app.add_systems(Startup, render::setup_camera);
     app.add_systems(
         Update,
         (
@@ -97,8 +96,6 @@ fn main() {
             render::draw_trails,
             render::draw_players,
             render::follow_player,
-            render::update_death_overlay,
-            render::update_hud,
         ),
     );
 

@@ -147,20 +147,16 @@ pub fn buffer_keyboard_input(
             pending.0.push_back(PlayerInput::TurnLeft);
         } else if bindings.is_right(key) && can_turn {
             pending.0.push_back(PlayerInput::TurnRight);
-        } else if matches!(
-            key,
-            KeyCode::Space | KeyCode::Enter | KeyCode::NumpadEnter
-        ) && !rollback
+        } else if matches!(key, KeyCode::Space | KeyCode::Enter | KeyCode::NumpadEnter)
+            && !rollback
             && !alive.0
             && respawn.pending_generation.is_none()
+            && let (Some((client_entity, _)), Some(life)) = (client, life)
+            && let Ok(mut sender) = senders.get_mut(client_entity)
         {
-            if let (Some((client_entity, _)), Some(life)) = (client, life)
-                && let Ok(mut sender) = senders.get_mut(client_entity)
-            {
-                sender.send::<RespawnChannel>(RespawnRequest { generation: life.0 });
-                respawn.pending_generation = Some(life.0);
-                respawn.outcome = None;
-            }
+            sender.send::<RespawnChannel>(RespawnRequest { generation: life.0 });
+            respawn.pending_generation = Some(life.0);
+            respawn.outcome = None;
         }
     }
 }
@@ -604,8 +600,7 @@ mod tests {
 
         let (mut world, _, _) = setup();
         world.init_resource::<Messages<KeyboardInput>>();
-        world.resource_mut::<RebindState>().capturing =
-            Some((TurnSide::Left, 0));
+        world.resource_mut::<RebindState>().capturing = Some((TurnSide::Left, 0));
         // Duplicate of a right-side key: rejected, capture stays open.
         press(&mut world, KeyCode::KeyK);
         world.run_system_once(buffer_keyboard_input).unwrap();
@@ -621,10 +616,7 @@ mod tests {
         assert!(world.resource::<PendingInput>().0.is_empty());
         assert!(world.resource::<RebindState>().capturing.is_none());
         assert!(world.resource::<RebindState>().error.is_none());
-        assert_eq!(
-            world.resource::<TurnBindings>().left[0],
-            KeyCode::KeyT
-        );
+        assert_eq!(world.resource::<TurnBindings>().left[0], KeyCode::KeyT);
     }
 
     #[test]
@@ -633,15 +625,16 @@ mod tests {
 
         let (mut world, _, _) = setup();
         world.init_resource::<Messages<KeyboardInput>>();
-        world.resource_mut::<RebindState>().capturing =
-            Some((TurnSide::Right, 1));
+        world.resource_mut::<RebindState>().capturing = Some((TurnSide::Right, 1));
         press(&mut world, KeyCode::Escape);
         world.run_system_once(buffer_keyboard_input).unwrap();
         assert!(world.resource::<RebindState>().capturing.is_none());
         assert!(world.resource::<PendingInput>().0.is_empty());
-        assert!(!world
-            .resource::<TurnBindings>()
-            .right
-            .contains(&KeyCode::Escape));
+        assert!(
+            !world
+                .resource::<TurnBindings>()
+                .right
+                .contains(&KeyCode::Escape)
+        );
     }
 }
