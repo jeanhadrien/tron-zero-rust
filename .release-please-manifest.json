@@ -1,5 +1,5 @@
 {
-  "crates/shared": "0.1.0",
-  "crates/server": "0.1.0",
-  "crates/client": "0.1.0"
+  "crates/shared": "0.2.0",
+  "crates/server": "0.2.0",
+  "crates/client": "0.2.0"
 }
