@@ -3,6 +3,22 @@
 Status: planning only, 2026-09-30. These items are not implemented or verified
 unless explicitly described as existing behavior below.
 
+## Next session TODO (paused 2026-10-01)
+
+- [ ] Start with the P0 Lightyear 0.28 input-pipeline investigation: trace tick
+  mapping, input lead, redundancy, acknowledgments, missing-input fallback and
+  replay; document actual defaults and available extension points.
+- [ ] Use that evidence to choose strict late-turn rejection versus bounded
+  later execution with the user. No late policy or 100 ms allowance is approved.
+- [ ] Implement the one-shot command contract end to end, preserving rapid
+  queued presses, ordering, deduplication and rollback/life/session safety.
+- [ ] Add regressions and command traces, then arrange user-run or external
+  impaired-network validation before claiming delivery reliability.
+
+Agreed boundary: forward-only authoritative server, immediate client prediction,
+client reconciliation only. Missing input never invents a turn. No server rewind.
+Work is paused before investigation/implementation; resume here next session.
+
 ## Assessment and existing foundation
 
 The current architecture is a reasonable MVP base, not yet a demonstrated
@@ -46,8 +62,8 @@ The rollback-safe local queue does not fix this network-level mismatch.
 - [ ] Define missing-input behavior: continue movement, never invent a turn.
 - [ ] Define bounded redundancy/retransmission, acknowledgment, deduplication,
   history retention, sequence wraparound, and reconnect/session reset semantics.
-- [ ] Decide the late-command policy explicitly: reject with feedback, apply
-  within a bounded late window, or support a bounded authoritative rewind.
+- [ ] Decide the late-command policy explicitly: reject with feedback or apply
+  within a bounded late window. Server rewind is excluded from this design.
   Evaluate fairness and complexity before selecting one. Sequence IDs alone
   cannot restore an action to a tick the server has already simulated.
 - [ ] Validate ownership, tick windows, command ordering, and the legal turn
@@ -56,9 +72,76 @@ The rollback-safe local queue does not fix this network-level mismatch.
   and prolonged synchronization stalls; avoid stale turns firing after recovery.
 
 Acceptance: within the supported network envelope, accepted commands execute
-once in order in the final authoritative timeline. Rollback reproduces the same
+once in order in the authoritative timeline. Client rollback reproduces the same
 result. Missing input never generates a turn. Late/rejected commands have an
 explicit, observable outcome. No promise of delivery through an unlimited outage.
+
+### Agreed authority model (2026-10-01)
+
+Menu/HUD work is checkpointed in `8a83345`. Turn-delivery implementation has not
+started. The agreed architecture is:
+
+- **Forward-only authoritative server:** late input does not rewrite simulated
+  ticks, relocate historical corners, or reverse authoritative deaths.
+- **Immediate local prediction:** fresh queued turns execute at most once per
+  client simulation tick, without waiting for acknowledgment.
+- **Client reconciliation/rollback:** restore authoritative state and replay
+  outstanding historical inputs. Replay must not consume fresh keyboard events
+  or manufacture additional commands.
+- **Missing input means no new turn:** continue normal movement/collision
+  simulation; never repeat a one-shot action just because its packet is missing.
+- **No server world rollback or shooter-style historical hit testing** in this
+  turn-delivery work. Server authority alone does not prohibit those techniques,
+  but neither is required to make this command pipeline reliable.
+
+Client-predicted deaths can still be corrected by server snapshots; that does
+not mean the server reversed its own earlier death decision.
+
+### Remaining late-command decision
+
+- **Strict deadline:** reject commands received after their intended server tick.
+  Preserves already-published history but can discard physical presses under jitter.
+- **Bounded late execution:** apply late commands in order on subsequent ticks,
+  at most one per tick, and explicitly reject expired commands. The proposed
+  100 ms / 12-tick grace window is an unvalidated tuning candidate, not an agreed
+  policy or supported-network guarantee. It cannot restore the intended corner
+  or reverse an authoritative death.
+
+Input timeline lead and command redundancy can reduce missed deadlines without
+waiting to display a local predicted turn. They should be measured before
+choosing a lateness budget; RTT is not itself command lateness.
+Whichever policy is selected, transport receipt, scheduling acceptance and final
+simulation outcome must be distinguished in acknowledgments and diagnostics.
+Timing validation must be server-bounded, not based on arbitrary client backdating.
+
+### Implementation sequence
+
+1. Trace installed Lightyear 0.28 input collection, tick mapping, buffering,
+   redundancy, receipt acknowledgments, missing-input fallback, pruning and
+   client replay. Record actual defaults/extension points before changing them.
+   Reuse the existing stack where it satisfies the contract.
+2. Specify the command contract: session/life identity, distinct ordered turns,
+   intended tick, server consumption state, and explicit applied/rejected
+   outcomes. Define sequence gaps, duplicate/conflicting submissions, expiry,
+   history limits and resets. Confirm the late policy before implementing it.
+3. Implement end-to-end delivery and rollback-aware consumption together.
+   Preserve same-frame bursts and consecutive identical turns, one per tick.
+   Bound network history/work without silently losing already accepted commands.
+   Do not assume an ordered-reliable channel alone solves tick deadlines.
+4. Add command/tick traces and deterministic regressions for loss, duplication,
+   reordering, delayed packets, missing sequence gaps, client rollback, death,
+   respawn and reconnect. Explicitly assert that no input invents a turn and
+   that each accepted command executes exactly once in authoritative simulation.
+5. Exercise the real client/server pipeline under seeded network impairment.
+   Measure lateness, input lead, corrections and queue age before tuning buffers.
+   Compilation is not execution: the repository's no-agent-build rule means
+   runtime results require a user-run or approved external workflow.
+
+Reference distinction: Riot's
+[VALORANT netcode explanation](https://www.riotgames.com/en/news/peeking-valorants-netcode)
+separates committed server movement with client correction from historical hit
+registration. This is architectural context, not a specification of Lightyear
+or a claim that all esports games implement identical networking.
 
 ## P1: collision prediction and competitive fairness
 

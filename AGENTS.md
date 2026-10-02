@@ -1,5 +1,17 @@
 # Agent (you)
 
+## Original JavaScript Codebase
+
+The original repo is cloned alongside this Rust rewrite at `..\tron-zero-js`
+(`C:\dev\tron-zero-js` when this repository is at `C:\dev\tron-zero-rust`).
+Consult it for existing gameplay behavior and porting details; `PLAN.md` is
+the rewrite plan, not a substitute for checking the original implementation.
+Keep changes to the Rust repository unless explicitly asked to edit the JS code.
+
+## Base Game Armagetron
+
+The base game is available at https://github.com/ArmagetronAd/armagetronad
+
 ## Project Development
 
 Do not build the project yourself.

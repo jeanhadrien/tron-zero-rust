@@ -87,30 +87,44 @@ and head-to-head movement are not swept against each other. Multiplayer rollback
 and contact behavior still require runtime playtesting; compilation alone does
 not establish network correctness.
 
-## 1. Core Philosophy
+## 1. Agreed Authority Model (2026-10-01)
 
 The objective is to create a highly responsive network action game. To achieve this, **the client must never wait for the server to validate an action before displaying a response.**
 
 - **Client Prediction:** The player hits a button, the player sees an immediate response.
 - **Server Authority:** The client has zero simulation authority other than providing their inputs. The server remains the absolute source of truth to prevent cheating and resolve conflicts.
-- **Mispredictions:** Disagreements between the client's predicted state and the server's authoritative state are handled gracefully via deterministic rollback and reconciliation, never at the expense of immediate responsiveness.
+- **Forward-only Server:** Late commands do not rewind the world, rewrite past trails, or reverse authoritative deaths. Full server rollback and shooter-style historical hit testing are outside the turn-delivery design.
+- **Mispredictions:** The client restores authoritative state and replays historical inputs. This is client rollback, not server rollback. Corrections can still be visible; immediate prediction does not guarantee agreement.
+- **One-shot Turns:** Every physical press is a distinct ordered command, including repeated turns in the same direction. Missing input must never create another turn. Normal movement and collision handling continue when no new turn is available.
+
+The authority model is agreed; reliable one-shot delivery is still pending.
+Strict rejection versus bounded later execution of late commands remains an
+explicit decision. Neither may change an already-simulated server tick.
+Client-predicted death can be corrected without reversing a server death.
+See `NETWORK.md` for implementation order, acceptance criteria and open decisions.
 
 ## 2. Simulation Fundamentals
 
-Our deterministic simulation relies on a synchronized clock, fixed update intervals, and quantization.
+Client and server share a fixed-tick simulation. Cross-platform determinism and
+impaired-network behavior still require verification.
 
-- **Fixed Timestep (Command Frames):** Both client and server operate on quantized "Command Frames" (e.g., 16ms per frame for a 60Hz tick rate).
+- **Fixed Timestep:** Both client and server simulate at 120 Hz (approximately 8.33 ms per tick).
 - **Accumulator Pattern:** The game loop translates variable render frames into fixed simulation ticks using an accumulator with rollover and remainder
-- **ECS Integration:** Systems predicting on the client or simulating on the server do not use a variable `update()`. They use an `update_fixed()` step guaranteeing identical integration steps across both ends.
+- **ECS Integration:** Gameplay runs in Bevy `FixedUpdate`, not variable-rate `Update`. Fixed stepping alone does not guarantee identical outcomes when available inputs or collision geometry differ.
 
 ## 3. Time Synchronization & Client Lead
 
-To minimize input delay on the server, the client's simulation clock always runs **ahead** of the server's clock.
+During synchronized play, the client's prediction timeline runs **ahead** of
+the server to give inputs time to arrive before their intended simulation tick.
 
-- **Lead Formula:** `Client Time = Server Time + (RTT / 2) + 1 Buffered Command Frame`
-- **Why?** The client gobbles up input as close to "now" as possible. By simulating ahead of the server by exactly the one-way trip time plus a tiny buffer, the client's input packets arrive at the server at the exact moment the server is ready to simulate that specific command frame.
+Lightyear manages synchronization and timeline lead. The client currently uses
+`InputDelayConfig::no_input_delay()`: no configured extra delay before applying
+local input, not zero network transit time or zero prediction lead.
+The installed implementation and actual lead must be traced/measured before
+tuning. `RTT / 2 + buffer` is only an intuition, not a verified configuration or
+a guarantee of arrival before a deadline; routes can be asymmetric and jittery.
 
-## 4. Rollback and Reconciliation (Handling Mispredictions)
+## 4. Client Rollback and Reconciliation (Handling Mispredictions)
 
 Because the client simulates ahead, it will occasionally mispredict (e.g., the client thought they turned in time to avoid a trail, but the server calculates they hit it).
 
@@ -126,21 +140,32 @@ Because the client simulates ahead, it will occasionally mispredict (e.g., the c
 
 ## 5. Network Resilience (Packet Loss & Jitter)
 
-The game uses UDP, which is inherently lossy. We employ two major techniques to ensure simulation stability without sacrificing responsiveness:
+The game uses UDP with Lightyear's input transport. The following are requirements
+for the pending turn-delivery work, not claims of completed hardening.
 
-### A. Sliding Window Inputs
+### A. Redundancy and Command Identity
 
-- Instead of sending just the input for the current frame, the client sends a **sliding window of all inputs** starting from the last frame acknowledged by the server.
-- _Example:_ If the server last acknowledged Frame 4, and the client just simulated Frame 19, the packet contains inputs for Frames 5 through 19.
-- Since button states compress incredibly well (e.g., "Left Turn was held for 10 frames"), this payload is tiny but guarantees the server can fill in any dropped packets instantly once a subsequent packet arrives.
+Inspect and reuse Lightyear's actual redundant-input facilities before adding
+another channel. Commands need unambiguous identity/order and bounded history;
+packet receipt is not proof that a turn executed. Retransmission must not repeat
+an action, and two consecutive left turns must remain two commands.
+Redundancy improves recovery but cannot guarantee timely delivery through an outage.
 
-### B. Dynamic Time Dilation (Buffer Management)
+### B. Missing Input and Timing
 
-- **Server Starvation:** If the server doesn't receive input in time for a frame, it duplicates the previous input, simulates it, and alerts the client.
-- **Client Response (Dilation):** When the client hears the server is starved, it slightly speeds up its local simulation (e.g., ticking every 15.2ms instead of 16ms). This generates inputs slightly faster, inflating the server's input buffer to weather the packet loss/jitter.
-- **Client Response (Contraction):** Once the server is healthy and has too large of a buffer, the client slows down its simulation clock (e.g., 16.8ms) to shrink the server's buffer back to the razor's edge, minimizing latency.
+Repeating held movement can be appropriate in other games; repeating a Tron
+turn is not. Lightyear's current last-input fallback is a known mismatch to fix,
+not the desired gameplay rule. Missing input must mean no new turn.
+Client replay must restore consumption state with gameplay state, while fresh
+input collection remains separate from replay.
 
-## 6. Resolution of Conflicts (Favor the Shooter vs. Mitigating Actions)
+Measure input starvation, lead, command age and corrections before tuning
+buffering. The late-command policy must report expired/rejected commands and
+must not replay stale turns indefinitely after a stall.
 
-- **General Rule:** We favor the attacker/actor. If it looked like a valid kill/cutoff on the attacker's screen, the server will usually validate it.
-- **The Exception (Evasive Abilities):** If the victim activated an evasive maneuver (e.g., a hypothetical "Shield" or "Jump" in Tron-Zero) on their client _before_ the attacker's input arrived at the server, the server honors the defensive ability, and the attacker misses.
+## 6. Collision Authority
+
+The server decides collisions from its simulation, not a client's claimed kill,
+cutoff or escape. There is no agreed "favor the attacker" rule and no historical
+hitbox rewind for trails. Simultaneous-growth resolution and stale opponent
+geometry in client prediction remain separate fairness work in `NETWORK.md`.

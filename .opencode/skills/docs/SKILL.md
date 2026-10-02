@@ -1,8 +1,10 @@
 ---
 name: documentation
-description: Get an index of relevant project documentation. 
+description: Get an index of relevant project documentation (lightyear, bevy...) 
 ---
 # Library docs (high-level)
+
+Update this documentation in .opencode\skills\docs\SKILL.md
 
 ## Lightyear 0.28
 
