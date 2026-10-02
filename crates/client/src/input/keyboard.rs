@@ -113,7 +113,7 @@ pub fn buffer_keyboard_input(
                 rebind.capturing = None;
                 rebind.error = None;
             } else {
-                match bindings.apply_capture(side, index, event.key_code) {
+                match bindings.apply_capture(side, index, event.key_code, &event.logical_key) {
                     Ok(()) => {
                         rebind.capturing = None;
                         rebind.error = None;
@@ -584,9 +584,17 @@ mod tests {
     }
 
     fn press(world: &mut World, key: KeyCode) {
+        press_logical(
+            world,
+            key,
+            Key::Unidentified(bevy::input::keyboard::NativeKey::Unidentified),
+        );
+    }
+
+    fn press_logical(world: &mut World, key: KeyCode, logical_key: Key) {
         world.write_message(KeyboardInput {
             key_code: key,
-            logical_key: Key::Unidentified(bevy::input::keyboard::NativeKey::Unidentified),
+            logical_key,
             state: ButtonState::Pressed,
             text: None,
             repeat: false,
@@ -616,7 +624,18 @@ mod tests {
         assert!(world.resource::<PendingInput>().0.is_empty());
         assert!(world.resource::<RebindState>().capturing.is_none());
         assert!(world.resource::<RebindState>().error.is_none());
-        assert_eq!(world.resource::<TurnBindings>().left[0], KeyCode::KeyT);
+        assert_eq!(world.resource::<TurnBindings>().left[0].code, KeyCode::KeyT);
+        // AZERTY glyph: physical KeyQ captured with logical "a" shows "A"
+        // but still matches the physical code.
+        world.resource_mut::<RebindState>().capturing = Some((TurnSide::Left, 0));
+        press_logical(&mut world, KeyCode::KeyQ, Key::Character("a".into()));
+        world.run_system_once(buffer_keyboard_input).unwrap();
+        assert!(world.resource::<RebindState>().capturing.is_none());
+        assert_eq!(world.resource::<TurnBindings>().left[0].code, KeyCode::KeyQ);
+        assert_eq!(
+            crate::settings::key_label(&world.resource::<TurnBindings>().left[0]),
+            "A"
+        );
     }
 
     #[test]
@@ -634,7 +653,8 @@ mod tests {
             !world
                 .resource::<TurnBindings>()
                 .right
-                .contains(&KeyCode::Escape)
+                .iter()
+                .any(|b| b.code == KeyCode::Escape)
         );
     }
 }

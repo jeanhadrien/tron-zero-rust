@@ -196,11 +196,11 @@ pub fn menu_ui(
                                     .color(theme::BODY),
                             );
                             ui.horizontal_wrapped(|ui| {
-                                for (index, key) in bindings.keys(side).iter().enumerate() {
+                                for (index, binding) in bindings.keys(side).iter().enumerate() {
                                     let label = if rebind.capturing == Some((side, index)) {
                                         "press key...".to_owned()
                                     } else {
-                                        key_label(*key)
+                                        key_label(binding).to_owned()
                                     };
                                     if ui
                                         .button(
