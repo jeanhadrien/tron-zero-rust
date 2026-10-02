@@ -11,6 +11,7 @@
 use std::collections::VecDeque;
 
 use crate::menu::MenuState;
+use crate::settings::{RebindState, TurnBindings};
 use bevy::ecs::message::MessageReader;
 use bevy::input::keyboard::KeyboardInput;
 use bevy::prelude::*;
@@ -59,6 +60,8 @@ pub fn buffer_keyboard_input(
     mut pending: ResMut<PendingInput>,
     mut lifecycle: ResMut<InputLifecycle>,
     mut respawn: ResMut<RespawnUi>,
+    mut bindings: ResMut<TurnBindings>,
+    mut rebind: ResMut<RebindState>,
     menu: Res<MenuState>,
     clients: Query<
         (Entity, Has<Rollback>),
@@ -100,6 +103,32 @@ pub fn buffer_keyboard_input(
             respawn.outcome = None;
         }
     }
+    // Rebind capture eats every physical press; nothing reaches the turn queue.
+    if let Some((side, index)) = rebind.capturing {
+        for event in key_events.read() {
+            if !event.state.is_pressed() || event.repeat {
+                continue;
+            }
+            if event.key_code == KeyCode::Escape {
+                rebind.capturing = None;
+                rebind.error = None;
+            } else {
+                match bindings.apply_capture(side, index, event.key_code) {
+                    Ok(()) => {
+                        rebind.capturing = None;
+                        rebind.error = None;
+                    }
+                    Err(message) => {
+                        rebind.error = Some(message.to_owned());
+                    }
+                }
+            }
+            break;
+        }
+        pending.0.clear();
+        key_events.clear();
+        return;
+    }
     if menu.captures_input() {
         pending.0.clear();
         key_events.clear();
@@ -113,25 +142,25 @@ pub fn buffer_keyboard_input(
         let Some((_, alive, life, _)) = player else {
             continue;
         };
-        match event.key_code {
-            KeyCode::ArrowLeft | KeyCode::KeyA if can_turn => {
-                pending.0.push_back(PlayerInput::TurnLeft);
-            }
-            KeyCode::ArrowRight | KeyCode::KeyD if can_turn => {
-                pending.0.push_back(PlayerInput::TurnRight);
-            }
+        let key = event.key_code;
+        if bindings.is_left(key) && can_turn {
+            pending.0.push_back(PlayerInput::TurnLeft);
+        } else if bindings.is_right(key) && can_turn {
+            pending.0.push_back(PlayerInput::TurnRight);
+        } else if matches!(
+            key,
             KeyCode::Space | KeyCode::Enter | KeyCode::NumpadEnter
-                if !rollback && !alive.0 && respawn.pending_generation.is_none() =>
+        ) && !rollback
+            && !alive.0
+            && respawn.pending_generation.is_none()
+        {
+            if let (Some((client_entity, _)), Some(life)) = (client, life)
+                && let Ok(mut sender) = senders.get_mut(client_entity)
             {
-                if let (Some((client_entity, _)), Some(life)) = (client, life)
-                    && let Ok(mut sender) = senders.get_mut(client_entity)
-                {
-                    sender.send::<RespawnChannel>(RespawnRequest { generation: life.0 });
-                    respawn.pending_generation = Some(life.0);
-                    respawn.outcome = None;
-                }
+                sender.send::<RespawnChannel>(RespawnRequest { generation: life.0 });
+                respawn.pending_generation = Some(life.0);
+                respawn.outcome = None;
             }
-            _ => {}
         }
     }
 }
@@ -221,7 +250,10 @@ mod tests {
         world.insert_resource(MenuState {
             open: false,
             block_this_frame: false,
+            screen: crate::menu::MenuScreen::Main,
         });
+        world.init_resource::<TurnBindings>();
+        world.init_resource::<RebindState>();
         let client = world
             .spawn((
                 Client::default(),
@@ -249,9 +281,9 @@ mod tests {
         world.init_resource::<Messages<KeyboardInput>>();
         let keys = [
             KeyCode::ArrowLeft,
-            KeyCode::KeyA,
+            KeyCode::KeyQ,
             KeyCode::ArrowRight,
-            KeyCode::KeyD,
+            KeyCode::KeyK,
         ];
         let expected = [
             PlayerInput::TurnLeft,
@@ -342,8 +374,8 @@ mod tests {
         let (mut world, _, _) = setup();
         world.init_resource::<Messages<KeyboardInput>>();
         for (key_code, state, repeat) in [
-            (KeyCode::KeyA, ButtonState::Released, false),
-            (KeyCode::KeyA, ButtonState::Pressed, true),
+            (KeyCode::KeyQ, ButtonState::Released, false),
+            (KeyCode::KeyQ, ButtonState::Pressed, true),
             (KeyCode::Space, ButtonState::Pressed, false),
         ] {
             world.write_message(KeyboardInput {
@@ -409,7 +441,7 @@ mod tests {
         let (mut world, _, player) = setup();
         world.init_resource::<Messages<KeyboardInput>>();
         world.get_mut::<IsAlive>(player).unwrap().0 = false;
-        for key_code in [KeyCode::KeyA, KeyCode::KeyD] {
+        for key_code in [KeyCode::KeyQ, KeyCode::KeyK] {
             world.write_message(KeyboardInput {
                 key_code,
                 logical_key: Key::Unidentified(bevy::input::keyboard::NativeKey::Unidentified),
@@ -480,7 +512,7 @@ mod tests {
         // Rewound dead state must not clear or replace the fresh live queue.
         world.get_mut::<IsAlive>(player).unwrap().0 = false;
         world.write_message(KeyboardInput {
-            key_code: KeyCode::KeyA,
+            key_code: KeyCode::KeyQ,
             logical_key: Key::Unidentified(bevy::input::keyboard::NativeKey::Unidentified),
             state: ButtonState::Pressed,
             text: None,
@@ -507,7 +539,7 @@ mod tests {
             .push_back(PlayerInput::TurnRight);
         world.get_mut::<ActionState<PlayerInput>>(player).unwrap().0 = PlayerInput::TurnLeft;
         world.write_message(KeyboardInput {
-            key_code: KeyCode::KeyA,
+            key_code: KeyCode::KeyQ,
             logical_key: Key::Unidentified(bevy::input::keyboard::NativeKey::Unidentified),
             state: ButtonState::Pressed,
             text: None,
@@ -531,6 +563,7 @@ mod tests {
             world.insert_resource(MenuState {
                 open,
                 block_this_frame: true,
+                screen: crate::menu::MenuScreen::Main,
             });
             world
                 .entity_mut(client)
@@ -552,5 +585,63 @@ mod tests {
             assert!(world.resource::<RespawnUi>().pending_generation.is_none());
             assert!(!world.get::<IsAlive>(player).unwrap().0);
         }
+    }
+
+    fn press(world: &mut World, key: KeyCode) {
+        world.write_message(KeyboardInput {
+            key_code: key,
+            logical_key: Key::Unidentified(bevy::input::keyboard::NativeKey::Unidentified),
+            state: ButtonState::Pressed,
+            text: None,
+            repeat: false,
+            window: Entity::PLACEHOLDER,
+        });
+    }
+
+    #[test]
+    fn capture_drains_presses_without_queueing_turns() {
+        use crate::settings::TurnSide;
+
+        let (mut world, _, _) = setup();
+        world.init_resource::<Messages<KeyboardInput>>();
+        world.resource_mut::<RebindState>().capturing =
+            Some((TurnSide::Left, 0));
+        // Duplicate of a right-side key: rejected, capture stays open.
+        press(&mut world, KeyCode::KeyK);
+        world.run_system_once(buffer_keyboard_input).unwrap();
+        assert!(world.resource::<PendingInput>().0.is_empty());
+        assert_eq!(
+            world.resource::<RebindState>().capturing,
+            Some((TurnSide::Left, 0))
+        );
+        assert!(world.resource::<RebindState>().error.is_some());
+        // Fresh unbound key: rebinds slot 0 and closes the capture.
+        press(&mut world, KeyCode::KeyT);
+        world.run_system_once(buffer_keyboard_input).unwrap();
+        assert!(world.resource::<PendingInput>().0.is_empty());
+        assert!(world.resource::<RebindState>().capturing.is_none());
+        assert!(world.resource::<RebindState>().error.is_none());
+        assert_eq!(
+            world.resource::<TurnBindings>().left[0],
+            KeyCode::KeyT
+        );
+    }
+
+    #[test]
+    fn capture_escape_cancels_without_binding() {
+        use crate::settings::TurnSide;
+
+        let (mut world, _, _) = setup();
+        world.init_resource::<Messages<KeyboardInput>>();
+        world.resource_mut::<RebindState>().capturing =
+            Some((TurnSide::Right, 1));
+        press(&mut world, KeyCode::Escape);
+        world.run_system_once(buffer_keyboard_input).unwrap();
+        assert!(world.resource::<RebindState>().capturing.is_none());
+        assert!(world.resource::<PendingInput>().0.is_empty());
+        assert!(!world
+            .resource::<TurnBindings>()
+            .right
+            .contains(&KeyCode::Escape));
     }
 }

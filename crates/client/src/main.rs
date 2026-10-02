@@ -7,8 +7,10 @@ mod connection;
 mod input;
 mod menu;
 mod render;
+mod settings;
 
 use bevy::prelude::*;
+use bevy_egui::{EguiPlugin, EguiPrimaryContextPass};
 use core::time::Duration;
 use lightyear::prelude::client::input::InputSystems;
 use lightyear::prelude::client::*;
@@ -19,6 +21,7 @@ fn main() {
     let mut app = App::new();
 
     app.add_plugins(DefaultPlugins);
+    app.add_plugins(EguiPlugin::default());
 
     // --- Lightyear ---
     app.add_plugins(ClientPlugins {
@@ -30,7 +33,8 @@ fn main() {
 
     app.init_resource::<connection::Session>();
     app.init_resource::<menu::MenuState>();
-    app.add_systems(Startup, menu::setup_menu);
+    app.init_resource::<settings::TurnBindings>();
+    app.init_resource::<settings::RebindState>();
     app.add_systems(
         PreUpdate,
         (
@@ -46,10 +50,8 @@ fn main() {
             .after(ReplicationSystems::Receive)
             .before(input::buffer_keyboard_input),
     );
-    app.add_systems(
-        Update,
-        (connection::finish_disconnect, menu::update_menu).chain(),
-    );
+    app.add_systems(Update, connection::finish_disconnect);
+    app.add_systems(EguiPrimaryContextPass, menu::menu_ui);
     app.add_systems(Update, connection::send_leave);
     app.add_systems(
         PostUpdate,

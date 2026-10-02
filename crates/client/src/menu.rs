@@ -1,16 +1,26 @@
-//! Persistent overlay; opening it captures controls but never pauses the server.
+//! egui overlay menu; opening it captures controls but never pauses the server.
 
 use std::net::{Ipv4Addr, SocketAddr};
 
 use bevy::prelude::*;
+use bevy_egui::{EguiContexts, egui};
 
 use crate::connection::{ConnectionPhase, Session};
 use crate::input::PendingInput;
+use crate::settings::{MAX_KEYS_PER_SIDE, RebindState, TurnBindings, TurnSide, key_label};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum MenuScreen {
+    #[default]
+    Main,
+    Settings,
+}
 
 #[derive(Resource)]
 pub struct MenuState {
     pub open: bool,
     pub block_this_frame: bool,
+    pub screen: MenuScreen,
 }
 
 impl Default for MenuState {
@@ -18,6 +28,7 @@ impl Default for MenuState {
         Self {
             open: true,
             block_this_frame: true,
+            screen: MenuScreen::Main,
         }
     }
 }
@@ -28,217 +39,206 @@ impl MenuState {
     }
 }
 
-#[derive(Component)]
-pub struct MenuRoot;
-
-#[derive(Component)]
-pub struct StatusLabel;
-
-#[derive(Component, Clone, Copy)]
-pub enum MenuAction {
-    Primary,
-    Disconnect,
-}
-
-#[derive(Component)]
-pub struct ButtonLabel(MenuAction);
-
-pub fn setup_menu(mut commands: Commands) {
-    commands
-        .spawn((
-            MenuRoot,
-            GlobalZIndex(100),
-            Node {
-                position_type: PositionType::Absolute,
-                width: percent(100.0),
-                height: percent(100.0),
-                align_items: AlignItems::Center,
-                justify_content: JustifyContent::Center,
-                ..Default::default()
-            },
-            BackgroundColor(Color::srgba(0.01, 0.02, 0.04, 0.72)),
-        ))
-        .with_children(|root| {
-            root.spawn((
-                Node {
-                    width: px(460.0),
-                    max_width: percent(95.0),
-                    padding: UiRect::all(px(28.0)),
-                    flex_direction: FlexDirection::Column,
-                    row_gap: px(18.0),
-                    ..Default::default()
-                },
-                BackgroundColor(Color::srgba(0.03, 0.06, 0.09, 0.96)),
-            ))
-            .with_children(|panel| {
-                panel.spawn((
-                    Text::new("TRON ZERO"),
-                    TextFont {
-                        font_size: FontSize::Px(36.0),
-                        ..Default::default()
-                    },
-                    TextColor(Color::srgb(0.0, 1.0, 0.8)),
-                ));
-                panel.spawn((
-                    Text::new("LOCALHOST\n127.0.0.1:5000"),
-                    TextFont {
-                        font_size: FontSize::Px(22.0),
-                        ..Default::default()
-                    },
-                ));
-                panel.spawn((
-                    StatusLabel,
-                    Text::new(""),
-                    TextFont {
-                        font_size: FontSize::Px(18.0),
-                        ..Default::default()
-                    },
-                    TextColor(Color::srgb(0.75, 0.82, 0.88)),
-                ));
-                for action in [MenuAction::Primary, MenuAction::Disconnect] {
-                    panel
-                        .spawn((
-                            Button,
-                            action,
-                            Node {
-                                padding: UiRect::all(px(14.0)),
-                                justify_content: JustifyContent::Center,
-                                ..Default::default()
-                            },
-                            BackgroundColor(Color::srgb(0.06, 0.22, 0.26)),
-                        ))
-                        .with_child((
-                            ButtonLabel(action),
-                            Text::new(""),
-                            TextFont {
-                                font_size: FontSize::Px(22.0),
-                                ..Default::default()
-                            },
-                        ));
-                }
-                panel.spawn((
-                    Text::new(
-                        "Escape: menu / resume\nEnter: connect / cancel / resume\n\n\
-                     Online play does not pause. While this menu is open,\n\
-                     your rider keeps moving and can die.",
-                    ),
-                    TextFont {
-                        font_size: FontSize::Px(16.0),
-                        ..Default::default()
-                    },
-                    TextColor(Color::srgb(0.65, 0.72, 0.78)),
-                ));
-            });
-        });
+// Caption for the primary button; kept pure for tests.
+pub fn primary_caption(phase: ConnectionPhase) -> &'static str {
+    match phase {
+        ConnectionPhase::Offline => "Connect to Localhost",
+        ConnectionPhase::Connecting | ConnectionPhase::Synchronizing => "Cancel",
+        ConnectionPhase::Playing => "Resume",
+        ConnectionPhase::Disconnecting => "Disconnecting...",
+    }
 }
 
 pub fn begin_input_frame(mut menu: ResMut<MenuState>) {
     menu.block_this_frame = false;
 }
 
+// Escape only (Tab+Enter focus activation replaces the old global Enter
+// shortcut). A capture in progress eats the Escape instead of toggling.
 pub fn menu_controls(
     keys: Res<ButtonInput<KeyCode>>,
-    interactions: Query<(&Interaction, &MenuAction), Changed<Interaction>>,
     mut menu: ResMut<MenuState>,
-    mut session: ResMut<Session>,
+    session: Res<Session>,
+    mut rebind: ResMut<RebindState>,
     mut pending: ResMut<PendingInput>,
-    time: Res<Time<Real>>,
-    mut commands: Commands,
 ) {
     // Escape takes precedence over other same-frame actions.
     if keys.just_pressed(KeyCode::Escape) {
-        if session.phase == ConnectionPhase::Playing {
+        if rebind.capturing.is_some() {
+            rebind.capturing = None;
+            rebind.error = None;
+        } else if session.phase == ConnectionPhase::Playing {
             menu.open = !menu.open;
         } else {
             menu.open = true;
         }
         menu.block_this_frame = true;
-    } else if menu.open {
-        let action = interactions
-            .iter()
-            .find(|(interaction, _)| **interaction == Interaction::Pressed)
-            .map(|(_, action)| *action)
-            .or_else(|| {
-                (keys.just_pressed(KeyCode::Enter) || keys.just_pressed(KeyCode::NumpadEnter))
-                    .then_some(MenuAction::Primary)
-            });
-        if let Some(action) = action {
-            menu.block_this_frame = true;
-            match (action, session.phase) {
-                (MenuAction::Primary, ConnectionPhase::Offline) => {
-                    session.connect(
-                        SocketAddr::from((Ipv4Addr::LOCALHOST, 5000)),
-                        time.elapsed_secs_f64(),
-                        &mut commands,
-                    );
-                }
-                (MenuAction::Primary, ConnectionPhase::Playing) => menu.open = false,
-                (
-                    MenuAction::Primary,
-                    ConnectionPhase::Connecting | ConnectionPhase::Synchronizing,
-                )
-                | (MenuAction::Disconnect, ConnectionPhase::Playing) => {
-                    session.disconnect("Disconnected. Choose Localhost to reconnect.");
-                }
-                _ => {}
-            }
-        }
     }
     if menu.captures_input() {
         pending.0.clear();
     }
 }
 
-pub fn update_menu(
-    menu: Res<MenuState>,
-    session: Res<Session>,
-    mut root: Query<&mut Node, With<MenuRoot>>,
-    mut status: Query<&mut Text, (With<StatusLabel>, Without<ButtonLabel>)>,
-    mut labels: Query<(&ButtonLabel, &mut Text), Without<StatusLabel>>,
-    mut buttons: Query<
-        (&MenuAction, &Interaction, &mut BackgroundColor, &mut Node),
-        Without<MenuRoot>,
-    >,
+// Deferred UI action so binding lists can be read while drawing their buttons.
+enum UiAction {
+    None,
+    Connect,
+    CancelConnect,
+    Resume,
+    Disconnect,
+    GotoSettings,
+    Back,
+    StartCapture(TurnSide, usize),
+    RemoveKey(TurnSide, usize),
+    ResetBindings,
+}
+
+impl UiAction {
+    fn is_none(&self) -> bool {
+        matches!(self, UiAction::None)
+    }
+}
+
+pub fn menu_ui(
+    mut contexts: EguiContexts,
+    mut commands: Commands,
+    mut menu: ResMut<MenuState>,
+    mut session: ResMut<Session>,
+    mut bindings: ResMut<TurnBindings>,
+    mut rebind: ResMut<RebindState>,
+    time: Res<Time<Real>>,
 ) {
-    for mut node in &mut root {
-        node.display = if menu.open {
-            Display::Flex
-        } else {
-            Display::None
-        };
+    if !menu.open {
+        return;
     }
-    for mut text in &mut status {
-        if text.0 != session.status {
-            text.0.clone_from(&session.status);
+    let Ok(ctx) = contexts.ctx_mut() else {
+        return;
+    };
+    // Snapshot what the panel reads; mutations apply after `show` returns.
+    let screen = menu.screen;
+    let phase = session.phase;
+    let status = session.status.clone();
+    let mut action = UiAction::None;
+    egui::Window::new("TRON ZERO")
+        .collapsible(false)
+        .resizable(false)
+        .show(ctx, |ui| {
+        ui.vertical_centered(|ui| match screen {
+            MenuScreen::Main => {
+                ui.heading("TRON ZERO");
+                ui.label("LOCALHOST\n127.0.0.1:5000");
+                ui.label(status.as_str());
+                let caption = primary_caption(phase);
+                if ui
+                    .add_enabled(
+                        phase != ConnectionPhase::Disconnecting,
+                        egui::Button::new(caption),
+                    )
+                    .clicked()
+                    && action.is_none()
+                {
+                    action = match phase {
+                        ConnectionPhase::Offline => UiAction::Connect,
+                        ConnectionPhase::Connecting | ConnectionPhase::Synchronizing => {
+                            UiAction::CancelConnect
+                        }
+                        ConnectionPhase::Playing => UiAction::Resume,
+                        ConnectionPhase::Disconnecting => UiAction::None,
+                    };
+                }
+                if phase == ConnectionPhase::Playing
+                    && ui.button("Disconnect").clicked()
+                    && action.is_none()
+                {
+                    action = UiAction::Disconnect;
+                }
+                if ui.button("Settings").clicked() && action.is_none() {
+                    action = UiAction::GotoSettings;
+                }
+                ui.label(
+                    "Escape: menu / resume\n\n\
+                     Online play does not pause. While this menu is open,\n\
+                     your rider keeps moving and can die.",
+                );
+            }
+            MenuScreen::Settings => {
+                ui.heading("Settings - Turn keys");
+                for (side, title) in [(TurnSide::Left, "Left"), (TurnSide::Right, "Right")] {
+                    ui.label(title);
+                    ui.horizontal_wrapped(|ui| {
+                        for (index, key) in bindings.keys(side).iter().enumerate() {
+                            let label = if rebind.capturing == Some((side, index)) {
+                                "press key...".to_owned()
+                            } else {
+                                key_label(*key)
+                            };
+                            if ui.button(label).clicked() && action.is_none() {
+                                action = UiAction::StartCapture(side, index);
+                            }
+                            if ui.small_button("x").clicked() && action.is_none() {
+                                action = UiAction::RemoveKey(side, index);
+                            }
+                        }
+                    });
+                    let len = bindings.keys(side).len();
+                    if rebind.capturing == Some((side, len)) {
+                        ui.label(format!("Press a key for {title}... (Escape cancels)"));
+                    } else if ui
+                        .add_enabled(
+                            len < MAX_KEYS_PER_SIDE,
+                            egui::Button::new("Add key"),
+                        )
+                        .clicked()
+                        && action.is_none()
+                    {
+                        action = UiAction::StartCapture(side, len);
+                    }
+                }
+                if let Some(error) = &rebind.error {
+                    ui.colored_label(egui::Color32::RED, error.as_str());
+                }
+                if ui.button("Reset defaults").clicked() && action.is_none() {
+                    action = UiAction::ResetBindings;
+                }
+                if ui.button("Back").clicked() && action.is_none() {
+                    action = UiAction::Back;
+                }
+                ui.label("Keys apply immediately. Escape cancels capture.");
+            }
+        });
+    });
+    match action {
+        UiAction::None => {}
+        UiAction::Connect => {
+            menu.block_this_frame = true;
+            session.connect(
+                SocketAddr::from((Ipv4Addr::LOCALHOST, 5000)),
+                time.elapsed_secs_f64(),
+                &mut commands,
+            );
         }
-    }
-    for (label, mut text) in &mut labels {
-        let caption = match label.0 {
-            MenuAction::Primary => match session.phase {
-                ConnectionPhase::Offline => "Connect to Localhost",
-                ConnectionPhase::Connecting | ConnectionPhase::Synchronizing => "Cancel",
-                ConnectionPhase::Playing => "Resume",
-                ConnectionPhase::Disconnecting => "Disconnecting...",
-            },
-            MenuAction::Disconnect => "Disconnect",
-        };
-        if text.0 != caption {
-            text.0 = caption.into();
+        UiAction::CancelConnect | UiAction::Disconnect => {
+            menu.block_this_frame = true;
+            session.disconnect("Disconnected. Choose Localhost to reconnect.");
         }
-    }
-    for (action, interaction, mut color, mut node) in &mut buttons {
-        node.display = if matches!(action, MenuAction::Disconnect)
-            && session.phase != ConnectionPhase::Playing
-        {
-            Display::None
-        } else {
-            Display::Flex
-        };
-        color.0 = match interaction {
-            Interaction::Pressed => Color::srgb(0.1, 0.5, 0.48),
-            Interaction::Hovered => Color::srgb(0.08, 0.34, 0.38),
-            Interaction::None => Color::srgb(0.06, 0.22, 0.26),
-        };
+        UiAction::Resume => {
+            menu.block_this_frame = true;
+            menu.open = false;
+        }
+        UiAction::GotoSettings => menu.screen = MenuScreen::Settings,
+        UiAction::Back => menu.screen = MenuScreen::Main,
+        UiAction::StartCapture(side, index) => {
+            rebind.capturing = Some((side, index));
+            rebind.error = None;
+        }
+        UiAction::RemoveKey(side, index) => {
+            rebind.error = bindings.remove_key(side, index).err().map(str::to_owned);
+        }
+        UiAction::ResetBindings => {
+            bindings.reset();
+            rebind.capturing = None;
+            rebind.error = None;
+        }
     }
 }
 
@@ -247,18 +247,37 @@ mod tests {
     use super::*;
     use bevy::ecs::system::RunSystemOnce;
 
-    #[test]
-    fn escape_clears_queue_and_captures_the_closing_frame() {
+    fn test_world() -> World {
         let mut world = World::new();
         world.insert_resource(MenuState {
             open: false,
             block_this_frame: false,
+            screen: MenuScreen::Main,
         });
         world.init_resource::<Session>();
-        world.resource_mut::<Session>().phase = ConnectionPhase::Playing;
+        world.init_resource::<RebindState>();
         world.init_resource::<Time<Real>>();
         world.init_resource::<ButtonInput<KeyCode>>();
         world.insert_resource(PendingInput([shared::PlayerInput::TurnLeft].into()));
+        world
+    }
+
+    #[test]
+    fn primary_captions_match_connection_phase() {
+        assert_eq!(primary_caption(ConnectionPhase::Offline), "Connect to Localhost");
+        assert_eq!(primary_caption(ConnectionPhase::Connecting), "Cancel");
+        assert_eq!(primary_caption(ConnectionPhase::Synchronizing), "Cancel");
+        assert_eq!(primary_caption(ConnectionPhase::Playing), "Resume");
+        assert_eq!(
+            primary_caption(ConnectionPhase::Disconnecting),
+            "Disconnecting..."
+        );
+    }
+
+    #[test]
+    fn escape_clears_queue_and_captures_the_closing_frame() {
+        let mut world = test_world();
+        world.resource_mut::<Session>().phase = ConnectionPhase::Playing;
         world
             .resource_mut::<ButtonInput<KeyCode>>()
             .press(KeyCode::Escape);
@@ -275,17 +294,29 @@ mod tests {
 
     #[test]
     fn escape_cannot_hide_disconnected_menu() {
-        let mut world = World::new();
-        world.init_resource::<MenuState>();
-        world.init_resource::<Session>();
-        world.init_resource::<Time<Real>>();
-        world.init_resource::<PendingInput>();
-        world.init_resource::<ButtonInput<KeyCode>>();
+        let mut world = test_world();
+        world.insert_resource(MenuState::default());
         world
             .resource_mut::<ButtonInput<KeyCode>>()
             .press(KeyCode::Escape);
         world.run_system_once(menu_controls).unwrap();
         assert!(world.resource::<MenuState>().open);
         assert_eq!(world.resource::<Session>().phase, ConnectionPhase::Offline);
+    }
+
+    #[test]
+    fn escape_cancels_capture_instead_of_toggling() {
+        let mut world = test_world();
+        world.resource_mut::<Session>().phase = ConnectionPhase::Playing;
+        world.resource_mut::<RebindState>().capturing = Some((TurnSide::Left, 0));
+        world.resource_mut::<RebindState>().error = Some("Key is already bound".into());
+        world
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::Escape);
+        world.run_system_once(menu_controls).unwrap();
+        assert!(world.resource::<RebindState>().capturing.is_none());
+        assert!(world.resource::<RebindState>().error.is_none());
+        assert!(!world.resource::<MenuState>().open);
+        assert!(world.resource::<MenuState>().captures_input());
     }
 }
