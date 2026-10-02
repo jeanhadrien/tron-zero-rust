@@ -1,11 +1,51 @@
 name: deploy
 
+# Called by release-please.yml when a release is created. GITHUB_TOKEN-created
+# releases do NOT fire `release: published`, hence the workflow_call path
+# (same reason as the JS repo's deploy-release.yml).
 on:
   workflow_call:
 
+permissions:
+  contents: write
+
 jobs:
-  deploy:
-    runs-on: ubuntu-latest
+  client-windows:
+    name: Build Windows client and attach to Release
+    runs-on: windows-latest
+    env:
+      TRONZERO_MANAGER_URL: ${{ vars.MANAGER_URL != '' && vars.MANAGER_URL || 'https://server-manager.tronzero.dev' }}
     steps:
-      - name: placeholder
-        run: echo "Deploy placeholder — release created"
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve client release tag
+        id: tag
+        shell: pwsh
+        run: |
+          git fetch --tags --force
+          $tag = (git tag --list 'client-v*' --sort=-v:refname | Select-Object -First 1)
+          if (-not $tag) { throw "No client-v* tag found" }
+          "tag=$tag" >> $env:GITHUB_OUTPUT
+          git checkout $tag
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Restore cargo cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build release client
+        run: cargo build --release -p tron-zero-client --locked
+
+      - name: Package and upload to Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          $zip = "tron-zero-$TAG-windows-x86_64.zip"
+          Compress-Archive -Path target/release/tron-zero-client.exe -DestinationPath $zip
+          gh release upload "$TAG" "$zip" --clobber
