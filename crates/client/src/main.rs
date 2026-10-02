@@ -3,6 +3,7 @@
 //! Connects to a lightyear server via UDP / raw connection, sends keyboard
 //! inputs, predicts the local lightcycle, and renders the arena + players.
 
+mod browser;
 mod connection;
 mod input;
 mod menu;
@@ -34,6 +35,10 @@ fn main() {
 
     app.init_resource::<connection::Session>();
     app.init_resource::<menu::MenuState>();
+    app.insert_resource(browser::ManagerConfig::from_env());
+    app.init_resource::<browser::BrowserState>();
+    app.add_systems(Startup, browser::initial_refresh);
+    app.add_systems(PreUpdate, browser::poll_browser_fetch);
     app.init_resource::<settings::TurnBindings>();
     app.init_resource::<settings::RebindState>();
     app.add_systems(

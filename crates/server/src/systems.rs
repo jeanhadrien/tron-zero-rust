@@ -30,7 +30,7 @@ pub fn collect_respawn_requests(
 }
 
 /// Spawn the arena entity with replication, then start the server listener.
-pub fn spawn_server_arena_and_start(mut commands: Commands) {
+pub fn spawn_server_arena_and_start(port: Res<crate::announce::UdpPort>, mut commands: Commands) {
     // Arena — replicated once to all clients.
     let size = shared::ArenaSize::default();
     commands.spawn((
@@ -45,7 +45,10 @@ pub fn spawn_server_arena_and_start(mut commands: Commands) {
         .spawn((
             RawServer,
             ServerUdpIo::default(),
-            LocalAddr(SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), 5000)),
+            LocalAddr(SocketAddr::new(
+                IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)),
+                port.0,
+            )),
         ))
         .id();
     commands.trigger(Start { entity: server });

@@ -9,4 +9,7 @@ bevy.workspace = true
 lightyear = { workspace = true, features = ["udp", "raw_connection", "input_native"] }
 bevy_egui.workspace = true
 bevy_kira_audio.workspace = true
+ehttp = "0.7"
+serde.workspace = true
+serde_json = "1"
 tracing.workspace = true

@@ -27,14 +27,14 @@ The Node.js `server-manager` (lobby/matchmaking) stays in JS — it's a simple C
 | Rendering + windowing | **bevy** (0.19) | Full engine. Compiles to native (wgpu) and WASM (WebGL/WebGPU). Replaces Phaser 3 entirely. |
 | Networking | **lightyear** (0.28) | Server-authoritative, tick-based, built-in prediction + rollback + interpolation + predicted entity spawn. Replaces bitecs serializers + geckos.io + ClockSyncManager + StateReconciler + TickPipeline + AuthoritativeDeltaApplier + SnapshotRing + EntityIdMapStore + NetworkProtocol. |
 | Visual interpolation | **lightyear `VisualInterpolationPlugin`** | Lerps `Position`/`Direction` in `PostUpdate` via `Time<Fixed>::overstep_percentage()`; restores canonical value in `PreUpdate`. Replaces the JS 500-tick render ring + alpha extrapolation. |
-| Transport | **lightyear (UDP)** for dev, **WebTransport** for prod | UDP for simplicity during development. WebTransport (QUIC) for browser + native production — same codebase, feature flag swap. |
-| UI | **bevy_egui** (0.31) | Immediate-mode GUI. Main menu, HUD, chat, server browser, settings. Replaces SolidJS. |
+| Transport | **lightyear (UDP)** for dev, **WebTransport** for prod | UDP for simplicity during development. WebTransport (QUIC) for browser + native production — same codebase, feature flag swap. Until then, the client's server browser lists rooms on web but disables Connect there (native-only UDP). |
+| UI | **bevy_egui** (0.31) | Immediate-mode GUI. Main menu, HUD, chat, server browser (`GET /api/rooms` via `ehttp`, pinned localhost row first), settings. Replaces SolidJS. |
 | Math | **glam** (0.29) | Vec2, fast 2D ops. Comes with bevy_ecs. Replaces custom math.ts. |
 | Serialization | **serde** + **postcard** | serde for component serialization, postcard via lightyear's default. |
 | Logging | **tracing** | Structured, spans. Replaces OpenTelemetry + custom Logger. |
 | Bot AI / spawn RNG | **rand** | PRNG for bot strategy/name selection and bot rotation. **Not** used for spawn placement (that's the deterministic `mulberry32`, ported verbatim — see Player Lifecycle). |
 | Audio | **bevy_kira_audio** | Engine sounds, explosion on death, spatial listener. Replaces Phaser `AudioManager`. |
-| Manager HTTP | **reqwest** | `POST /api/rooms`, heartbeat, unregister. Replaces the JS fetch/axios calls in `server/main.ts`. |
+| Manager HTTP | **reqwest** | `POST /api/rooms`, heartbeat, unregister. Replaces the JS fetch/axios calls in `server/main.ts`. The client browser only reads `GET /api/rooms` via `ehttp` (no async runtime, works on wasm). |
 
 ## Core Design Decision: Predicted State Replication
 

@@ -55,6 +55,11 @@ cargo build -p tron-zero-client --target wasm32-unknown-unknown
 
 Expect bevy/wgpu WASM feature-gating work beyond adding the target — follow up before relying on this path.
 
+The server browser's room fetch already works on web: it uses `ehttp`,
+which performs a plain browser fetch on wasm. Room listing therefore works
+in the browser, but every Connect button is disabled there — play needs the
+native UDP transport until the WebTransport migration in PLAN.md lands.
+
 ## Release notes
 
 - `rust-toolchain.toml` pins `stable` + `clippy`/`rustfmt` for every contributor; no per-machine drift.

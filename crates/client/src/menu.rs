@@ -5,6 +5,7 @@ use std::net::{Ipv4Addr, SocketAddr};
 use bevy::prelude::*;
 use bevy_egui::{EguiContexts, egui};
 
+use crate::browser::{BrowserState, FetchStatus, ManagerConfig, connect_supported};
 use crate::connection::{ConnectionPhase, Session};
 use crate::input::PendingInput;
 use crate::settings::{MAX_KEYS_PER_SIDE, RebindState, TurnBindings, TurnSide, key_label};
@@ -15,6 +16,7 @@ pub enum MenuScreen {
     #[default]
     Main,
     Settings,
+    Rooms,
 }
 
 #[derive(Resource)]
@@ -70,6 +72,9 @@ pub fn menu_controls(
             rebind.error = None;
         } else if session.phase == ConnectionPhase::Playing {
             menu.open = !menu.open;
+        } else if menu.screen == MenuScreen::Rooms {
+            menu.screen = MenuScreen::Main;
+            menu.open = true;
         } else {
             menu.open = true;
         }
@@ -88,7 +93,10 @@ enum UiAction {
     Resume,
     Disconnect,
     GotoSettings,
+    GotoRooms,
     Back,
+    Refresh,
+    ConnectRoom(SocketAddr),
     StartCapture(TurnSide, usize),
     RemoveKey(TurnSide, usize),
     ResetBindings,
@@ -104,6 +112,8 @@ impl UiAction {
 // palette: near-black navy panel over a dimmed fullscreen backdrop, cyan
 // headings, teal full-width action buttons.
 
+// Bevy injects each resource as its own parameter; the count is structural.
+#[allow(clippy::too_many_arguments)]
 pub fn menu_ui(
     mut contexts: EguiContexts,
     mut commands: Commands,
@@ -111,6 +121,8 @@ pub fn menu_ui(
     mut session: ResMut<Session>,
     mut bindings: ResMut<TurnBindings>,
     mut rebind: ResMut<RebindState>,
+    mut browser: ResMut<BrowserState>,
+    config: Res<ManagerConfig>,
     time: Res<Time<Real>>,
 ) {
     if !menu.open {
@@ -178,6 +190,11 @@ pub fn menu_ui(
                         if theme::action_button(ui, "Settings").clicked() && action.is_none() {
                             action = UiAction::GotoSettings;
                         }
+                        if theme::action_button(ui, "Browse Servers").clicked()
+                            && action.is_none()
+                        {
+                            action = UiAction::GotoRooms;
+                        }
                     }
                     MenuScreen::Settings => {
                         ui.label(
@@ -244,6 +261,128 @@ pub fn menu_ui(
                             action = UiAction::Back;
                         }
                     }
+                    MenuScreen::Rooms => {
+                        ui.label(
+                            egui::RichText::new("SERVERS")
+                                .size(26.0)
+                                .strong()
+                                .color(theme::CYAN),
+                        );
+                        ui.label(
+                            egui::RichText::new(config.base_url.as_str())
+                                .size(14.0)
+                                .color(theme::BODY),
+                        );
+                        match browser.status {
+                            FetchStatus::Loading => {
+                                ui.label(
+                                    egui::RichText::new("Loading rooms...")
+                                        .size(14.0)
+                                        .color(theme::BODY),
+                                );
+                            }
+                            FetchStatus::Loaded => {
+                                let count = browser.rows.len();
+                                let noun = if count == 1 { "room" } else { "rooms" };
+                                let line = match browser.last_updated {
+                                    Some(updated) => format!(
+                                        "{count} {noun} - updated {:.0}s ago",
+                                        (time.elapsed_secs_f64() - updated).max(0.0)
+                                    ),
+                                    None => format!("{count} {noun}"),
+                                };
+                                ui.label(
+                                    egui::RichText::new(line).size(14.0).color(theme::BODY),
+                                );
+                            }
+                            FetchStatus::Failed => {
+                                ui.colored_label(
+                                    egui::Color32::RED,
+                                    browser.error.as_deref().unwrap_or("Room fetch failed."),
+                                );
+                            }
+                        }
+                        if ui
+                            .add_enabled(
+                                browser.status != FetchStatus::Loading,
+                                egui::Button::new("Refresh"),
+                            )
+                            .clicked()
+                            && action.is_none()
+                        {
+                            action = UiAction::Refresh;
+                        }
+                        if !connect_supported() {
+                            ui.label(
+                                egui::RichText::new(
+                                    "Listing only: connecting needs a native build (WebTransport pending).",
+                                )
+                                .size(13.0)
+                                .color(theme::BODY),
+                            );
+                        }
+                        egui::ScrollArea::vertical().max_height(320.0).show(ui, |ui| {
+                            if browser.status == FetchStatus::Loaded
+                                && browser.rows.iter().all(|row| row.is_local)
+                            {
+                                // Local-only rows mean either an empty manager or
+                                // one holding just our own server (deduped above):
+                                // say which, so registration reads as success.
+                                let empty = if browser.manager_total == 0 {
+                                    "No rooms found. Start a server or check the manager URL."
+                                } else {
+                                    "Your server is registered - connect via Localhost below."
+                                };
+                                ui.label(
+                                    egui::RichText::new(empty)
+                                    .size(14.0)
+                                    .color(theme::BODY),
+                                );
+                            }
+                            for row in &browser.rows {
+                                theme::card_frame().show(ui, |ui| {
+                                    // Pinned local row reads as the preselected default;
+                                    // connecting still takes one explicit click.
+                                    let name_color =
+                                        if row.is_local { theme::CYAN } else { theme::BODY };
+                                    ui.label(
+                                        egui::RichText::new(row.room.display_name.as_str())
+                                            .size(18.0)
+                                            .strong()
+                                            .color(name_color),
+                                    );
+                                    ui.label(
+                                        egui::RichText::new(format!(
+                                            "{}/{} players - {}:{}",
+                                            row.room.player_count,
+                                            row.room.max_players,
+                                            row.room.host,
+                                            row.room.port
+                                        ))
+                                        .size(14.0)
+                                        .color(theme::BODY),
+                                    );
+                                    if let Some(error) = &row.resolve_error {
+                                        ui.colored_label(egui::Color32::RED, error.as_str());
+                                    }
+                                    let can_connect = row.addr.is_some()
+                                        && phase == ConnectionPhase::Offline
+                                        && connect_supported();
+                                    if ui
+                                        .add_enabled(can_connect, egui::Button::new("Connect"))
+                                        .clicked()
+                                        && action.is_none()
+                                        && let Some(addr) = row.addr
+                                    {
+                                        action = UiAction::ConnectRoom(addr);
+                                    }
+                                });
+                            }
+                        });
+                        if theme::action_button(ui, "Back").clicked() && action.is_none() {
+                            action = UiAction::Back;
+                        }
+                    }
                 });
             });
         });
@@ -266,6 +405,18 @@ pub fn menu_ui(
             menu.open = false;
         }
         UiAction::GotoSettings => menu.screen = MenuScreen::Settings,
+        UiAction::GotoRooms => {
+            menu.screen = MenuScreen::Rooms;
+            browser.request_refresh(&config);
+        }
+        UiAction::Refresh => browser.request_refresh(&config),
+        UiAction::ConnectRoom(addr) => {
+            if session.phase == ConnectionPhase::Offline {
+                menu.screen = MenuScreen::Main;
+                menu.block_this_frame = true;
+                session.connect(addr, time.elapsed_secs_f64(), &mut commands);
+            }
+        }
         UiAction::Back => menu.screen = MenuScreen::Main,
         UiAction::StartCapture(side, index) => {
             rebind.capturing = Some((side, index));

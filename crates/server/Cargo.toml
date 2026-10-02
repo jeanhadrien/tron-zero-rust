@@ -8,5 +8,8 @@ shared = { path = "../shared", package = "tron-zero-shared" }
 bevy.workspace = true
 lightyear = { workspace = true, features = ["udp", "raw_connection", "input_native"] }
 rand.workspace = true
-reqwest.workspace = true
 tracing.workspace = true
+serde.workspace = true
+serde_json = "1"
+ureq = { version = "3", features = ["json"] }
+ctrlc = "3"

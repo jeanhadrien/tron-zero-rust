@@ -15,4 +15,3 @@ serde = { version = "1", features = ["derive"] }
 postcard = "1.1"
 tracing = "0.1"
 rand = "0.10"
-reqwest = "0.13"

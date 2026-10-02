@@ -14,7 +14,7 @@ The base game is available at https://github.com/ArmagetronAd/armagetronad
 
 ## Project Development
 
-Do not build the project yourself.
+Do not build the project yourself. Test your code using : 
 
 - cargo check — fast compilation check without producing binaries (syntax + type checking)
 - cargo clippy — linting (catches errors + idiomatic issues)
@@ -24,38 +24,28 @@ Do not build the project yourself.
 
 Below are generic Rust gotchas that can help you. Don't get too caught up in those.
 
-### Gotchas (vs other languages)
+### Gotchas
 
-- **Moves are real** — non-`Copy` value passed anywhere = old binding dead.
-- **No `&mut` coexisting** with any other ref.
-- **`String` vs `&str`** — `String` is owned/heap, `&str` is borrowed. Can't return `&str` to something you just created.
-- **`?` for error propagation**, `Result<T, E>` not exceptions. Idiomatic = per-module error enums.
-- **No null, no inheritance** — `Option<T>`, enums for sum types, traits for polymorphism, composition over inheritance.
-- **Shadowing is idiomatic** — `let x = x.trim();` is normal.
-- **Iterators are lazy** — nothing happens until consumed.
-- **Drop order** — fields dropped in declaration order, not reverse.
-- **Avoid `.unwrap()`** in production — use `?`, `.ok_or(...)`, or match.
+- Moves are real. A non-Copy value passed anywhere leaves the old binding dead.
+- No &mut coexisting with any other reference to the same data.
+- String vs &str. String is owned and heap-allocated; &str is borrowed. You cannot return a &str pointing at something you just created.
+- ? propagates errors. The type is Result<T, E>, not exceptions.
+- No null, no inheritance. Use Option<T>, enums for sum types, traits for polymorphism, composition over inheritance.
+- Shadowing is idiomatic. let x = x.trim(); is normal.
+- Iterators are lazy. Nothing runs until they are consumed.
+- Drop order. Locals drop in reverse declaration order. Struct fields drop in declaration order, not reverse.
 
 ### Performance
 
-- **Allocations matter most** — pre-allocate (`with_capacity`), reuse buffers, avoid `format!()` in hot paths.
-- **Generics > `dyn Trait`** for hot paths (monomorphization = static dispatch, no vtable).
-- **Don't benchmark in debug** — `--release` is a different language.
-- **HashMap** defaults to SipHash. Swap to `FxHashMap`/`ahash` for small keys.
-- **Vec beats linked lists** — cache locality always wins.
-- **Unsafe is OK in hot paths** (bounds-check elimination, slice splitting) — profile first.
-- **`#[inline]`/`#[inline(always)]`** for tiny functions; `-C lto=fat` for cross-crate inlining.
-- **SIMD isn't automatic** — structure loops for auto-vectorization, or reach for `std::simd` (nightly).
-- **`tokio::spawn` for I/O, `rayon` for CPU** — don't block in async.
+- Allocations usually dominate over instruction-level tweaks. Pre-allocate (with_capacity), reuse buffers, and avoid format!() in hot paths.
+- Do not benchmark debug builds. --release is a different language.
+- Vec beats linked lists. Cache locality wins.
 
 ### Maintainability
 
-- **Encode invariants in types** — illegal states unrepresentable. Newtypes over raw primitives.
-- **`pub` sparingly** — default private, `pub(crate)` for internals.
-- **`#[derive]` deliberately** — `Debug` always, `Clone` only when you mean it, `Copy` only for small POD.
-- **One concept per module**, re-export via `pub use` for flat public API.
-- **`thiserror` for libraries, `anyhow` for applications** — per-module error enums.
-- **Traits over deep inheritance** — thin, composable traits (`Read`/`Write` pattern).
-- **If `Rc<RefCell<>>` everywhere** — ownership model is screaming. Rethink.
-- **`lib.rs` as table of contents** — architecture readable from `mod` + `pub use` alone.
-- **Unsafe blocks** — isolated, small, invariants in `// SAFETY:` comments.
+- Encode invariants in types so illegal states are unrepresentable. Prefer newtypes over raw primitives.
+- pub sparingly. The default is private; use pub(crate) for internals.
+- #[derive] deliberately. Debug almost always, Clone only when you mean it, Copy only for small plain data.
+- Traits, not deep hierarchies. Keep them thin and composable (Read / Write).
+- Rc<RefCell<_>> everywhere means the ownership model is wrong.
+- Unsafe stays small. Isolate it and write the invariants in // SAFETY: comments.
