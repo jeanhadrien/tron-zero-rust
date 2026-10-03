@@ -4,9 +4,8 @@ use bevy_ecs::{prelude::*, query::QueryData};
 use glam::Vec2;
 use lightyear::prelude::{ConfirmedHistory, LocalTimeline, Predicted};
 
+use crate::physics::{RiderState, Segment, step_rider};
 use crate::*;
-
-const EPSILON: f32 = 0.001;
 
 #[derive(Resource, Default, Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SimulationRole {
@@ -54,82 +53,6 @@ pub struct ObstaclePlayer {
 type ObstacleQuery<'w, 's> = Query<'w, 's, ObstaclePlayer, With<Player>>;
 type CycleQuery<'w, 's> = Query<'w, 's, Cycle, With<Player>>;
 
-#[derive(Clone, Copy, Debug)]
-struct Segment {
-    a: Vec2,
-    b: Vec2,
-    owner: Option<Entity>,
-    // Distance in segments from the moving head (0 = active).
-    from_head: usize,
-}
-
-/// Nearest ray/segment contact, including collinear overlap and zero distance.
-fn ray_hit(origin: Vec2, direction: Vec2, a: Vec2, b: Vec2) -> Option<f32> {
-    let edge = b - a;
-    let offset = a - origin;
-    let cross = direction.perp_dot(edge);
-    if cross.abs() <= EPSILON {
-        if offset.perp_dot(direction).abs() > EPSILON {
-            return None;
-        }
-        let t1 = offset.dot(direction);
-        let t2 = (b - origin).dot(direction);
-        let far = t1.max(t2);
-        return (far >= -EPSILON).then_some(t1.min(t2).max(0.0));
-    }
-    let distance = offset.perp_dot(edge) / cross;
-    let along = offset.perp_dot(direction) / cross;
-    if distance >= -EPSILON && (-EPSILON..=1.0 + EPSILON).contains(&along) {
-        Some(distance.max(0.0))
-    } else {
-        None
-    }
-}
-
-fn nearest(
-    obstacles: &[Segment],
-    entity: Entity,
-    origin: Vec2,
-    direction: Vec2,
-    side: bool,
-) -> f32 {
-    obstacles
-        .iter()
-        .filter_map(|segment| {
-            let own = segment.owner == Some(entity);
-            if own
-                && segment.from_head == 0
-                && (side || direction.dot(segment.b - segment.a) >= 0.0)
-            {
-                return None;
-            }
-            // The newest corner is a departure junction, not a sliding wall.
-            if own && side && segment.from_head == 1 {
-                return None;
-            }
-            let hit = ray_hit(origin, direction, segment.a, segment.b)?;
-            if own
-                && segment.from_head == 1
-                && hit <= EPSILON
-                && (direction.perp_dot(segment.b - segment.a).abs() > EPSILON
-                    || direction.dot(segment.b - segment.a) >= 0.0)
-            {
-                return None;
-            }
-            // Boundary walls wind counter-clockwise. At exact contact an
-            // inward/tangential heading escapes; outward headings still drain.
-            if segment.owner.is_none()
-                && !side
-                && hit <= EPSILON
-                && (segment.b - segment.a).perp_dot(direction) >= 0.0
-            {
-                return None;
-            }
-            Some(hit)
-        })
-        .fold(f32::INFINITY, f32::min)
-}
-
 /// Turns, sensing, rubber, speed and trails are one tick transaction.
 /// On clients only Predicted players advance; interpolated opponents remain
 /// obstacles. Lightyear 0.28 keeps confirmed histories on the same entity,
@@ -174,7 +97,7 @@ pub fn simulate_players(
         obstacles.extend(trail.0.windows(2).enumerate().map(|(i, p)| Segment {
             a: p[0],
             b: p[1],
-            owner: Some(player.entity),
+            owner: Some(player.entity.to_bits()),
             from_head: n - 2 - i,
         }));
     }
@@ -197,61 +120,32 @@ pub fn simulate_players(
         if player.trail.0.is_empty() {
             *player.trail = Trail::new(player.position.0);
         }
-        match player.input.0.eligible_turn(player.life) {
-            PlayerInput::None => {}
-            turn => {
-                player.trail.turn(player.position.0);
-                player.direction.0 = match turn {
-                    PlayerInput::TurnLeft => rotate_left(player.direction.0),
-                    _ => rotate_right(player.direction.0),
-                };
-            }
-        }
-        let origin = player.position.0;
-        let heading = player.direction.0;
-        let front = nearest(&obstacles, player.entity, origin, heading, false);
-        let left = nearest(
+        let outcome = step_rider(
+            Some(player.entity.to_bits()),
+            RiderState {
+                position: player.position.0,
+                direction: player.direction.0,
+                target_speed: player.target.0,
+                rubber: player.rubber.0,
+            },
+            player.input.0.eligible_turn(player.life),
             &obstacles,
-            player.entity,
-            origin,
-            rotate_left(heading),
-            true,
+            &mut player.trail,
         );
-        let right = nearest(
-            &obstacles,
-            player.entity,
-            origin,
-            rotate_right(heading),
-            true,
-        );
-        let normal_step = BASE_SPEED * player.target.0 * TICK_SECS;
-        player.colliding.0 = front < SLOW_DOWN_DISTANCE;
-        let step = if player.colliding.0 {
-            let ratio = (front / SLOW_DOWN_DISTANCE).powi(2);
-            player.rubber.0 -= DELTA_STUFF * 0.03 * (1.0 + player.target.0).powi(3);
-            (front * ratio).min((front - EPSILON).max(0.0))
-        } else {
-            player.rubber.0 = (player.rubber.0 + 0.006 * TICK_MS * DELTA_STUFF).min(BASE_RUBBER);
-            // Swept sensing: even arbitrarily high slide speeds cannot tunnel.
-            normal_step.min((front - EPSILON).max(0.0))
-        };
-        player.rubber.0 = player.rubber.0.clamp(0.0, BASE_RUBBER);
-        if player.rubber.0 == 0.0 {
+        player.direction.0 = outcome.direction;
+        if outcome.died {
             disable(&mut player);
             continue;
         }
-        player.sliding.0 = left < SLOW_DOWN_DISTANCE || right < SLOW_DOWN_DISTANCE;
-        if player.sliding.0 {
-            player.target.0 *= 1.003_f32.powf(DELTA_STUFF / 16.666);
-        } else if !player.colliding.0 && player.target.0 > 1.0 {
-            player.target.0 = (player.target.0 - 0.0003 * DELTA_STUFF).max(1.0);
-        }
+        player.colliding.0 = outcome.colliding;
+        player.rubber.0 = outcome.rubber;
+        player.sliding.0 = outcome.sliding;
+        player.target.0 = outcome.target_speed;
         // JS inertia lives in TargetSpeedMult: collision changes actual speed,
         // but preserves accumulated boost for escape; boost affects next tick.
-        player.speed.0 = step / (BASE_SPEED * TICK_SECS);
-        player.velocity.0 = heading * (step * 1000.0);
-        player.position.0 += heading * step;
-        player.trail.advance(player.position.0, TRAIL_MAX_LENGTH);
+        player.speed.0 = outcome.speed;
+        player.velocity.0 = outcome.direction * (outcome.step * 1000.0);
+        player.position.0 = outcome.position;
     }
 }
 

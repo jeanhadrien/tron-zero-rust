@@ -337,7 +337,8 @@ mod tests {
         assert_eq!(world.get::<Trail>(player).unwrap().0, Trail::new(pos).0);
         assert_eq!(
             world.get::<Velocity>(player).unwrap().0,
-            world.get::<Direction>(player).unwrap().0 * 3000.0
+            world.get::<Direction>(player).unwrap().0
+                * (shared::BASE_SPEED * shared::TICK_SECS * 1000.0)
         );
         assert_eq!(
             try_respawn(&mut world, owner, request),

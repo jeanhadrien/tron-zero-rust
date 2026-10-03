@@ -7,6 +7,7 @@
 pub mod components;
 pub mod constants;
 pub mod math;
+pub mod physics;
 pub mod protocol;
 pub mod spawn;
 pub mod systems;
@@ -18,4 +19,5 @@ pub use components::trail::*;
 pub use constants::*;
 pub use lightyear::prelude::input::native::ActionState;
 pub use math::*;
+pub use physics::*;
 pub use systems::player::*;

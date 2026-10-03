@@ -66,6 +66,8 @@ fn main() {
     // Disconnect observer — cleans up zombie player entities.
     app.add_observer(systems::on_client_disconnected);
     app.init_resource::<systems::PendingRespawns>();
+    // Staggered bot decisions (one epoch per reaction period).
+    app.init_resource::<bot::SchedulerConfig>();
     app.add_systems(
         PreUpdate,
         systems::collect_respawn_requests.after(lightyear::prelude::MessageSystems::Receive),
