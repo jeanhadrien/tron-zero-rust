@@ -27,7 +27,6 @@ pub enum Personality {
     Survivalist,
     Trapper,
     Adaptive,
-    /// Named placeholder; not implemented yet.
     Territorialist,
     /// Named placeholder; not implemented yet.
     Duelist,
@@ -115,12 +114,15 @@ impl Personality {
                 knobs.greed += 0.1;
                 knobs.caution -= 0.1;
             }
+            // Control-leaning: wants map share and chambers, accepts risk.
+            Personality::Territorialist => {
+                knobs.greed += 0.15;
+                knobs.aggression += 0.1;
+                knobs.caution -= 0.05;
+            }
             // Adaptive deliberately keeps the Elo-derived `strategy_mix`, and
-            // placeholders share the base curve until implemented.
-            Personality::Adaptive
-            | Personality::Territorialist
-            | Personality::Duelist
-            | Personality::Roamer => {}
+            // remaining placeholders share the base curve until implemented.
+            Personality::Adaptive | Personality::Duelist | Personality::Roamer => {}
         }
     }
 }
@@ -152,6 +154,7 @@ pub fn default_builds() -> Vec<BotBuild> {
     vec![
         BotBuild::new(Elo(1000), Personality::Survivalist),
         BotBuild::new(Elo(1500), Personality::Adaptive),
+        BotBuild::new(Elo(2000), Personality::Territorialist),
         BotBuild::new(Elo(2500), Personality::Trapper),
     ]
 }

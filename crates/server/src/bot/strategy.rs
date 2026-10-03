@@ -4,6 +4,8 @@
 //! day one; v1 strategies mostly ignore the world and forecaster so algorithms
 //! can be iterated on later without touching the scheduler.
 
+use bevy::prelude::Vec2;
+
 use shared::PlayerInput;
 
 use super::config::{BotKnobs, Personality};
@@ -11,7 +13,8 @@ use super::forecast::Forecaster;
 use super::perceive::{
     Perception, RAY_FRONT, RAY_FRONT_LEFT, RAY_FRONT_RIGHT, RAY_LEFT, RAY_RIGHT,
 };
-use super::world::{RiderSnapshot, WorldSnapshot};
+use super::territory::{chamber_stats, voronoi_surplus};
+use super::world::{GRID_CELLS, GridCache, RiderSnapshot, WorldSnapshot};
 
 /// Turn cost keeps a bot from oscillating between equally scored turns.
 const TURN_COST: f32 = 0.03;
@@ -207,16 +210,103 @@ impl Strategy for Adaptive {
 static SURVIVALIST: Survivalist = Survivalist;
 static TRAPPER: Trapper = Trapper;
 static ADAPTIVE: Adaptive = Adaptive;
+static TERRITORIALIST: Territorialist = Territorialist;
 
-/// Map a personality to its strategy. Unimplemented personalities fall back to
+/// Map a personality to its strategy. Duelist/Roamer placeholders fall back to
 /// `Survivalist` rather than panicking.
 pub fn strategy_for(personality: Personality) -> &'static dyn Strategy {
     match personality {
         Personality::Survivalist => &SURVIVALIST,
         Personality::Trapper => &TRAPPER,
         Personality::Adaptive => &ADAPTIVE,
-        Personality::Territorialist | Personality::Duelist | Personality::Roamer => &SURVIVALIST,
+        Personality::Territorialist => &TERRITORIALIST,
+        Personality::Duelist | Personality::Roamer => &SURVIVALIST,
     }
+}
+
+/// Voronoi territory + chamber control (a1k0n-lite). Scores each action by
+/// fork, then measuring the projected map share against the nearest enemy
+/// and the farmable chamber value at the projected cell.
+///
+/// Shape: `Survivalist base + greed*surplus_after + aggression*chamber
+/// - caution*threat - TURN_COST on turns`, where the base already carries the
+/// `-caution*threat` and turn-cost terms, so they are not subtracted twice.
+///
+/// Voronoi runs on the *current* grid at projected cells (the 1-step fork only
+/// moves ~3 units, far below a grid cell); the projected trail is not
+/// re-rasterized, keeping all three forks inside the Tier BFS budget.
+pub struct Territorialist;
+
+/// Projected death penalty: worse than any plausible territory swing so a
+/// fork that dies in one step is never picked for its chamber value.
+const PROJECTED_DEATH: f32 = -1.0;
+
+impl Strategy for Territorialist {
+    fn name(&self) -> &'static str {
+        "territorialist"
+    }
+
+    fn score(
+        &self,
+        perception: &Perception,
+        world: &WorldSnapshot,
+        forecast: &dyn Forecaster,
+        knobs: &BotKnobs,
+    ) -> [f32; 3] {
+        let mut scores = Survivalist.score(perception, world, forecast, knobs);
+        if perception.rider >= world.riders.len() {
+            return scores;
+        }
+        let enemy_cell =
+            nearest_enemy(world, perception.rider).map(|(_, enemy)| GridCache::cell_of(enemy.pos));
+        let budget = knobs.bfs_budget.max(1);
+        for action in [Action::Hold, Action::Left, Action::Right] {
+            let index = action.index();
+            let Some((pos, alive)) = forked_step(world, forecast, perception.rider, action) else {
+                continue;
+            };
+            if !alive {
+                scores[index] += PROJECTED_DEATH;
+                continue;
+            }
+            let self_cell = GridCache::cell_of(pos);
+            let surplus = enemy_cell.map_or(0.0, |enemy| {
+                voronoi_surplus(&world.grid, self_cell, enemy, budget) as f32 / GRID_CELLS as f32
+            });
+            let chamber = chamber_stats(&world.grid, self_cell).value();
+            scores[index] += knobs.greed * surplus + knobs.aggression * chamber;
+        }
+        scores
+    }
+
+    fn mode(&self, perception: &Perception) -> Mode {
+        if perception.threat > 0.3 {
+            Mode::Attack
+        } else if perception.freedom < 16 {
+            Mode::Survival
+        } else {
+            Mode::Explore
+        }
+    }
+}
+
+/// One physics step with `action` for `rider` (everyone else holds).
+/// Returns the projected position and aliveness; `None` when the rider index
+/// is out of range.
+fn forked_step(
+    world: &WorldSnapshot,
+    forecast: &dyn Forecaster,
+    rider: usize,
+    action: Action,
+) -> Option<(Vec2, bool)> {
+    if rider >= world.riders.len() {
+        return None;
+    }
+    let mut actions = vec![Action::Hold; world.riders.len()];
+    actions[rider] = action;
+    let projected = forecast.project(world, &actions);
+    let rider = projected.riders.get(rider)?;
+    Some((rider.pos, rider.alive))
 }
 
 fn default_mode(perception: &Perception) -> Mode {
@@ -326,5 +416,167 @@ impl BotRng {
 
     fn next_f32(&mut self) -> f32 {
         (self.next_u64() >> 40) as f32 / (1u64 << 24) as f32
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bevy::prelude::Vec2;
+    use shared::ARENA_WIDTH;
+    use std::sync::Arc;
+
+    use super::super::world::GRID_N;
+
+    /// Teleports rider 0 to a per-action cell so scoring sees controlled
+    /// projected positions without depending on physics step sizes.
+    struct TeleportForecaster {
+        targets: [Vec2; 3],
+    }
+
+    impl Forecaster for TeleportForecaster {
+        fn project(&self, world: &WorldSnapshot, actions: &[Action]) -> WorldSnapshot {
+            let mut projected = world.clone();
+            if let Some(action) = actions.first()
+                && let Some(rider) = projected.riders.first_mut()
+            {
+                rider.pos = self.targets[action.index()];
+            }
+            projected
+        }
+    }
+
+    fn cell_center(gx: usize, gy: usize) -> Vec2 {
+        let cell = ARENA_WIDTH / GRID_N as f32;
+        let half = ARENA_WIDTH * 0.5;
+        Vec2::new(
+            (gx as f32 + 0.5) * cell - half,
+            (gy as f32 + 0.5) * cell - half,
+        )
+    }
+
+    fn rider_at(id: u64, pos: Vec2) -> RiderSnapshot {
+        RiderSnapshot {
+            id,
+            pos,
+            dir: Vec2::X,
+            trail: vec![pos - Vec2::X * 10.0, pos],
+            alive: true,
+            rubber: 0.0,
+            speed_mult: 1.0,
+            target_speed_mult: 1.0,
+        }
+    }
+
+    fn knobs() -> BotKnobs {
+        BotKnobs {
+            reaction_ticks: 5,
+            lookahead_ticks: 4,
+            mistake_prob: 0.0,
+            greed: 0.9,
+            aggression: 0.5,
+            caution: 0.1,
+            sensor_rays: 7,
+            bfs_budget: 1024,
+            strategy_mix: 0.5,
+        }
+    }
+
+    fn perception() -> Perception {
+        Perception {
+            rays: [f32::INFINITY; super::super::perceive::RAY_COUNT],
+            freedom: 800,
+            exits: 4,
+            threat: 0.0,
+            memory_trend: 0.0,
+            tick: 42,
+            rider: 0,
+        }
+    }
+
+    #[test]
+    fn territorialist_prefers_center_control_over_holding_corner() {
+        // Self starts in a corner, enemy owns the far corner. Hold stays put,
+        // Left teleports to mid-arena (big Voronoi gain), Right to the other
+        // corner (symmetric wash). Survivalist holds (no turn cost paid for
+        // identical rays); Territorialist pays the turn to take map share.
+        let hold = cell_center(3, 3);
+        let world = WorldSnapshot::new(
+            Arc::new(Vec::new()),
+            vec![rider_at(1, hold), rider_at(2, cell_center(28, 28))],
+            42,
+        );
+        let forecast = TeleportForecaster {
+            targets: [hold, cell_center(16, 16), cell_center(3, 28)],
+        };
+        let perception = perception();
+        let knobs = knobs();
+
+        let survival_scores = Survivalist.score(&perception, &world, &forecast, &knobs);
+        assert_eq!(
+            decide(&Survivalist, &perception, &world, &forecast, &knobs),
+            Action::Hold
+        );
+
+        let control_scores = Territorialist.score(&perception, &world, &forecast, &knobs);
+        assert!(
+            control_scores[Action::Left.index()] > control_scores[Action::Hold.index()] + 0.05,
+            "center share should beat holding the corner: {control_scores:?} vs {survival_scores:?}"
+        );
+        assert_eq!(
+            decide(&Territorialist, &perception, &world, &forecast, &knobs),
+            Action::Left
+        );
+    }
+
+    #[test]
+    fn territorialist_penalizes_projected_death() {
+        struct Killer;
+        impl Forecaster for Killer {
+            fn project(&self, world: &WorldSnapshot, _: &[Action]) -> WorldSnapshot {
+                let mut projected = world.clone();
+                if let Some(rider) = projected.riders.first_mut() {
+                    rider.alive = false;
+                }
+                projected
+            }
+        }
+        let world = WorldSnapshot::new(
+            Arc::new(Vec::new()),
+            vec![
+                rider_at(1, cell_center(10, 10)),
+                rider_at(2, cell_center(20, 20)),
+            ],
+            7,
+        );
+        let perception = perception();
+        let knobs = knobs();
+        let base = Survivalist.score(&perception, &world, &Killer, &knobs);
+        let scores = Territorialist.score(&perception, &world, &Killer, &knobs);
+        for action in [Action::Hold, Action::Left, Action::Right] {
+            assert!(
+                scores[action.index()] < base[action.index()] - 0.9,
+                "dead forks must be penalized: {scores:?} vs base {base:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn territorialist_mode_covers_survival_attack_explore() {
+        let mut perception = perception();
+        assert_eq!(Territorialist.mode(&perception), Mode::Explore);
+        perception.threat = 0.5;
+        assert_eq!(Territorialist.mode(&perception), Mode::Attack);
+        perception.threat = 0.0;
+        perception.freedom = 10;
+        assert_eq!(Territorialist.mode(&perception), Mode::Survival);
+    }
+
+    #[test]
+    fn strategy_for_maps_territorialist() {
+        assert_eq!(
+            strategy_for(Personality::Territorialist).name(),
+            "territorialist"
+        );
     }
 }

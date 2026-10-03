@@ -9,6 +9,7 @@ pub(crate) mod memory;
 pub(crate) mod perceive;
 pub(crate) mod schedule;
 pub(crate) mod strategy;
+pub(crate) mod territory;
 pub(crate) mod world;
 
 use bevy::prelude::*;
@@ -95,8 +96,10 @@ pub fn setup_bots(mut commands: Commands) {
 }
 
 /// Sense → decide → emit for every alive bot. Decisions are scheduled per bot
-/// (one `should_redecide` predicate); between epochs the cached action is
-/// written, so `ActionState` is fully specified every tick.
+/// (one `should_redecide` predicate). Turns are one-shot: the decided action
+/// is emitted only on its redecide tick; between epochs bots hold straight
+/// (`PlayerInput::None`). Re-emitting a cached turn every tick would spin the
+/// rider (Left, Left = 180° into its own trail).
 #[allow(clippy::type_complexity)]
 pub fn bot_brain_input(
     scheduler: Res<SchedulerConfig>,
@@ -140,6 +143,9 @@ pub fn bot_brain_input(
             .iter()
             .find(|(candidate, _)| *candidate == entity)
             .is_some_and(|(_, redecide)| *redecide);
+        // One-shot: only a fresh decision turns. `brain.cached` stays as the
+        // last decision for observability but is never re-emitted.
+        let mut fresh: Option<Action> = None;
         if redecide && let Some(world) = snapshot.as_ref() {
             let tier = Tier::from_load(alive_riders, &scheduler);
             brain.degradation = tier;
@@ -168,10 +174,11 @@ pub fn bot_brain_input(
                 );
                 brain.memory.opponent.record(action);
                 brain.cached = action;
+                fresh = Some(action);
                 brain.epoch = brain.epoch.wrapping_add(1);
             }
         }
-        input.0 = brain.cached.to_input();
+        input.0 = fresh.map_or(PlayerInput::None, Action::to_input);
     }
 }
 
@@ -331,9 +338,8 @@ mod tests {
     }
 
     #[test]
-    fn bot_name_falls_back_to_survivalist_label_for_placeholders() {
-        // Unimplemented personalities share the Survivalist strategy.
-        let build = BotBuild::new(Elo(1200), Personality::Territorialist);
-        assert_eq!(format_bot_name(&build, 7), "survivalist-1200 #7");
+    fn bot_name_uses_territorialist_label() {
+        let build = BotBuild::new(Elo(2000), Personality::Territorialist);
+        assert_eq!(format_bot_name(&build, 7), "territorialist-2000 #7");
     }
 }
