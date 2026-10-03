@@ -75,30 +75,33 @@ pub fn on_client_connected(
 
     // Spawn allocation is serialized in FixedUpdate against live geometry.
     // Keep one controlled entity even when the arena has no safe space.
-    commands.spawn((
-        shared::Player,
-        Human,
-        InitialSpawn,
-        shared::LifeGeneration::for_session(rand::random()),
-        shared::PlayerId(remote_id.0.to_string()),
-        shared::Velocity(Vec2::ZERO),
-        shared::SpeedMult(0.0),
-        shared::TargetSpeedMult(0.0),
-        shared::Rubber(0.0),
-        shared::PlayerColor(0x00FFCC),
-        shared::IsAlive(false),
-        // Replicate to all clients.
-        Replicate::to_clients(NetworkTarget::All),
-        // The owning client predicts this entity.
-        PredictionTarget::to_clients(NetworkTarget::Single(remote_id.0)),
-        // All other clients interpolate it.
-        InterpolationTarget::to_clients(NetworkTarget::AllExceptSingle(remote_id.0)),
-        // Routes this client's inputs to this entity's ActionState.
-        ControlledBy {
-            owner: trigger.entity,
-            lifetime: Lifetime::SessionBased,
-        },
-    ));
+    // (Split insert: the 15-component tuple Bundle limit is already reached.)
+    commands
+        .spawn((
+            shared::Player,
+            Human,
+            InitialSpawn,
+            shared::LifeGeneration::for_session(rand::random()),
+            shared::PlayerId(remote_id.0.to_string()),
+            shared::Velocity(Vec2::ZERO),
+            shared::SpeedMult(0.0),
+            shared::TargetSpeedMult(0.0),
+            shared::Rubber(0.0),
+            shared::PlayerColor(0x00FFCC),
+            shared::IsAlive(false),
+            // Replicate to all clients.
+            Replicate::to_clients(NetworkTarget::All),
+            // The owning client predicts this entity.
+            PredictionTarget::to_clients(NetworkTarget::Single(remote_id.0)),
+            // All other clients interpolate it.
+            InterpolationTarget::to_clients(NetworkTarget::AllExceptSingle(remote_id.0)),
+            // Routes this client's inputs to this entity's ActionState.
+            ControlledBy {
+                owner: trigger.entity,
+                lifetime: Lifetime::SessionBased,
+            },
+        ))
+        .insert(shared::DisplayName("Player".to_string()));
 }
 
 /// Drain queued per-link requests, deriving ownership from the link rather than

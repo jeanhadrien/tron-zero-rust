@@ -97,6 +97,7 @@ pub fn register_protocol(app: &mut App) {
     // --- Replicated-only (no prediction needed) ---
     app.component::<Player>().replicate_once();
     app.component::<PlayerId>().replicate_once();
+    app.component::<DisplayName>().replicate_once();
     app.component::<PlayerColor>().replicate_once();
 
     app.component::<Arena>().replicate_once();

@@ -12,6 +12,7 @@ use crate::constants::BASE_RUBBER;
 #[derive(Component, Default, Serialize, Deserialize, Reflect)]
 #[require(
     PlayerId,
+    DisplayName,
     Position,
     Direction,
     Velocity,
@@ -31,6 +32,11 @@ pub struct Player;
 /// Stable identity across respawns.
 #[derive(Component, Clone, Debug, Default, Serialize, Deserialize, Reflect)]
 pub struct PlayerId(pub String);
+
+/// Human-readable label replicated once for client rendering. Identity stays
+/// in `PlayerId`; this is display-only (e.g. `"Player"`, `"trapper-2500 #3"`).
+#[derive(Component, Clone, Debug, Default, Serialize, Deserialize, Reflect)]
+pub struct DisplayName(pub String);
 
 /// World position.
 #[derive(Component, Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Reflect)]

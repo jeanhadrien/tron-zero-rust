@@ -100,6 +100,7 @@ fn main() {
             render::draw_arena,
             render::draw_trails,
             render::draw_players,
+            render::sync_name_labels,
             render::follow_player,
         ),
     );
