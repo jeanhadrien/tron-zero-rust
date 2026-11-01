@@ -179,13 +179,19 @@ join `127.0.0.1:5000`, or pick a room under **Browse Servers**. Full rooms show
 a disabled **Full** button. **Quit game** leaves the server first (so the rider
 is removed at once) and then exits; the window close button does the same.
 
-The first message of every session is a hello carrying the protocol version
-(`PROTOCOL_VERSION` in `protocol.rs`, bump it on incompatible changes) and the
-requested name. The server only spawns the rider after accepting it: a version
+The first message of every session is a hello carrying the protocol id
+(`PROTOCOL_ID` in `protocol.rs`: `PROTOCOL_VERSION`, which you bump by hand when
+the wire format or gameplay logic changes, mixed with a fingerprint of every
+constant in `constants.rs`, which updates itself; a test fails if a new constant
+is not listed in `SIM_CONSTANTS`) and the requested name. The server only spawns
+the rider (and starts replicating to the link) after accepting it: a version
 mismatch or a full server (`MAX_PLAYERS` humans; bots do not count) is answered
-with a reason the menu shows, and the link is closed. The server trims the
-name, strips control characters, caps it at 16 characters, falls back to
-`Player` and appends ` 2`, ` 3`... if another player or bot already uses it.
+with a reason the menu shows, and the link is closed about a second later, once
+the client has said goodbye or the rejection had time to be retransmitted. The
+server trims the name, strips control and invisible format characters (bidi
+overrides, zero-width), caps it at 16 characters, falls back to `Player` and
+appends ` 2`, ` 3`... if another player or bot already uses it (compared
+ignoring case and spaces).
 
 - The menu distinguishes connecting, synchronizing, and ready. A locally opened
   UDP socket alone is not readiness: the server must answer, timeline sync must

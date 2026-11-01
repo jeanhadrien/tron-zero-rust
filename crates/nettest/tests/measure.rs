@@ -4,6 +4,10 @@
 use tron_zero_nettest::analysis::{Distribution, Fate, deliveries};
 use tron_zero_nettest::{Impairment, Net, serial, staircase};
 
+/// Presses per profile: the staircase must stay inside the arena (a dead rider
+/// sends nothing useful), which 40 steps of 16 ticks do from the lower left.
+const TURNS: usize = 40;
+
 /// One scripted run: `turns` presses 16 ticks apart. Prints, per profile, how
 /// early (negative) or late commands arrive relative to their intended tick,
 /// how late they executed, and what the client had to correct.
@@ -70,10 +74,13 @@ fn arrival_offsets_by_profile() {
         Impairment::new(0, 5, 0.0),
         Impairment::new(50, 10, 0.0),
         Impairment::new(150, 20, 0.0),
+        // The lossy rows are random: three runs of the 3% profile.
+        Impairment::new(150, 20, 0.03),
+        Impairment::new(150, 20, 0.03),
         Impairment::new(150, 20, 0.03),
         Impairment::new(100, 30, 0.05),
         Impairment::new(250, 50, 0.0),
     ] {
-        measure(impairment, 60);
+        measure(impairment, TURNS);
     }
 }

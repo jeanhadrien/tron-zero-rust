@@ -1,10 +1,46 @@
 # Netcode hardening backlog
 
-Status: updated 2026-11-01. P0 one-shot turn delivery is implemented and
-verified by the headless network harness (`crates/nettest`, run with
-`cargo test -p tron-zero-nettest`; measurements with `-- --ignored --nocapture`).
+Status: updated 2026-11-01 (second session). P0 one-shot turn delivery is
+implemented, now with redundant resend and bounded replies, and verified by the
+headless network harness (`crates/nettest`, run with
+`cargo test -p tron-zero-nettest`; measurements with
+`cargo test -p tron-zero-nettest --test measure -- --ignored --nocapture`).
 Unchecked items are not implemented or verified. The implemented contract and
 measured numbers are in `docs/netcode-design.md` ("One-shot turn delivery").
+
+## Done in the second 2026-11-01 session (review fixes)
+
+- [x] **Turn loss under packet loss.** Turns no longer ride an ordered-reliable
+  channel. The client repeats every undecided command in a per-tick unreliable
+  `TurnBatch` (at most 16 commands, dropped 48 ticks after their stamp); the
+  server decides each seq once and ignores resent copies. Head-of-line blocking
+  is gone. Measured at 150 ms RTT, +-20 ms jitter and 3% loss (three
+  unseeded 40-press runs): every command arrived at least 3 ticks early and ran
+  on its intended tick, none rejected, against arrivals up to +23 ticks late
+  and one `TooLate` per run with the ordered-reliable design. 100 ms / 5% and
+  250 ms / +-50 ms jitter were also clean (one run each). Redundancy shrinks
+  the jitter tail too, since the earliest of many copies wins. Table in
+  `docs/netcode-design.md`.
+- [x] **Ack amplification.** The per-command reliable `TurnAck` is gone. The
+  server sends one coalesced, unreliable ack per link per frame (cumulative
+  `received_below` plus the newest verdict); duplicates cost no reply and no log
+  entry. A per-link `LinkBudget` (`crates/server/src/budget.rs`) closes links
+  that exceed 600 turn batches/s, 60 receipt-time rejections/s, or 10 session
+  or respawn requests/s. Heartbeat replies are limited to one per 0.5 s. The
+  respawn channel had the same unbounded-reliable-reply shape and got the same
+  budget.
+- [x] **Replication to unadmitted links.** `ReplicationSender` is inserted when
+  the hello is accepted, not on connect; at most 32 links may wait for a hello.
+- [x] **Rejection reply sent once.** A refused link stays open until the
+  client's `Leave` arrives or 1 s passes, so the reliable channel can
+  retransmit the rejection (checked with 8 clients at 30% loss each way).
+- [x] **Predicted death swallowing presses.** Presses keep flowing while the
+  predicted rider is dead; the queue is cleared only on rider/life change, menu
+  and disconnect. The server answers `NotAlive` if the rider is really dead.
+- [x] Autoconnect/quit races, `ticks_between` wrap safety, name sanitizing and
+  de-dup, restarting the deadline after a momentary not-ready, symmetric
+  latency-sim uplink, debounced atomic preference writes, `PROTOCOL_VERSION`
+  bump plus a compile-time fingerprint of the sim constants in the hello.
 
 ## Done in the 2026-11-01 session
 
@@ -29,16 +65,21 @@ measured numbers are in `docs/netcode-design.md` ("One-shot turn delivery").
 - [ ] Late turns cost a state rollback on the client. The ack carries
   `Applied { server_tick }`; the client could patch its input history with it
   to avoid the visual snap. Not done.
-- [ ] Loss: ordered-reliable head-of-line blocking delays every turn behind a
-  lost packet by about a resend round (arrivals up to +19 ticks at 3% loss,
-  one turn beyond the 12-tick window in that run). Redundant resend of unacked
-  commands was not built; revisit if the lost-turn rate matters in play.
+- [ ] Loss beyond redundancy's reach: a command is repeated for at most 48
+  ticks (400 ms) after its stamp and the outbox holds 16, so an outage longer
+  than that still loses turns (explicitly rejected or never seen, never
+  invented). Bursts of consecutive loss (as opposed to the conditioner's
+  independent drops) are not measured.
 - [ ] 12-tick window is a measured-but-untuned default (one 36-unit corner shift
   at most). Needs real-player data before it is called competitive-ready.
 - [ ] Not measured: frame hitches/catch-up bursts on the client, long stalls
-  and outages, 2+ simultaneous clients, `TurnAck` flooding by a hostile client
-  (rejections are acked one-for-one), sequence behaviour across a Lightyear
-  timeline resync mid-session (server floors ticks monotonic; not exercised).
+  and outages, 2+ simultaneous clients playing together, sequence behaviour
+  across a Lightyear timeline resync mid-session (server floors ticks
+  monotonic; not exercised). The abuse budget limits are reasoned, not tuned
+  against real client traces.
+- [ ] Spoofed-source floods are only bounded (32 unadmitted links, 5 s hello
+  timeout, no replication, one tiny ack per frame): raw UDP has no handshake,
+  so a flood of distinct source addresses still costs a link entity each.
 - [ ] Unseeded conditioner: runs are not reproducible; assertions are
   invariants, not exact traces. No saved seeds/traces yet.
 
@@ -85,10 +126,14 @@ The rollback-safe local queue does not fix this network-level mismatch.
   recorded input history and never sends; verified with a forced rollback). Replaying a historical tick
   must reproduce its turn, while receiving a duplicate packet must not add one.
 - [x] Define missing-input behavior: continue movement, never invent a turn.
-- [ ] Define bounded redundancy/retransmission, acknowledgment, deduplication,
+- [x] Define bounded redundancy/retransmission, acknowledgment, deduplication,
   history retention, sequence wraparound, and reconnect/session reset semantics.
-  Done: acks, dedup by (life, seq) watermark, bounded queue, per-link state that
-  dies with the connection, u64 seq. Not built: redundant resend (see above).
+  Done: per-tick resend of the undecided commands (16 max, 48 ticks), cumulative
+  coalesced unreliable acks, dedup by a per-connection `next_seq` watermark
+  (every verdict, rejections included, advances it), bounded queue, per-link
+  state that dies with the connection, u64 seq. A gap in the seqs is skipped,
+  not awaited: batches are supersets of the unacked set, so a gap only means
+  the client gave that command up.
 - [x] Decide the late-command policy explicitly: reject with feedback or apply
   within a bounded late window. Server rewind is excluded from this design.
   Evaluate fairness and complexity before selecting one. Sequence IDs alone
@@ -97,8 +142,9 @@ The rollback-safe local queue does not fix this network-level mismatch.
   rate server-side (one per rider per tick; future bound 64; no backdating). Bound memory/work without silently dropping accepted input.
 - [ ] Define keyboard queue behavior on focus loss, death, disconnect, reconnect,
   and prolonged synchronization stalls; avoid stale turns firing after recovery.
-  Verified: menu, death, respawn, disconnect/reconnect. Not verified: focus loss
-  and sync stalls.
+  Verified: menu, predicted death (presses kept, server judges), respawn,
+  disconnect/reconnect. Not verified: focus loss and sync stalls. Known cost: a
+  really dead player's key presses are still sent and rejected `NotAlive`.
 
 Acceptance: within the supported network envelope, accepted commands execute
 once in order in the authoritative timeline. Client rollback reproduces the same
@@ -268,8 +314,9 @@ instead of pretending controls remain guaranteed.
 - [ ] Review production transport/session authentication and admission control;
   current links use `RawClient` / `RawServer`. Do not treat server authority as
   a substitute for authenticated sessions and bounded input processing.
-- [ ] Verify incompatible protocol/build rejection, disconnect cleanup, and
-  stale-session isolation.
+- [x] Verify incompatible protocol/build rejection (also under 30% loss),
+  disconnect cleanup, and stale-session isolation. The id compared is
+  `PROTOCOL_ID` (version + sim-constant fingerprint).
 - [ ] Document supported deployment topology, UDP/firewall requirements,
   diagnostics collection, and operational limits before public hosting.
 
@@ -307,8 +354,8 @@ wall-clock timing).
   game competitive-ready; do not infer them from the framework or tick rate.
 - [ ] Demonstrate no missing/duplicate accepted turns within the supported
   envelope (demonstrated to 250 ms RTT and 3% loss on loopback; envelope not
-  yet declared), repeatable collision outcomes, bounded resource use, and controlled
-  behavior outside that envelope.
+  yet declared), repeatable collision outcomes, bounded resource use (done for
+  replies and links, see above), and controlled behavior outside that envelope.
 - [ ] Update `docs\netcode-design.md` to distinguish implemented behavior from
   aspirational claims about quantization, input acknowledgment windows, time
   dilation, and conflict resolution.
