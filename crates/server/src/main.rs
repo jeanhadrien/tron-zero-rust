@@ -1,24 +1,21 @@
 //! Tron Zero — headless game server entry point.
 
 use bevy::prelude::*;
-use std::sync::{Arc, Mutex, atomic::AtomicU32};
+use std::sync::Arc;
 use tron_zero_server::{add_core, admission, announce, bot, systems};
 
 fn main() {
     let announce_cfg = announce::AnnounceConfig::from_env();
-    let player_count = Arc::new(AtomicU32::new(0));
-    let room_id_slot: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+    let counts = Arc::new(announce::LiveCounts::default());
+    let announce_handle = Arc::new(announce::AnnounceHandle::default());
 
-    // Best-effort unregister on shutdown. The manager's 40s eviction
-    // (stale-room sweep) is the backstop if we crash before this runs.
+    // Best-effort unregister on SIGINT/SIGTERM/SIGHUP. The manager's 40s
+    // eviction (stale-room sweep) is the backstop if we crash before this runs.
     {
         let cfg = announce_cfg.clone();
-        let slot = Arc::clone(&room_id_slot);
+        let handle = Arc::clone(&announce_handle);
         let _ = ctrlc::set_handler(move || {
-            let id = slot.lock().ok().and_then(|guard| guard.clone());
-            if let Some(id) = id {
-                announce::unregister_blocking(&cfg, &id);
-            }
+            handle.shutdown(&cfg);
             std::process::exit(0);
         });
     }
@@ -26,8 +23,8 @@ fn main() {
     // Detached announcer thread; handle intentionally never joined.
     let _announcer = announce::spawn_announcer(
         announce_cfg.clone(),
-        Arc::clone(&player_count),
-        Arc::clone(&room_id_slot),
+        Arc::clone(&counts),
+        Arc::clone(&announce_handle),
     );
 
     let mut app = App::new();
@@ -38,8 +35,8 @@ fn main() {
     app.insert_resource(admission::MaxPlayers(announce_cfg.max_players));
     add_core(&mut app, announce_cfg.port);
 
-    // Player count published for the announcer heartbeat.
-    app.insert_resource(announce::PlayerCountProbe(player_count));
+    // Human/bot counts published for the announcer heartbeat.
+    app.insert_resource(announce::PlayerCountProbe(counts));
     app.add_systems(Update, announce::publish_player_count);
 
     // Bots: staggered decisions (one epoch per reaction period). The brain

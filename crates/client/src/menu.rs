@@ -373,11 +373,16 @@ pub fn menu_ui(
                                             .strong()
                                             .color(name_color),
                                     );
+                                    let bots = match row.room.bot_count {
+                                        0 => String::new(),
+                                        n => format!(" (+{n} bots)"),
+                                    };
                                     ui.label(
                                         egui::RichText::new(format!(
-                                            "{}/{} players - {}:{}",
+                                            "{}/{} players{} - {}:{}",
                                             row.room.player_count,
                                             row.room.max_players,
+                                            bots,
                                             row.room.host,
                                             row.room.port
                                         ))

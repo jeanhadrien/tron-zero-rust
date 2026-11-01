@@ -1,4 +1,4 @@
-//! Server browser: room list from the Node manager plus a pinned localhost row.
+//! Server browser: room list from `server-manager/` plus a pinned localhost row.
 //!
 //! No UDP probing: "automatic local detection" is just a pinned
 //! `127.0.0.1:5000` row that is always first and always connectable. Probing
@@ -29,7 +29,7 @@ fn local_addr() -> SocketAddr {
     SocketAddr::from((Ipv4Addr::LOCALHOST, LOCAL_PORT))
 }
 
-// One room as served by `GET /api/rooms` (see `Room.ts` in the JS repo).
+// One room as served by `GET /api/rooms` (see `server-manager/src/room.ts`).
 // `secure` is deliberately absent: serde drops unknown fields, so omitting
 // it makes accidental use of the geckos-only flag unrepresentable.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -39,8 +39,12 @@ pub struct RoomInfo {
     pub host: String,
     pub port: u16,
     pub display_name: String,
+    // Humans only; `max_players` caps humans too, so Full compares the two.
     pub player_count: u32,
     pub max_players: u32,
+    // Informational (bots never count against capacity); absent on older managers.
+    #[serde(default)]
+    pub bot_count: u32,
     #[serde(default)]
     pub last_heartbeat: u64,
 }
@@ -71,6 +75,7 @@ pub fn local_row() -> BrowserRow {
             display_name: "Localhost (built-in)".into(),
             player_count: 0,
             max_players: 0,
+            bot_count: 0,
             last_heartbeat: 0,
         },
         addr: Some(local_addr()),
@@ -101,7 +106,7 @@ pub fn sort_manager_rows(mut rooms: Vec<RoomInfo>) -> Vec<RoomInfo> {
     rooms
 }
 
-// Parse the manager's room array; mirrors the JS client's `res.json()`.
+// Parse the manager's room array.
 // Hosts are trimmed: a padded "127.0.0.1 " would otherwise miss the IP-literal
 // fast path, hit DNS, and fail — for data, display, and dedup alike.
 pub fn parse_rooms(body: &[u8]) -> Result<Vec<RoomInfo>, String> {
@@ -113,7 +118,7 @@ pub fn parse_rooms(body: &[u8]) -> Result<Vec<RoomInfo>, String> {
     Ok(rooms)
 }
 
-// Mirrors the JS client's `Manager returned ${status}` wording.
+// Wording shown in the browser when the manager answers with an error status.
 pub fn http_status_error(status: u16) -> String {
     format!("Manager returned {status}")
 }
@@ -345,6 +350,7 @@ mod tests {
             display_name: id.into(),
             player_count: players,
             max_players: 8,
+            bot_count: 0,
             last_heartbeat: heartbeat,
         }
     }
@@ -370,6 +376,27 @@ mod tests {
             "displayName": "Arena", "playerCount": 1, "maxPlayers": 8
         }]"#;
         assert_eq!(parse_rooms(body).unwrap()[0].last_heartbeat, 0);
+    }
+
+    #[test]
+    fn bot_count_is_optional_and_never_affects_fullness() {
+        let old = br#"[{
+            "id": "a", "host": "h", "port": 1,
+            "displayName": "Arena", "playerCount": 1, "maxPlayers": 4
+        }]"#;
+        assert_eq!(parse_rooms(old).unwrap()[0].bot_count, 0);
+        let new = br#"[{
+            "id": "a", "host": "h", "port": 1, "displayName": "Arena",
+            "playerCount": 4, "botCount": 5, "maxPlayers": 4
+        }]"#;
+        let rooms = parse_rooms(new).unwrap();
+        assert_eq!(rooms[0].bot_count, 5);
+        assert!(rooms[0].is_full());
+        let with_bots = RoomInfo {
+            bot_count: 9,
+            ..room("b", 3, 0)
+        };
+        assert!(!with_bots.is_full());
     }
 
     #[test]

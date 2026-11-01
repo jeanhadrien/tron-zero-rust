@@ -1,4 +1,4 @@
-//! Lobby-registry announcer: registers this server with the JS manager.
+//! Lobby-registry announcer: registers this server with `server-manager/`.
 //!
 //! NOTE: `session.rs` also talks about a "heartbeat", but that is
 //! game-session liveness over UDP (idle-timeout / leave handling) —
@@ -6,8 +6,9 @@
 
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
+use std::net::IpAddr;
 use std::sync::{
-    Arc, Mutex,
+    Arc, Condvar, Mutex, MutexGuard, PoisonError,
     atomic::{AtomicU32, Ordering},
 };
 use std::thread::JoinHandle;
@@ -27,9 +28,9 @@ pub const EVICTION_BUDGET: Duration = Duration::from_secs(40);
 #[derive(Resource, Debug, Clone, Copy)]
 pub struct UdpPort(pub u16);
 
-/// Shared player count written by Bevy, read by the announcer thread.
+/// Handle to the live counts, written by Bevy and read by the announcer thread.
 #[derive(Resource, Debug, Clone)]
-pub struct PlayerCountProbe(pub Arc<AtomicU32>);
+pub struct PlayerCountProbe(pub Arc<LiveCounts>);
 
 #[derive(Debug, Clone)]
 pub struct AnnounceConfig {
@@ -118,6 +119,21 @@ impl AnnounceConfig {
         format!("{}/api/rooms/{room_id}", self.manager_url)
     }
 
+    /// Why announcing would be harmful, if it would. A loopback address on a
+    /// non-local manager is unreachable for every other player, and servers
+    /// that all fall back to the default endpoint would fight over one room.
+    pub fn announce_blocker(&self) -> Option<String> {
+        let loopback_host = is_loopback_host(&self.advertised_host);
+        (loopback_host && !is_loopback_host(url_host(&self.manager_url))).then(|| {
+            format!(
+                "ADVERTISED_HOST is {} but MANAGER_URL ({}) is not local. Players could not \
+                 reach that address, and servers sharing the default endpoint would collide. \
+                 Set ADVERTISED_HOST (and ADVERTISED_PORT) to this server's public address",
+                self.advertised_host, self.manager_url
+            )
+        })
+    }
+
     fn register_payload(&self) -> RegisterPayload {
         RegisterPayload {
             host: self.advertised_host.clone(),
@@ -152,7 +168,27 @@ fn parse_port(raw: &str) -> u16 {
     }
 }
 
-// Wire schema mirrors JS `RegisterPayload` — literal camelCase fields.
+// Host part of a URL: no scheme, userinfo, port, path or IPv6 brackets.
+fn url_host(url: &str) -> &str {
+    let rest = url.split_once("://").map_or(url, |(_, rest)| rest);
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+    let authority = authority.rsplit('@').next().unwrap_or(authority);
+    match authority.strip_prefix('[') {
+        Some(v6) => v6.split(']').next().unwrap_or(v6),
+        None => authority.split(':').next().unwrap_or(authority),
+    }
+}
+
+fn is_loopback_host(host: &str) -> bool {
+    let host = host.trim_end_matches('.').to_ascii_lowercase();
+    host == "localhost"
+        || host.ends_with(".localhost")
+        || host
+            .parse::<IpAddr>()
+            .is_ok_and(|ip| ip.is_loopback() || ip.is_unspecified())
+}
+
+// Wire schema mirrors `server-manager/src/room.ts` — literal camelCase fields.
 // No displayName tags of any kind: the manager carries Rust rooms only,
 // so SERVER_NAME is sent verbatim as displayName.
 #[derive(Debug, Serialize)]
@@ -167,15 +203,44 @@ pub struct RegisterPayload {
     pub max_players: u32,
 }
 
+// `botCount` is additive: managers that predate it ignore the field.
 #[derive(Debug, Serialize)]
 pub struct HeartbeatPayload {
     #[serde(rename = "playerCount")]
     pub player_count: u32,
+    #[serde(rename = "botCount")]
+    pub bot_count: u32,
 }
 
+// `token` is absent from legacy managers (no per-room auth).
 #[derive(Debug, Deserialize)]
 struct RegisterResponse {
     id: String,
+    #[serde(default)]
+    token: Option<String>,
+}
+
+/// Our room as the manager knows it. `token == None` is legacy mode: the
+/// manager issued no secret, so no auth header is sent.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Registration {
+    pub id: String,
+    pub token: Option<String>,
+}
+
+impl From<RegisterResponse> for Registration {
+    fn from(res: RegisterResponse) -> Self {
+        Self {
+            id: res.id,
+            token: res.token.filter(|t| !t.is_empty()),
+        }
+    }
+}
+
+impl Registration {
+    fn authorization(&self) -> Option<String> {
+        self.token.as_ref().map(|token| format!("Bearer {token}"))
+    }
 }
 
 fn agent() -> ureq::Agent {
@@ -185,18 +250,32 @@ fn agent() -> ureq::Agent {
         .into()
 }
 
-fn do_register(agent: &ureq::Agent, cfg: &AnnounceConfig) -> Option<String> {
+fn do_register(agent: &ureq::Agent, cfg: &AnnounceConfig) -> Option<Registration> {
     match agent
         .post(&cfg.register_url())
         .send_json(cfg.register_payload())
     {
         Ok(mut res) => match res.body_mut().read_json::<RegisterResponse>() {
-            Ok(body) => Some(body.id),
+            Ok(body) => Some(body.into()),
             Err(e) => {
                 tracing::warn!(error = %e, "Manager register: bad response body");
                 None
             }
         },
+        Err(ureq::Error::StatusCode(409)) => {
+            tracing::error!(
+                host = %cfg.advertised_host,
+                port = cfg.advertised_port,
+                "Manager register refused (409): another room already holds this host:port. \
+                 Either a previous run of this server has not expired yet (up to 40s), or two \
+                 servers share ADVERTISED_HOST/ADVERTISED_PORT"
+            );
+            None
+        }
+        Err(ureq::Error::StatusCode(429)) => {
+            tracing::warn!("Manager register rate-limited (429)");
+            None
+        }
         Err(ureq::Error::StatusCode(code)) => {
             tracing::warn!(status = code, "Manager register failed");
             None
@@ -211,110 +290,219 @@ fn do_register(agent: &ureq::Agent, cfg: &AnnounceConfig) -> Option<String> {
 enum HeartbeatOutcome {
     Ok,
     NotFound,
+    Unauthorized,
     Transient,
 }
 
 fn do_heartbeat(
     agent: &ureq::Agent,
     cfg: &AnnounceConfig,
-    room_id: &str,
-    player_count: u32,
+    reg: &Registration,
+    counts: &LiveCounts,
 ) -> HeartbeatOutcome {
-    let payload = HeartbeatPayload { player_count };
-    match agent.post(&cfg.heartbeat_url(room_id)).send_json(&payload) {
+    let payload = HeartbeatPayload {
+        player_count: counts.humans.load(Ordering::Relaxed),
+        bot_count: counts.bots.load(Ordering::Relaxed),
+    };
+    let mut request = agent.post(&cfg.heartbeat_url(&reg.id));
+    if let Some(auth) = reg.authorization() {
+        request = request.header("Authorization", auth);
+    }
+    match request.send_json(&payload) {
         Ok(_) => HeartbeatOutcome::Ok,
         Err(ureq::Error::StatusCode(404)) => HeartbeatOutcome::NotFound,
+        Err(ureq::Error::StatusCode(401)) => {
+            tracing::error!(room_id = %reg.id, "Heartbeat rejected (401): room token not accepted");
+            HeartbeatOutcome::Unauthorized
+        }
         Err(ureq::Error::StatusCode(code)) => {
-            tracing::warn!(status = code, room_id = %room_id, "Heartbeat failed");
+            tracing::warn!(status = code, room_id = %reg.id, "Heartbeat failed");
             HeartbeatOutcome::Transient
         }
         Err(e) => {
-            tracing::warn!(error = %e, room_id = %room_id, "Heartbeat: manager unreachable");
+            tracing::warn!(error = %e, room_id = %reg.id, "Heartbeat: manager unreachable");
             HeartbeatOutcome::Transient
         }
     }
 }
 
-/// Best-effort blocking unregister used by the shutdown handler.
-pub fn unregister_blocking(cfg: &AnnounceConfig, room_id: &str) {
-    match agent().delete(&cfg.unregister_url(room_id)).call() {
-        Ok(_) => tracing::info!(room_id = %room_id, "Unregistered from manager"),
+/// Best-effort blocking unregister used on shutdown.
+fn unregister_blocking(cfg: &AnnounceConfig, reg: &Registration) {
+    let mut request = agent().delete(&cfg.unregister_url(&reg.id));
+    if let Some(auth) = reg.authorization() {
+        request = request.header("Authorization", auth);
+    }
+    match request.call() {
+        Ok(_) => tracing::info!(room_id = %reg.id, "Unregistered from manager"),
         Err(e) => {
-            tracing::warn!(error = %e, room_id = %room_id, "Failed to unregister (best-effort)")
+            tracing::warn!(error = %e, room_id = %reg.id, "Failed to unregister (best-effort)")
         }
+    }
+}
+
+/// Live counts written by Bevy, read by the announcer thread. Humans feed
+/// `playerCount` (admission caps humans only); bots are informational.
+#[derive(Debug, Default)]
+pub struct LiveCounts {
+    pub humans: AtomicU32,
+    pub bots: AtomicU32,
+}
+
+#[derive(Debug, Default)]
+struct HandleState {
+    registration: Option<Registration>,
+    registering: bool,
+    shutting_down: bool,
+}
+
+/// State shared between the announcer thread and the shutdown handler.
+/// A shutdown that lands mid-(re-)registration cannot leave the freshly
+/// registered room behind: the announcer unregisters it itself and
+/// `shutdown` waits for that before returning.
+#[derive(Debug, Default)]
+pub struct AnnounceHandle {
+    state: Mutex<HandleState>,
+    idle: Condvar,
+}
+
+impl AnnounceHandle {
+    fn lock(&self) -> MutexGuard<'_, HandleState> {
+        self.state.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// False once shutdown has begun; otherwise marks a register as in flight.
+    fn begin_register(&self) -> bool {
+        let mut state = self.lock();
+        if state.shutting_down {
+            return false;
+        }
+        state.registering = true;
+        true
+    }
+
+    /// Records the register result. Returns false (after unregistering a room
+    /// that was created too late) if shutdown began meanwhile.
+    fn finish_register(&self, cfg: &AnnounceConfig, reg: Option<&Registration>) -> bool {
+        let mut state = self.lock();
+        if state.shutting_down {
+            drop(state);
+            if let Some(reg) = reg {
+                unregister_blocking(cfg, reg);
+            }
+            self.set_idle();
+            return false;
+        }
+        state.registration = reg.cloned();
+        state.registering = false;
+        self.idle.notify_all();
+        true
+    }
+
+    fn set_idle(&self) {
+        self.lock().registering = false;
+        self.idle.notify_all();
+    }
+
+    fn clear_registration(&self) {
+        self.lock().registration = None;
+    }
+
+    /// Flags shutdown and hands back the room to unregister, if any.
+    fn begin_shutdown(&self) -> Option<Registration> {
+        let mut state = self.lock();
+        state.shutting_down = true;
+        state.registration.take()
+    }
+
+    /// Shutdown hook: unregister, then wait out any in-flight register so the
+    /// announcer can clean up after itself before the process exits.
+    pub fn shutdown(&self, cfg: &AnnounceConfig) {
+        if let Some(reg) = self.begin_shutdown() {
+            unregister_blocking(cfg, &reg);
+        }
+        let state = self.lock();
+        let _ = self
+            .idle
+            .wait_timeout_while(state, HTTP_TIMEOUT * 2, |s| s.registering);
     }
 }
 
 /// Spawn the announcer loop on a detached std thread (no async runtime).
-/// The room id lives in the thread; it is also mirrored into `room_id_slot`
-/// (set on register, cleared on 404) for the shutdown handler.
+/// Refuses (with a loud error) when the configuration cannot work.
 pub fn spawn_announcer(
     cfg: AnnounceConfig,
-    player_count: Arc<AtomicU32>,
-    room_id_slot: Arc<Mutex<Option<String>>>,
+    counts: Arc<LiveCounts>,
+    handle: Arc<AnnounceHandle>,
 ) -> JoinHandle<()> {
     std::thread::spawn(move || {
         debug_assert!(HEARTBEAT_PERIOD * 4 < EVICTION_BUDGET);
+        if let Some(problem) = cfg.announce_blocker() {
+            tracing::error!("Not announcing to the manager: {problem}");
+            return;
+        }
         let agent = agent();
         tracing::info!(url = %cfg.manager_url, "Registering with manager");
         loop {
             // Register with infinite 5s retry.
-            let room_id = loop {
-                if let Some(id) = do_register(&agent, &cfg) {
-                    break id;
+            let reg = loop {
+                if !handle.begin_register() {
+                    return;
+                }
+                let result = do_register(&agent, &cfg);
+                if !handle.finish_register(&cfg, result.as_ref()) {
+                    return;
+                }
+                if let Some(reg) = result {
+                    break reg;
                 }
                 tracing::warn!("Retrying register in 5s");
                 std::thread::sleep(RETRY_DELAY);
             };
-            tracing::info!(room_id = %room_id, "Registered with manager");
-            if let Ok(mut slot) = room_id_slot.lock() {
-                *slot = Some(room_id.clone());
+            match &reg.token {
+                Some(_) => tracing::info!(room_id = %reg.id, "Registered with manager"),
+                None => tracing::warn!(
+                    room_id = %reg.id,
+                    "Registered with a legacy manager (no room token issued): \
+                     heartbeats are unauthenticated; redeploy the manager to enable auth"
+                ),
             }
 
             // Immediate heartbeat, then every 2s.
-            let count = player_count.load(Ordering::Relaxed);
-            if matches!(
-                do_heartbeat(&agent, &cfg, &room_id, count),
-                HeartbeatOutcome::NotFound
-            ) {
-                tracing::warn!("Manager lost our room — re-registering");
-                if let Ok(mut slot) = room_id_slot.lock() {
-                    *slot = None;
-                }
-                continue;
-            }
             loop {
-                std::thread::sleep(HEARTBEAT_PERIOD);
-                let count = player_count.load(Ordering::Relaxed);
-                match do_heartbeat(&agent, &cfg, &room_id, count) {
-                    HeartbeatOutcome::Ok => {}
-                    HeartbeatOutcome::Transient => {} // keep id, warn already logged
+                match do_heartbeat(&agent, &cfg, &reg, &counts) {
+                    HeartbeatOutcome::Ok | HeartbeatOutcome::Transient => {}
                     HeartbeatOutcome::NotFound => {
                         tracing::warn!("Manager lost our room — re-registering");
-                        if let Ok(mut slot) = room_id_slot.lock() {
-                            *slot = None;
-                        }
-                        break; // back to outer register loop
+                        break;
+                    }
+                    HeartbeatOutcome::Unauthorized => {
+                        // Drop the room and start over; re-registering may 409
+                        // until the old entry expires, which the retry loop reports.
+                        std::thread::sleep(RETRY_DELAY);
+                        break;
                     }
                 }
+                std::thread::sleep(HEARTBEAT_PERIOD);
             }
+            handle.clear_registration();
         }
     })
 }
 
-/// Copy the live player count into the atomic the announcer thread reads.
+/// Copy live human/bot counts into the atomics the announcer thread reads.
 pub fn publish_player_count(
     probe: Res<PlayerCountProbe>,
     humans: Query<(), (With<crate::systems::Human>, With<shared::Player>)>,
-    bots: Query<&shared::IsAlive, (With<crate::bot::BotBrain>, With<shared::Player>)>,
+    bots: Query<(), (With<crate::bot::BotBrain>, With<shared::Player>)>,
 ) {
-    let human_count = humans.iter().count();
-    // Bots count alive-only. Deliberate divergence from JS, which counts dead
-    // bots too (they despawn after 2s and shouldn't inflate the browser count).
-    let bot_count = bots.iter().filter(|alive| alive.0).count();
     probe
         .0
-        .store((human_count + bot_count) as u32, Ordering::Relaxed);
+        .humans
+        .store(humans.iter().count() as u32, Ordering::Relaxed);
+    probe
+        .0
+        .bots
+        .store(bots.iter().count() as u32, Ordering::Relaxed);
 }
 
 #[cfg(test)]
@@ -451,14 +639,6 @@ mod tests {
     }
 
     #[test]
-    fn heartbeat_payload_is_exactly_player_count() {
-        let value = serde_json::to_value(HeartbeatPayload { player_count: 3 }).unwrap();
-        let obj = value.as_object().unwrap();
-        assert_eq!(obj.len(), 1);
-        assert_eq!(obj["playerCount"], Value::Number(3.into()));
-    }
-
-    #[test]
     fn periods_fit_comfortably_inside_40s_eviction() {
         assert_eq!(HEARTBEAT_PERIOD, Duration::from_secs(2));
         assert_eq!(RETRY_DELAY, Duration::from_secs(5));
@@ -466,5 +646,113 @@ mod tests {
         assert!(HEARTBEAT_PERIOD * 4 < EVICTION_BUDGET);
         assert!(RETRY_DELAY * 2 < EVICTION_BUDGET);
         assert!(HTTP_TIMEOUT <= RETRY_DELAY);
+    }
+
+    #[test]
+    fn heartbeat_payload_is_humans_and_bots() {
+        let payload = HeartbeatPayload {
+            player_count: 3,
+            bot_count: 5,
+        };
+        let value = serde_json::to_value(payload).unwrap();
+        let obj = value.as_object().unwrap();
+        assert_eq!(obj.len(), 2);
+        assert_eq!(obj["playerCount"], Value::Number(3.into()));
+        assert_eq!(obj["botCount"], Value::Number(5.into()));
+    }
+
+    fn registration(body: &str) -> Registration {
+        serde_json::from_str::<RegisterResponse>(body)
+            .unwrap()
+            .into()
+    }
+
+    #[test]
+    fn register_response_with_token_authorizes_as_bearer() {
+        let reg = registration(r#"{"id":"abc","host":"h","port":1,"token":"s3cret"}"#);
+        assert_eq!(reg.id, "abc");
+        assert_eq!(reg.authorization().as_deref(), Some("Bearer s3cret"));
+    }
+
+    #[test]
+    fn legacy_register_response_means_no_auth_header() {
+        let legacy = registration(r#"{"id":"abc","host":"h","port":1,"playerCount":0}"#);
+        assert_eq!(legacy.token, None);
+        assert_eq!(legacy.authorization(), None);
+        // An empty token is as good as none.
+        let empty = registration(r#"{"id":"abc","token":""}"#);
+        assert_eq!(empty.authorization(), None);
+    }
+
+    fn cfg_for(manager: &str, host: &str) -> AnnounceConfig {
+        let m = map(&[("MANAGER_URL", manager), ("ADVERTISED_HOST", host)]);
+        AnnounceConfig::from_map(&|k| m.get(k).cloned())
+    }
+
+    #[test]
+    fn loopback_host_with_remote_manager_is_blocked() {
+        let remote = "https://manager-abc.run.app";
+        assert!(cfg_for(remote, "127.0.0.1").announce_blocker().is_some());
+        assert!(cfg_for(remote, "localhost").announce_blocker().is_some());
+        assert!(cfg_for(remote, "0.0.0.0").announce_blocker().is_some());
+        assert!(cfg_for(remote, "::1").announce_blocker().is_some());
+        // A real address, or a local manager, is fine.
+        assert!(
+            cfg_for(remote, "play.example.com")
+                .announce_blocker()
+                .is_none()
+        );
+        assert!(cfg_for(remote, "203.0.113.7").announce_blocker().is_none());
+        assert!(
+            cfg_for("http://localhost:3001", "127.0.0.1")
+                .announce_blocker()
+                .is_none()
+        );
+        assert!(
+            cfg_for("http://[::1]:3001/x", "127.0.0.1")
+                .announce_blocker()
+                .is_none()
+        );
+        assert!(
+            cfg_for("http://user@127.0.0.1:3001", "127.0.0.1")
+                .announce_blocker()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn url_host_strips_scheme_port_path_and_userinfo() {
+        assert_eq!(url_host("https://a.b.c:8443/x?y#z"), "a.b.c");
+        assert_eq!(url_host("http://u:p@host:1"), "host");
+        assert_eq!(url_host("http://[::1]:3001"), "::1");
+        assert_eq!(url_host("localhost:3001"), "localhost");
+    }
+
+    #[test]
+    fn shutdown_takes_registration_and_stops_further_registers() {
+        let handle = AnnounceHandle::default();
+        let cfg = cfg_for("http://localhost:3001", "127.0.0.1");
+        let reg = Registration {
+            id: "r1".into(),
+            token: Some("t".into()),
+        };
+        assert!(handle.begin_register());
+        assert!(handle.finish_register(&cfg, Some(&reg)));
+        assert_eq!(handle.begin_shutdown(), Some(reg));
+        assert!(!handle.begin_register());
+    }
+
+    #[test]
+    fn shutdown_during_register_aborts_and_releases_the_waiter() {
+        let handle = AnnounceHandle::default();
+        let cfg = cfg_for("http://localhost:3001", "127.0.0.1");
+        assert!(handle.begin_register());
+        // Shutdown lands while the register request is in flight...
+        assert_eq!(handle.begin_shutdown(), None);
+        assert!(handle.lock().registering);
+        // ...so the late result is refused and the in-flight flag is cleared
+        // (a Some(reg) here would be unregistered by the announcer itself).
+        assert!(!handle.finish_register(&cfg, None));
+        assert!(!handle.lock().registering);
     }
 }
