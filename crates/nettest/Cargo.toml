@@ -1,0 +1,14 @@
+[package]
+name = "tron-zero-nettest"
+version = "0.0.0"
+edition = "2024"
+publish = false
+description = "Headless server + client(s) over real UDP loopback with a link conditioner, for netcode tests."
+
+[dependencies]
+shared = { path = "../shared", package = "tron-zero-shared" }
+tron-zero-server = { path = "../server" }
+tron-zero-client = { path = "../client" }
+bevy.workspace = true
+glam.workspace = true
+lightyear = { workspace = true, features = ["udp", "raw_connection", "input_native"] }
