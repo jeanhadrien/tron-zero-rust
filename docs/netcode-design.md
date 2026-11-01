@@ -76,10 +76,85 @@ simulation contract:
   or precede authoritative death; an early request can be denied and requires a
   new keypress. Confirmation, denial and no-safe-space states have visible prompts.
 
-Respawn life tags prevent turns crossing lives, but do not address Lightyear's
-same-life one-shot-turn fallback/repetition risk under missing input. That
-future-hardening work remains in `NETWORK.md`; it is not implemented here.
 Safe spawning checks a current-geometry corridor, not future moving opponents.
+
+### One-shot turn delivery (implemented and exercised by `crates/nettest`)
+
+Every physical press is one `TurnCommand { seq, direction, generation, tick }`
+on the ordered-reliable `TurnChannel`. Lightyear's native `PlayerInput` path
+still runs (it feeds client prediction, rollback replay and the input buffer),
+but the server ignores it for humans.
+
+- **Client** (`read_keyboard`, FixedPreUpdate): pops at most one queued press
+  per fixed tick into the predicted `ActionState` and, in the same system, sends
+  the command. `tick` is `LocalTimeline.tick() + input_delay`, i.e. the tick the
+  prediction itself applies the turn at (the formula Lightyear's input
+  buffering uses). `seq` is assigned at that moment and is monotonic for the
+  connection; menu/death queue clears never rewind it. Rollback never runs the
+  writer: replays take inputs from Lightyear's recorded history, send nothing
+  and consume no keyboard events.
+- **Timeline.** The client's `LocalTimeline` is driven by `InputTimeline`,
+  which targets `server + RTT/2 + 4*jitter + 1 tick (client margin) + 1 tick
+  (server input pipeline) + sync error margin`. It is the same tick count the
+  server uses: the native input buffer on the server holds the matching
+  `TurnXFor(generation)` at exactly the tick the command claims (checked by the
+  harness on every command).
+- **Server** (`turns.rs`): `collect_turn_commands` (PreUpdate) admits commands
+  into a per-link `TurnQueue`; `apply_turn_commands` (FixedUpdate, before
+  `simulate_players`) writes every human rider's `ActionState` each tick:
+  `None`, or the one turn due. Execution tick = `max(intended, previous turn's
+  tick + 1)`, so turns run in order, at most one per rider per tick, and a
+  turn that arrives early waits for its tick.
+- **Late turns.** A turn due at tick `d` that the server only sees afterwards
+  runs on the first tick it can if `now - d <= TURN_LATE_WINDOW_TICKS` (12 =
+  100 ms, shifting the corner by at most 36 units, and costing the client one
+  rollback); beyond that it is rejected (`TooLate`) with an ack. The server
+  never rewrites a simulated tick.
+- **Validation.** Commands are rejected at receipt for a stale life
+  (`StaleLife`), a dead rider (`NotAlive`), a `seq` not above the highest
+  accepted for the current life (`Duplicate`), an intended tick more than
+  `TURN_MAX_LEAD_TICKS` (64, Lightyear's own native-input bound) ahead
+  (`TooFarAhead`), or a full queue of `TURN_QUEUE_CAP` (32, `QueueFull`).
+  Execution never precedes receipt, so backdating a tick gains nothing; at
+  worst it makes the turn look late. Queued turns are rejected again at
+  execution if the rider died or respawned in between. Queue state lives on the
+  link entity and dies with the connection.
+- **Double turn.** The overwrite of `ActionState` is unconditional for every
+  `Human` rider, every tick. A client that writes native turns without
+  commands is delivered into the server's input buffer (the harness sees it
+  there) and never turns the rider.
+- **Acks.** `Applied { server_tick }` or `Rejected { reason }` per command;
+  prediction never waits for them. They are diagnostics today. The client does
+  not yet use `Applied.server_tick` to repair its own history of a late turn:
+  a late turn costs one ordinary state rollback.
+
+Measured arrival margin (server tick at receipt minus the client's intended
+tick; a command is on time while this is <= -1, because the receipt tick is the
+last one already simulated; e.g. -4 = 4 ticks of slack),
+60 presses per profile, real UDP loopback, Lightyear's receive-side conditioner
+on both ends (RTT split evenly; jitter is uniform +/- per direction):
+
+| Profile (RTT / jitter / loss) | min | p50 | p95 | max | Late (>= 0) | Rollbacks |
+|-------------------------------|-----|-----|-----|-----|------------|-----------|
+| 0 ms / 0 / 0%                 | -4  | -4  | -3  | -3  | 0 of 60    | 0         |
+| 50 ms / 10 / 0%               | -7  | -5  | -5  | -4  | 0 of 60    | 0         |
+| 150 ms / 20 / 0%              | -9  | -7  | -5  | -4  | 0 of 60    | 0         |
+| 250 ms / 50 / 0%              | -12 | -5  | 0   | +1  | >5%, 1-2 ticks late | 14 |
+| 150 ms / 20 / 3% (reliable resend) | -15 | -7 | -4 | +19 | <5%; 1 beyond the window (rejected) | 4 |
+
+The premise that no-input-delay makes every turn late was wrong: it makes the
+client lead the server by roughly one-way delay plus 4-9 ticks of margin, and
+clean links deliver 100% of turns early. Previously the stamp was taken at
+press time in PreUpdate (about one tick earlier than the pop tick, and wrong
+for every press after the first in a same-frame burst).
+
+Verified by the harness (`cargo test -p tron-zero-nettest`, about 40 s): exact
+execution tick and zero rollbacks on a clean link, with client-predicted and
+server poses identical at every tick; exactly-once, in-order, never-early
+execution and explicit fates under 3% loss and jitter; the late window
+(execution ~6 ticks late, and a `TooLate` rejection ~26 ticks late); native-
+input cheating; menu swallowing without sequence gaps; forced client rollback
+replay; death/respawn and reconnect without turn leakage.
 
 Collision is against zero-thickness, start-of-tick segments. Swept front clearance
 prevents crossing that geometry, but simultaneous newly grown trail intersections
@@ -97,11 +172,11 @@ The objective is to create a highly responsive network action game. To achieve t
 - **Mispredictions:** The client restores authoritative state and replays historical inputs. This is client rollback, not server rollback. Corrections can still be visible; immediate prediction does not guarantee agreement.
 - **One-shot Turns:** Every physical press is a distinct ordered command, including repeated turns in the same direction. Missing input must never create another turn. Normal movement and collision handling continue when no new turn is available.
 
-The authority model is agreed; reliable one-shot delivery is still pending.
-Strict rejection versus bounded later execution of late commands remains an
-explicit decision. Neither may change an already-simulated server tick.
-Client-predicted death can be corrected without reversing a server death.
-See `NETWORK.md` for implementation order, acceptance criteria and open decisions.
+The authority model is agreed and one-shot delivery is implemented (see "One-shot
+turn delivery" above): turns execute at their intended tick when they arrive
+in time and later only within a bounded window, never rewriting a simulated
+tick. Client-predicted death can be corrected without reversing a server death.
+See `NETWORK.md` for what remains open.
 
 ## 2. Simulation Fundamentals
 
@@ -115,14 +190,17 @@ impaired-network behavior still require verification.
 ## 3. Time Synchronization & Client Lead
 
 During synchronized play, the client's prediction timeline runs **ahead** of
-the server to give inputs time to arrive before their intended simulation tick.
+the server so inputs arrive before their intended simulation tick.
 
-Lightyear manages synchronization and timeline lead. The client currently uses
-`InputDelayConfig::no_input_delay()`: no configured extra delay before applying
-local input, not zero network transit time or zero prediction lead.
-The installed implementation and actual lead must be traced/measured before
-tuning. `RTT / 2 + buffer` is only an intuition, not a verified configuration or
-a guarantee of arrival before a deadline; routes can be asymmetric and jittery.
+Lightyear drives the client's `LocalTimeline` from `InputTimeline` (the
+`DRIVING` synced timeline): it targets `server + RTT/2 + 4*jitter + 1 tick +
+1 tick + error margin`, and the server's tick numbering is the same counter, so
+a client tick is a server tick. The client uses `InputDelayConfig::no_input_delay()`:
+no extra local delay, all latency covered by prediction (up to 100 ticks).
+Measured result (table above): commands land 4-9 ticks (33-75 ms) before their
+tick on links up to 150 ms RTT; at 250 ms RTT with +/-50 ms jitter a few percent
+miss by 1-2 ticks. Server input-lead and jitter margins are Lightyear's
+defaults; they have not been tuned.
 
 ## 4. Client Rollback and Reconciliation (Handling Mispredictions)
 
@@ -140,28 +218,29 @@ Because the client simulates ahead, it will occasionally mispredict (e.g., the c
 
 ## 5. Network Resilience (Packet Loss & Jitter)
 
-The game uses UDP with Lightyear's input transport. The following are requirements
-for the pending turn-delivery work, not claims of completed hardening.
+Turns travel as sequenced commands on an ordered-reliable channel (Lightyear
+retransmits lost packets and delivers in order); the native redundant-input
+messages carry prediction only. Verified under 3% loss with jitter: every press
+executes once or is explicitly rejected. Outage tolerance beyond the late
+window is not promised.
 
-### A. Redundancy and Command Identity
+### A. Command identity and retransmission
 
-Inspect and reuse Lightyear's actual redundant-input facilities before adding
-another channel. Commands need unambiguous identity/order and bounded history;
-packet receipt is not proof that a turn executed. Retransmission must not repeat
-an action, and two consecutive left turns must remain two commands.
-Redundancy improves recovery but cannot guarantee timely delivery through an outage.
+Commands are identified by (life generation, `seq`); the server executes a
+`seq` at most once. Head-of-line blocking is the cost of ordered-reliable
+delivery: a lost packet delays every later turn by about one resend round, which
+is consistent with the +13..+19 tick arrivals seen in the 3%-loss profile. A
+redundant-resend scheme (repeat the last few unacked commands in each message)
+would mostly remove that; it has not been built because the lost-turn rate in
+the measurements is a few percent at 3-5% loss.
 
-### B. Missing Input and Timing
+### B. Missing input and timing
 
-Repeating held movement can be appropriate in other games; repeating a Tron
-turn is not. Lightyear's current last-input fallback is a known mismatch to fix,
-not the desired gameplay rule. Missing input must mean no new turn.
-Client replay must restore consumption state with gameplay state, while fresh
-input collection remains separate from replay.
-
-Measure input starvation, lead, command age and corrections before tuning
-buffering. The late-command policy must report expired/rejected commands and
-must not replay stale turns indefinitely after a stall.
+Missing input is no turn: the server overwrites Lightyear's repeat-last-input
+fallback for humans every tick. Client replay reuses recorded inputs and does
+not consume or send anything. The late policy reports `TooLate` rejections and
+never replays stale turns after a stall (they expire after the 12-tick window).
+Still unmeasured: input starvation under client frame hitches, and long stalls.
 
 ## 6. Collision Authority
 

@@ -1,23 +1,46 @@
 # Netcode hardening backlog
 
-Status: planning only, 2026-09-30. These items are not implemented or verified
-unless explicitly described as existing behavior below.
+Status: updated 2026-11-01. P0 one-shot turn delivery is implemented and
+verified by the headless network harness (`crates/nettest`, run with
+`cargo test -p tron-zero-nettest`; measurements with `-- --ignored --nocapture`).
+Unchecked items are not implemented or verified. The implemented contract and
+measured numbers are in `docs/netcode-design.md` ("One-shot turn delivery").
 
-## Next session TODO (paused 2026-10-01)
+## Done in the 2026-11-01 session
 
-- [ ] Start with the P0 Lightyear 0.28 input-pipeline investigation: trace tick
-  mapping, input lead, redundancy, acknowledgments, missing-input fallback and
-  replay; document actual defaults and available extension points.
-- [ ] Use that evidence to choose strict late-turn rejection versus bounded
-  later execution with the user. No late policy or 100 ms allowance is approved.
-- [ ] Implement the one-shot command contract end to end, preserving rapid
-  queued presses, ordering, deduplication and rollback/life/session safety.
-- [ ] Add regressions and command traces, then arrange user-run or external
-  impaired-network validation before claiming delivery reliability.
+- [x] Traced the Lightyear 0.28 input pipeline: `LocalTimeline` on the client is
+  driven by `InputTimeline` (targets `server + RTT/2 + 4*jitter + 2 ticks +
+  sync margin`), the native input buffer is stamped with the same tick numbers,
+  the server applies native inputs in FixedPreUpdate with a repeat-last-input
+  fallback, and native messages beyond 64 ticks ahead are dropped.
+- [x] Measured the arrival margin (receipt minus intended tick): commands arrive
+  4-9 ticks early on links up to 150 ms RTT, so intended-tick scheduling works.
+  The earlier "every turn is late with no input delay" premise was wrong.
+- [x] Chose bounded late execution: on time at the intended tick; late within
+  `TURN_LATE_WINDOW_TICKS = 12` runs on the first free tick; later is rejected
+  (`TooLate`) with an ack. `TURN_MAX_LEAD_TICKS = 64`, `TURN_QUEUE_CAP = 32`.
+- [x] Fixed: press-time stamping (wrong for same-frame bursts), the in-life
+  `seq` reset on menu/queue clears (made every later press a `Duplicate`), and
+  the Lightyear last-input fallback being able to add or invent turns.
+- [x] Headless server + client(s) harness over real UDP with the link conditioner.
 
-Agreed boundary: forward-only authoritative server, immediate client prediction,
-client reconciliation only. Missing input never invents a turn. No server rewind.
-Work is paused before investigation/implementation; resume here next session.
+## Still open after that session
+
+- [ ] Late turns cost a state rollback on the client. The ack carries
+  `Applied { server_tick }`; the client could patch its input history with it
+  to avoid the visual snap. Not done.
+- [ ] Loss: ordered-reliable head-of-line blocking delays every turn behind a
+  lost packet by about a resend round (arrivals up to +19 ticks at 3% loss,
+  one turn beyond the 12-tick window in that run). Redundant resend of unacked
+  commands was not built; revisit if the lost-turn rate matters in play.
+- [ ] 12-tick window is a measured-but-untuned default (one 36-unit corner shift
+  at most). Needs real-player data before it is called competitive-ready.
+- [ ] Not measured: frame hitches/catch-up bursts on the client, long stalls
+  and outages, 2+ simultaneous clients, `TurnAck` flooding by a hostile client
+  (rejections are acked one-for-one), sequence behaviour across a Lightyear
+  timeline resync mid-session (server floors ticks monotonic; not exercised).
+- [ ] Unseeded conditioner: runs are not reproducible; assertions are
+  invariants, not exact traces. No saved seeds/traces yet.
 
 ## Assessment and existing foundation
 
@@ -38,9 +61,10 @@ rewriting the networking stack.
   with separate connection/menu state, session heartbeats, readiness gating,
   and client/server timeouts. Runtime lifecycle checks remain outstanding.
 
-Local responsiveness is not proof of online correctness. Runtime multiplayer,
-packet-impairment, and load behavior remain unverified. Existing regression tests
-have been compiled but not executed during this work.
+Local responsiveness is not proof of online correctness. Turn delivery now has a
+real-UDP harness (loopback, link conditioner, up to 250 ms RTT); load, long
+outages, multi-player collision fairness and the lifecycle overlay under
+impairment remain unverified.
 
 ## P0: correct one-shot turn delivery
 
@@ -53,23 +77,28 @@ known state. Our `TurnLeft` / `TurnRight` values mean "turn once," not "continue
 holding a direction." Repeating that state can cause an extra authoritative turn.
 The rollback-safe local queue does not fix this network-level mismatch.
 
-- [ ] Trace the installed Lightyear input pipeline and its extension points
+- [x] Trace the installed Lightyear input pipeline and its extension points
   before choosing a protocol; do not fork or replace the transport by default.
-- [ ] Define ordered turn commands with identity and intended simulation tick.
+- [x] Define ordered turn commands with identity and intended simulation tick.
   Preserve left/right ordering and distinguish consecutive identical turns.
-- [ ] Make command-consumption state rollback-aware. Replaying a historical tick
+- [x] Make command-consumption state rollback-aware (client replay reuses the
+  recorded input history and never sends; verified with a forced rollback). Replaying a historical tick
   must reproduce its turn, while receiving a duplicate packet must not add one.
-- [ ] Define missing-input behavior: continue movement, never invent a turn.
+- [x] Define missing-input behavior: continue movement, never invent a turn.
 - [ ] Define bounded redundancy/retransmission, acknowledgment, deduplication,
   history retention, sequence wraparound, and reconnect/session reset semantics.
-- [ ] Decide the late-command policy explicitly: reject with feedback or apply
+  Done: acks, dedup by (life, seq) watermark, bounded queue, per-link state that
+  dies with the connection, u64 seq. Not built: redundant resend (see above).
+- [x] Decide the late-command policy explicitly: reject with feedback or apply
   within a bounded late window. Server rewind is excluded from this design.
   Evaluate fairness and complexity before selecting one. Sequence IDs alone
   cannot restore an action to a tick the server has already simulated.
-- [ ] Validate ownership, tick windows, command ordering, and the legal turn
-  rate server-side. Bound memory/work without silently dropping accepted input.
+- [x] Validate ownership, tick windows, command ordering, and the legal turn
+  rate server-side (one per rider per tick; future bound 64; no backdating). Bound memory/work without silently dropping accepted input.
 - [ ] Define keyboard queue behavior on focus loss, death, disconnect, reconnect,
   and prolonged synchronization stalls; avoid stale turns firing after recovery.
+  Verified: menu, death, respawn, disconnect/reconnect. Not verified: focus loss
+  and sync stalls.
 
 Acceptance: within the supported network envelope, accepted commands execute
 once in order in the authoritative timeline. Client rollback reproduces the same
@@ -97,14 +126,16 @@ started. The agreed architecture is:
 Client-predicted deaths can still be corrected by server snapshots; that does
 not mean the server reversed its own earlier death decision.
 
-### Remaining late-command decision
+### Late-command decision (resolved 2026-11-01: bounded late execution)
+
+The options considered, and what was chosen (12 ticks, see the status above):
 
 - **Strict deadline:** reject commands received after their intended server tick.
   Preserves already-published history but can discard physical presses under jitter.
 - **Bounded late execution:** apply late commands in order on subsequent ticks,
-  at most one per tick, and explicitly reject expired commands. The proposed
-  100 ms / 12-tick grace window is an unvalidated tuning candidate, not an agreed
-  policy or supported-network guarantee. It cannot restore the intended corner
+  at most one per tick, and explicitly reject expired commands. The 100 ms /
+  12-tick window was chosen; it is a tuning default, not a supported-network
+  guarantee. It cannot restore the intended corner
   or reverse an authoritative death.
 
 Input timeline lead and command redundancy can reduce missed deadlines without
@@ -134,8 +165,7 @@ Timing validation must be server-bounded, not based on arbitrary client backdati
    that each accepted command executes exactly once in authoritative simulation.
 5. Exercise the real client/server pipeline under seeded network impairment.
    Measure lateness, input lead, corrections and queue age before tuning buffers.
-   Compilation is not execution: the repository's no-agent-build rule means
-   runtime results require a user-run or approved external workflow.
+   Done via `crates/nettest` (unseeded conditioner).
 
 Reference distinction: Riot's
 [VALORANT netcode explanation](https://www.riotgames.com/en/news/peeking-valorants-netcode)
@@ -172,18 +202,25 @@ Add diagnostics before tuning input lead, packet redundancy, or send frequency.
 
 - [ ] Add opt-in structured tracing correlating session/player, command ID,
   intended tick, send/receive tick, applied/rejected result, and rollback range.
+  Partly done: the opt-in server `TurnLog` (queued/applied/rejected with ticks)
+  and the harness traces; rollback ranges and the client side are not logged.
 - [ ] Record RTT, jitter, loss estimates, input starvation, input lead, queue
   depth/age, correction count/distance, rollback depth/cost, and bytes per second.
   Distinguish measured loss from application-level missing input.
 - [ ] Measure key-event-to-predicted-turn and predicted-turn-to-visible-frame
   latency; separately measure authoritative acknowledgment. Do not label RTT
   or tick duration as total input latency.
-- [ ] Add a deterministic headless server + two-client integration harness,
-  using the real input/replication pipeline and scripted, seeded inputs.
+- [x] Add a headless server + client integration harness over real UDP with
+  scripted presses (`crates/nettest`). One client per scenario so far, no seeded
+  conditioner (Lightyear's uses unseeded `rand`), so it is not deterministic;
+  a two-client scenario is still to be written.
 - [ ] Include same-frame bursts, consecutive same-direction turns, mixed turns,
   frame hitches, catch-up ticks, rollback during input, and long-running sessions.
+  Done: bursts, mixed turns, forced rollback during input. Not done: hitches,
+  catch-up ticks, long sessions.
 - [ ] Exercise joining/leaving during play, reconnects, server restart, late
-  spawn replication, and missing opponent history.
+  spawn replication, and missing opponent history. Done: reconnect, respawn.
+  Not done: server restart, opponents.
 - [ ] Save seeds, impairment profiles, version/configuration, command traces,
   and authoritative outcomes so failures can become regression fixtures.
 
@@ -243,8 +280,8 @@ required merely to start this backlog.
 
 | Addition / candidate | Purpose and constraints |
 |----------------------|-------------------------|
-| Headless integration test target or small workspace harness crate | Real client/server sessions, seeded scripts, state/command assertions. Reuse shared simulation and production networking setup. |
-| Development-only network impairment configuration | First inspect Lightyear 0.28 facilities; otherwise use a test-only UDP proxy. Must support reproducible bidirectional loss/delay/reordering. |
+| Headless integration test target or small workspace harness crate | DONE: `crates/nettest` (server/client lib split + real UDP sessions, scripted presses, trace assertions). |
+| Development-only network impairment configuration | DONE for tests: Lightyear's receive-side `LinkConditioner` on both ends (latency, jitter, loss; jitter reorders). Unseeded, so not reproducible; no duplication or burst outages. |
 | PowerShell scenario runner | Start only scenario-owned processes, gather artifacts, and clean up those processes by PID. |
 | Existing `tracing` infrastructure | Structured command/tick diagnostics first; avoid introducing a metrics backend until needed. |
 | Linux `tc netem` | Optional external UDP impairment on an isolated CI host/network namespace; do not alter shared host networking. |
@@ -258,18 +295,19 @@ Check current upstream documentation and licensing before adopting them.
 Use the installed Lightyear version's source and examples rather than assuming
 newer documentation describes 0.28 APIs.
 
-Repository instructions currently prohibit agent-driven builds. Runtime tests
-and harness execution require an explicitly approved execution environment or
-user-run workflow; `cargo check` / `cargo clippy` are not substitutes.
+The harness runs in plain `cargo test` (about 40 s, serialized because it uses
+wall-clock timing).
 
 ## Completion gate and documentation
 
 - [ ] Execute existing gameplay/input regressions, then add protocol, collision,
-  and end-to-end impairment regressions as fixes land.
+  and end-to-end impairment regressions as fixes land. Done for turns: unit
+  tests plus the harness; collision regressions remain.
 - [ ] Establish and publish numerical acceptance budgets before calling the
   game competitive-ready; do not infer them from the framework or tick rate.
 - [ ] Demonstrate no missing/duplicate accepted turns within the supported
-  envelope, repeatable collision outcomes, bounded resource use, and controlled
+  envelope (demonstrated to 250 ms RTT and 3% loss on loopback; envelope not
+  yet declared), repeatable collision outcomes, bounded resource use, and controlled
   behavior outside that envelope.
 - [ ] Update `docs\netcode-design.md` to distinguish implemented behavior from
   aspirational claims about quantization, input acknowledgment windows, time
