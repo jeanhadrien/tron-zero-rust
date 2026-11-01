@@ -50,6 +50,9 @@ sim_constants! {
     RUBBER_REGEN => RUBBER_REGEN.to_bits() as u64,
     TURN_LATE_WINDOW_TICKS => TURN_LATE_WINDOW_TICKS as u64,
     TURN_MAX_LEAD_TICKS => TURN_MAX_LEAD_TICKS as u64,
+    TURN_QUEUE_CAP => TURN_QUEUE_CAP as u64,
+    TURN_BATCH_MAX => TURN_BATCH_MAX as u64,
+    TURN_RESEND_TICKS => TURN_RESEND_TICKS as u64,
 }
 
 /// 64-bit FNV-1a over the version and every [`SIM_CONSTANTS`] value, folded to
@@ -252,10 +255,17 @@ pub struct TurnCommand {
     pub tick: u32,
 }
 
+/// Client -> server, once per client tick while anything is unacknowledged:
+/// every command the server has not yet reported as decided, oldest first, at
+/// most [`TURN_BATCH_MAX`]. Sent on the unreliable [`TurnChannel`]; the
+/// repetition, not a retransmit timer, is what makes delivery robust.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TurnBatch {
+    pub commands: Vec<TurnCommand>,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TurnRejectReason {
-    /// `seq` not above the highest already accepted for this life.
-    Duplicate,
     StaleLife,
     NotAlive,
     QueueFull,
@@ -273,18 +283,38 @@ pub enum TurnOutcome {
     Rejected { reason: TurnRejectReason },
 }
 
-/// Server → client ack for every accepted-or-rejected command.
+/// What became of one command (diagnostics; see [`TurnAck`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TurnAck {
+pub struct TurnVerdict {
     pub seq: u64,
     pub outcome: TurnOutcome,
 }
 
+/// Server -> client, at most once per frame, on the unreliable
+/// [`TurnAckChannel`] (only the newest one matters).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TurnAck {
+    /// Every command with `seq` below this is decided (queued or rejected):
+    /// the client stops repeating them. Cumulative, so a lost ack costs nothing.
+    pub received_below: u64,
+    /// The newest execution or rejection since the previous ack. Diagnostics
+    /// only: prediction never waits for it and older verdicts may be skipped.
+    pub newest: Option<TurnVerdict>,
+}
+
+/// Unreliable client -> server channel for [`TurnBatch`].
 pub struct TurnChannel;
+/// Unreliable, sequenced server -> client channel for [`TurnAck`].
+pub struct TurnAckChannel;
 
 /// Max buffered turns per player; beyond this new commands are rejected with
 /// `QueueFull` (accepted commands are never silently dropped).
 pub const TURN_QUEUE_CAP: usize = 32;
+/// Most commands in one [`TurnBatch`]; also the client's outbox size.
+pub const TURN_BATCH_MAX: usize = 16;
+/// The client stops repeating a command this many ticks after its stamp
+/// (400 ms): by then the server would reject it as too late anyway.
+pub const TURN_RESEND_TICKS: u32 = 48;
 /// How far past its intended tick a turn may still execute (100 ms at 120 Hz).
 /// Late execution shifts the corner by `lateness * 3` units and costs the
 /// client a correction; beyond the window the turn is rejected instead.
@@ -320,12 +350,21 @@ pub fn register_protocol(app: &mut App) {
     app.register_message::<RespawnReply>()
         .add_direction(NetworkDirection::ServerToClient);
     // --- One-shot turns (phantom-turn fix) ---
+    // Turns are repeated by the sender in every packet, so neither direction
+    // needs a reliable channel (and the server never buffers for a client that
+    // does not acknowledge). `Unordered`: each batch is a superset of the
+    // older ones, and the server dedupes by seq.
     app.add_channel::<TurnChannel>(ChannelSettings {
-        mode: ChannelMode::OrderedReliable(ReliableSettings::default()),
+        mode: ChannelMode::UnorderedUnreliable,
         ..Default::default()
     })
-    .add_direction(NetworkDirection::Bidirectional);
-    app.register_message::<TurnCommand>()
+    .add_direction(NetworkDirection::ClientToServer);
+    app.add_channel::<TurnAckChannel>(ChannelSettings {
+        mode: ChannelMode::SequencedUnreliable,
+        ..Default::default()
+    })
+    .add_direction(NetworkDirection::ServerToClient);
+    app.register_message::<TurnBatch>()
         .add_direction(NetworkDirection::ClientToServer);
     app.register_message::<TurnAck>()
         .add_direction(NetworkDirection::ServerToClient);

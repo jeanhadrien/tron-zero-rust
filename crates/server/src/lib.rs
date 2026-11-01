@@ -7,6 +7,7 @@
 pub mod admission;
 pub mod announce;
 pub mod bot;
+pub mod budget;
 pub mod session;
 pub mod systems;
 pub mod turns;
@@ -48,7 +49,12 @@ pub fn add_core(app: &mut App, port: u16) {
     );
     app.add_systems(
         PostUpdate,
-        session::close_sessions.after(lightyear::prelude::LinkSystems::Send),
+        (
+            // One coalesced ack per link per frame, queued before the
+            // transport serializes messages.
+            turns::send_turn_acks.before(MessageSystems::Send),
+            session::close_sessions.after(lightyear::prelude::LinkSystems::Send),
+        ),
     );
 
     // `apply_turn_commands` runs after Lightyear's `UpdateActionState`

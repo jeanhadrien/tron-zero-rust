@@ -7,6 +7,7 @@ use lightyear::prelude::*;
 use shared::protocol::{RespawnChannel, RespawnOutcome, RespawnReply, RespawnRequest};
 
 use crate::admission::{AwaitingHello, MAX_UNADMITTED_LINKS};
+use crate::budget::{LinkBudget, Meter};
 use crate::session::SessionLease;
 
 #[derive(Component)]
@@ -21,14 +22,32 @@ pub struct PendingRespawns(Vec<(Entity, RespawnRequest)>);
 
 /// Lightyear clears receivers in Last, including frames with no fixed tick.
 /// Preserve requests until an authoritative fixed-tick transaction can run.
+///
+/// Each request is answered on a reliable channel, so a link sending more than
+/// a client ever should is closed instead of being allowed to grow that buffer.
 pub fn collect_respawn_requests(
-    mut clients: Query<(Entity, &mut MessageReceiver<RespawnRequest>), With<Connected>>,
+    time: Res<Time<Real>>,
+    mut clients: Query<
+        (
+            Entity,
+            &mut MessageReceiver<RespawnRequest>,
+            &mut LinkBudget,
+            &mut SessionLease,
+        ),
+        With<Connected>,
+    >,
     mut pending: ResMut<PendingRespawns>,
 ) {
-    for (owner, mut receiver) in &mut clients {
-        pending
-            .0
-            .extend(receiver.receive().map(|request| (owner, request)));
+    let now = time.elapsed_secs_f64();
+    for (owner, mut receiver, mut budget, mut lease) in &mut clients {
+        for request in receiver.receive() {
+            if !budget.spend(Meter::RespawnRequests, 1, now) {
+                warn!(?owner, "Respawn request flood; closing the link");
+                lease.close();
+                break;
+            }
+            pending.0.push((owner, request));
+        }
     }
 }
 
@@ -77,6 +96,7 @@ pub fn on_client_connected(
     }
     commands.entity(trigger.entity).insert((
         lease,
+        LinkBudget::default(),
         crate::turns::TurnQueue::default(),
         AwaitingHello::default(),
     ));

@@ -10,14 +10,25 @@
 //!
 //! ONE-SHOT TURN CONTRACT: the native `ActionState` path above drives
 //! prediction (and rollback replay). The turn itself reaches the server as a
-//! sequenced `TurnCommand` over the ordered-reliable `TurnChannel`, sent from
-//! the same place the press is popped into `ActionState`: `read_keyboard`.
-//! Its `tick` is therefore exactly the tick the prediction applies the turn at
-//! (`LocalTimeline` + input delay, the formula Lightyear's own input buffering
-//! uses), on the timeline that runs ahead of the server. The server executes
-//! the command on that tick when it arrives in time (see
-//! `tron_zero_server::turns`), so a delivered turn matches the prediction and
-//! causes no correction. Rollback never pops the queue or sends a command.
+//! sequenced `TurnCommand`, created in the same place the press is popped into
+//! `ActionState`: `read_keyboard`. It goes into the [`TurnOutbox`], which
+//! `send_turn_batch` repeats in every outgoing packet until the server reports
+//! the command decided (see `outbox.rs`). Its `tick` is exactly the tick the
+//! prediction applies the turn at (`LocalTimeline` + input delay, the formula
+//! Lightyear's own input buffering uses), on the timeline that runs ahead of
+//! the server. The server executes the command on that tick when it arrives in
+//! time (see `tron_zero_server::turns`), so a delivered turn matches the
+//! prediction and causes no correction. Rollback never pops the queue or
+//! creates a command.
+//!
+//! PREDICTED DEATH IS NOT A REASON TO DROP A PRESS. `IsAlive` is predicted, so
+//! a rider can be dead locally only because the prediction disagrees with the
+//! opponents' interpolated trails while the server still has it alive. Presses
+//! therefore keep flowing (the server is the judge and answers `NotAlive` if
+//! the rider really is dead), and the queue is cleared only when the rider
+//! entity or its life generation changes, on the menu, and on disconnect. The
+//! generation tag on every press and command keeps anything from a previous
+//! life from ever firing in the next one.
 
 use std::collections::VecDeque;
 
@@ -34,9 +45,11 @@ use lightyear::prelude::{
 use shared::ActionState;
 use shared::PlayerInput;
 use shared::protocol::{
-    RespawnChannel, RespawnOutcome, RespawnReply, RespawnRequest, TurnAck, TurnChannel,
-    TurnCommand, TurnDirection, TurnOutcome,
+    RespawnChannel, RespawnOutcome, RespawnReply, RespawnRequest, TurnAck, TurnCommand,
+    TurnDirection, TurnOutcome,
 };
+
+use super::outbox::TurnOutbox;
 use shared::{IsAlive, LifeGeneration};
 
 /// One queued physical press, tagged with the life it was pressed in.
@@ -59,16 +72,21 @@ pub struct TurnSeq(pub u64);
 pub struct TurnAckState {
     pub last_seq: Option<u64>,
     pub last_outcome: Option<TurnOutcome>,
+    /// Commands below this seq are known to be decided by the server.
+    pub received_below: u64,
 }
 
+/// The local rider the queue was last filled for: its entity and life. A
+/// change of either drops the queued presses; its alive flag deliberately does
+/// not (see the module docs).
 #[derive(Resource, Default)]
 pub struct InputLifecycle {
-    observed: Option<(Entity, bool, Option<u128>)>,
+    observed: Option<(Entity, Option<u128>)>,
 }
 
 impl InputLifecycle {
-    fn observe(&mut self, state: Option<(Entity, bool, Option<u128>)>, pending: &mut PendingInput) {
-        if self.observed != state || state.is_none_or(|(_, alive, _)| !alive) {
+    fn observe(&mut self, state: Option<(Entity, Option<u128>)>, pending: &mut PendingInput) {
+        if self.observed != state {
             pending.0.clear();
         }
         self.observed = state;
@@ -121,7 +139,7 @@ pub fn buffer_keyboard_input(
     });
     if !rollback {
         lifecycle.observe(
-            player.map(|(entity, alive, life, _)| (entity, alive.0, life.map(|l| l.0))),
+            player.map(|(entity, _, life, _)| (entity, life.map(|l| l.0))),
             &mut pending,
         );
         let current_life = player.and_then(|(entity, _, life, _)| life.map(|l| (entity, l.0)));
@@ -167,7 +185,6 @@ pub fn buffer_keyboard_input(
         key_events.clear();
         return;
     }
-    let can_turn = lifecycle.observed.is_some_and(|(_, alive, _)| alive);
     for event in key_events.read() {
         if !event.state.is_pressed() || event.repeat {
             continue;
@@ -185,7 +202,7 @@ pub fn buffer_keyboard_input(
         };
         if let Some(direction) = direction {
             // A rider without a life tag cannot turn authoritatively.
-            if can_turn && let Some(life) = life {
+            if let Some(life) = life {
                 pending.0.push_back(PendingPress {
                     direction,
                     generation: life.0,
@@ -223,14 +240,16 @@ pub fn receive_respawn_replies(
     }
 }
 
-/// Record the server's per-command verdict. Diagnostics only: prediction and
-/// rollback never wait for acks.
+/// Stop repeating the commands the server has decided and record its newest
+/// verdict. Prediction and rollback never wait for acks.
 pub fn receive_turn_acks(
     mut clients: Query<&mut MessageReceiver<TurnAck>, (With<Client>, With<Connected>)>,
     mut acks: ResMut<TurnAckState>,
+    mut outbox: ResMut<TurnOutbox>,
 ) {
     for mut receiver in &mut clients {
         for ack in receiver.receive() {
+            outbox.acknowledge(ack.received_below);
             apply_turn_ack(&mut acks, ack);
         }
     }
@@ -239,20 +258,26 @@ pub fn receive_turn_acks(
 /// Pure ack bookkeeping, split out so unit tests don't need Lightyear's
 /// `pub(crate)` receiver internals.
 fn apply_turn_ack(acks: &mut TurnAckState, ack: TurnAck) {
-    acks.last_seq = Some(ack.seq);
-    acks.last_outcome = Some(ack.outcome);
-    match ack.outcome {
+    // Acks are sequenced, but a stale one must never move the watermark back.
+    acks.received_below = acks.received_below.max(ack.received_below);
+    let Some(verdict) = ack.newest else {
+        return;
+    };
+    acks.last_seq = Some(verdict.seq);
+    acks.last_outcome = Some(verdict.outcome);
+    match verdict.outcome {
         TurnOutcome::Applied { server_tick } => {
-            debug!(seq = ack.seq, server_tick, "Server applied turn");
+            debug!(seq = verdict.seq, server_tick, "Server applied turn");
         }
         TurnOutcome::Rejected { reason } => {
-            debug!(seq = ack.seq, ?reason, "Server rejected turn");
+            debug!(seq = verdict.seq, ?reason, "Server rejected turn");
         }
     }
 }
 
 /// Pop at most one queued press into this tick's `ActionState` (prediction)
-/// and send the matching `TurnCommand` stamped with this very tick.
+/// and queue the matching `TurnCommand`, stamped with this very tick, for
+/// delivery.
 ///
 /// Skipped during rollback (the `Without<Rollback>` filter), so replays reuse
 /// Lightyear's recorded input history and never send or consume anything.
@@ -271,12 +296,12 @@ pub fn read_keyboard(
     mut pending: ResMut<PendingInput>,
     mut lifecycle: ResMut<InputLifecycle>,
     mut turn_seq: ResMut<TurnSeq>,
+    mut outbox: ResMut<TurnOutbox>,
     menu: Res<MenuState>,
     mut players: Query<
         (
             Entity,
             &mut ActionState<PlayerInput>,
-            &IsAlive,
             Option<&LifeGeneration>,
             Option<&ControlledBy>,
         ),
@@ -285,29 +310,28 @@ pub fn read_keyboard(
             With<NativeBuffer<PlayerInput>>,
         ),
     >,
-    mut turn_senders: Query<&mut MessageSender<TurnCommand>>,
 ) {
     // Match Lightyear's buffering prerequisites: otherwise a press can be
     // consumed without ever entering the network input history.
     let (client_entity, input_timeline) = client.into_inner();
-    let Some((entity, mut action, alive, life, _)) =
-        players.iter_mut().find(|(_, _, _, _, controlled_by)| {
+    let Some((entity, mut action, life, _)) =
+        players.iter_mut().find(|(_, _, _, controlled_by)| {
             controlled_by.is_none_or(|controlled_by| controlled_by.owner == client_entity)
         })
     else {
         return;
     };
-    lifecycle.observe(Some((entity, alive.0, life.map(|l| l.0))), &mut pending);
+    lifecycle.observe(Some((entity, life.map(|l| l.0))), &mut pending);
     if menu.captures_input() {
         pending.0.clear();
     }
     // Always set the value for this tick so lightyear can buffer it and
     // apply_turn reads the correct input. None means "no turn this tick",
-    // matching lightyear's continuous-input contract.
-    let press = alive
+    // matching lightyear's continuous-input contract. A locally dead rider
+    // still pops: the death may be a misprediction (see the module docs).
+    let press = pending
         .0
-        .then(|| pending.0.pop_front())
-        .flatten()
+        .pop_front()
         // A press tagged for a prior life must never leak into the new life,
         // even if the lifecycle clear somehow missed it.
         .filter(|press| Some(press.generation) == life.map(|l| l.0));
@@ -322,15 +346,13 @@ pub fn read_keyboard(
     let tick = timeline
         .map(|t| (t.tick() + input_timeline.input_delay() as i32).0)
         .unwrap_or(0);
-    if let Ok(mut sender) = turn_senders.get_mut(client_entity) {
-        sender.send::<TurnChannel>(TurnCommand {
-            seq,
-            direction: press.direction,
-            generation: press.generation,
-            tick,
-        });
-        debug!(seq, ?press.direction, tick, "Turn command sent");
-    }
+    outbox.push(TurnCommand {
+        seq,
+        direction: press.direction,
+        generation: press.generation,
+        tick,
+    });
+    debug!(seq, ?press.direction, tick, "Turn command queued");
 }
 
 #[cfg(test)]
@@ -338,6 +360,7 @@ mod tests {
     use super::*;
     use bevy::ecs::system::RunSystemOnce;
     use bevy::input::{ButtonState, keyboard::Key};
+    use shared::protocol::TurnVerdict;
 
     fn setup() -> (World, Entity, Entity) {
         let mut world = World::new();
@@ -345,6 +368,7 @@ mod tests {
         world.init_resource::<InputLifecycle>();
         world.init_resource::<TurnSeq>();
         world.init_resource::<TurnAckState>();
+        world.init_resource::<TurnOutbox>();
         world.init_resource::<RespawnUi>();
         world.insert_resource(MenuState {
             open: false,
@@ -371,7 +395,7 @@ mod tests {
                 NativeBuffer::<PlayerInput>::default(),
             ))
             .id();
-        world.resource_mut::<InputLifecycle>().observed = Some((player, true, Some(1)));
+        world.resource_mut::<InputLifecycle>().observed = Some((player, Some(1)));
         (world, client, player)
     }
 
@@ -507,19 +531,22 @@ mod tests {
     }
 
     #[test]
-    fn death_respawn_and_disconnect_clear_only_live_queue() {
+    fn predicted_death_does_not_swallow_presses_but_a_new_life_drops_them() {
         let (mut world, client, player) = setup();
         world
             .resource_mut::<PendingInput>()
             .0
             .push_back(queued(PlayerInput::TurnLeft));
+        // The prediction says dead (it may be wrong): the press still flows.
         world.get_mut::<IsAlive>(player).unwrap().0 = false;
         world.run_system_once(read_keyboard).unwrap();
         assert!(world.resource::<PendingInput>().0.is_empty());
         assert_eq!(
             world.get::<ActionState<PlayerInput>>(player).unwrap().0,
-            PlayerInput::None
+            PlayerInput::TurnLeftFor(1)
         );
+        assert_eq!(world.resource::<TurnOutbox>().len(), 1);
+        // A press from the old life is dropped when the life changes.
         world
             .resource_mut::<PendingInput>()
             .0
@@ -532,6 +559,7 @@ mod tests {
             world.get::<ActionState<PlayerInput>>(player).unwrap().0,
             PlayerInput::None
         );
+        assert_eq!(world.resource::<TurnOutbox>().len(), 1);
         world
             .resource_mut::<PendingInput>()
             .0
@@ -541,6 +569,7 @@ mod tests {
             world.get::<ActionState<PlayerInput>>(player).unwrap().0,
             PlayerInput::TurnRightFor(2)
         );
+        // Disconnect clears the live queue.
         world
             .resource_mut::<PendingInput>()
             .0
@@ -552,7 +581,7 @@ mod tests {
     }
 
     #[test]
-    fn dead_presses_do_not_survive_into_new_life() {
+    fn presses_while_locally_dead_fire_after_a_misprediction_but_not_in_a_new_life() {
         let (mut world, _, player) = setup();
         world.init_resource::<Messages<KeyboardInput>>();
         world.get_mut::<IsAlive>(player).unwrap().0 = false;
@@ -567,15 +596,29 @@ mod tests {
             });
         }
         world.run_system_once(buffer_keyboard_input).unwrap();
-        assert!(world.resource::<PendingInput>().0.is_empty());
+        assert_eq!(
+            world.resource::<PendingInput>().0.len(),
+            2,
+            "a locally dead rider's presses are kept"
+        );
+        // The server's state wins: the rider never died, same life.
+        world.get_mut::<IsAlive>(player).unwrap().0 = true;
+        world.run_system_once(read_keyboard).unwrap();
+        assert_eq!(
+            world.get::<ActionState<PlayerInput>>(player).unwrap().0,
+            PlayerInput::TurnLeftFor(1)
+        );
+        // Whereas a genuine death followed by a respawn is a new life.
+        world.get_mut::<IsAlive>(player).unwrap().0 = false;
         world
             .entity_mut(player)
-            .insert((IsAlive(true), LifeGeneration(1)));
+            .insert((IsAlive(true), LifeGeneration(2)));
         world.run_system_once(read_keyboard).unwrap();
         assert_eq!(
             world.get::<ActionState<PlayerInput>>(player).unwrap().0,
             PlayerInput::None
         );
+        assert!(world.resource::<PendingInput>().0.is_empty());
     }
 
     #[test]
@@ -789,11 +832,9 @@ mod tests {
     fn presses_pop_in_order_one_per_tick_and_seq_counts_pops() {
         let (mut world, client, player) = setup();
         world.init_resource::<Messages<KeyboardInput>>();
-        world
-            .entity_mut(client)
-            .insert(MessageSender::<TurnCommand>::default());
+        let _ = client;
         world.entity_mut(player).insert(LifeGeneration(9));
-        world.resource_mut::<InputLifecycle>().observed = Some((player, true, Some(9)));
+        world.resource_mut::<InputLifecycle>().observed = Some((player, Some(9)));
         for key in [KeyCode::KeyQ, KeyCode::KeyQ, KeyCode::KeyK] {
             press(&mut world, key);
         }
@@ -824,6 +865,13 @@ mod tests {
             PlayerInput::None
         );
         assert_eq!(world.resource::<TurnSeq>().0, 3);
+        // Each pop became a command waiting in the outbox, in order.
+        let sent = world.resource_mut::<TurnOutbox>().batch(1_000).unwrap();
+        assert_eq!(
+            sent.commands.iter().map(|c| c.seq).collect::<Vec<_>>(),
+            vec![0, 1, 2]
+        );
+        assert!(sent.commands.iter().all(|c| c.generation == 9));
     }
 
     #[test]
@@ -873,7 +921,7 @@ mod tests {
             .resource_mut::<PendingInput>()
             .0
             .push_back(queued_for(PlayerInput::TurnRight, 7));
-        world.resource_mut::<InputLifecycle>().observed = Some((player, true, Some(8)));
+        world.resource_mut::<InputLifecycle>().observed = Some((player, Some(8)));
         world.run_system_once(read_keyboard).unwrap();
         assert_eq!(
             world.get::<ActionState<PlayerInput>>(player).unwrap().0,
@@ -892,11 +940,15 @@ mod tests {
         apply_turn_ack(
             &mut world.resource_mut::<TurnAckState>(),
             TurnAck {
-                seq: 4,
-                outcome: TurnOutcome::Applied { server_tick: 900 },
+                received_below: 5,
+                newest: Some(TurnVerdict {
+                    seq: 4,
+                    outcome: TurnOutcome::Applied { server_tick: 900 },
+                }),
             },
         );
         let acks = world.resource::<TurnAckState>();
+        assert_eq!(acks.received_below, 5);
         assert_eq!(acks.last_seq, Some(4));
         assert_eq!(
             acks.last_outcome,

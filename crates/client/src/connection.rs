@@ -11,7 +11,7 @@ use shared::protocol::{
     SessionHello, SessionReply, SessionRequest, sanitize_name,
 };
 
-use crate::input::{InputLifecycle, PendingInput, RespawnUi, TurnAckState, TurnSeq};
+use crate::input::{InputLifecycle, PendingInput, RespawnUi, TurnAckState, TurnOutbox, TurnSeq};
 use crate::menu::MenuState;
 use crate::settings::PlayerName;
 
@@ -424,6 +424,7 @@ pub fn finish_disconnect(
     mut respawn: ResMut<RespawnUi>,
     mut turn_seq: ResMut<TurnSeq>,
     mut turn_acks: ResMut<TurnAckState>,
+    mut outbox: ResMut<TurnOutbox>,
     mut commands: Commands,
 ) {
     if session.phase != ConnectionPhase::Disconnecting || !session.unlink_requested {
@@ -445,6 +446,7 @@ pub fn finish_disconnect(
     *respawn = RespawnUi::default();
     *turn_seq = TurnSeq::default();
     *turn_acks = TurnAckState::default();
+    *outbox = TurnOutbox::default();
     session.phase = ConnectionPhase::Offline;
     session.admitted = false;
 }
@@ -642,6 +644,7 @@ mod tests {
         world.init_resource::<InputLifecycle>();
         world.init_resource::<TurnSeq>();
         world.init_resource::<TurnAckState>();
+        world.init_resource::<TurnOutbox>();
         world.init_resource::<RespawnUi>();
         // No remaining link, but replicated entities may await StateTransition.
         world.insert_resource(Session {

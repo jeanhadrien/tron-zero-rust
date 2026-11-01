@@ -1,5 +1,6 @@
 //! Application liveness for raw UDP, which has no remote disconnect handshake.
 
+use crate::budget::{LinkBudget, Meter};
 use bevy::prelude::*;
 use lightyear::connection::client::Disconnecting;
 use lightyear::prelude::*;
@@ -85,6 +86,7 @@ pub fn receive_session_requests(
         (
             Entity,
             &mut SessionLease,
+            &mut LinkBudget,
             &mut MessageReceiver<SessionRequest>,
             &mut MessageSender<SessionReply>,
         ),
@@ -92,7 +94,8 @@ pub fn receive_session_requests(
     >,
 ) {
     let dt = time.delta_secs_f64();
-    for (entity, mut lease, mut receiver, mut sender) in &mut clients {
+    let now = time.elapsed_secs_f64();
+    for (entity, mut lease, mut budget, mut receiver, mut sender) in &mut clients {
         lease.idle_secs += dt;
         lease.reply_cooldown_secs = (lease.reply_cooldown_secs - dt).max(0.0);
         if let Some(left) = lease.linger_secs.as_mut() {
@@ -102,6 +105,11 @@ pub fn receive_session_requests(
             }
         }
         for request in receiver.receive() {
+            if !budget.spend(Meter::SessionRequests, 1, now) {
+                warn!(?entity, "Session message flood; closing the link");
+                lease.leaving = true;
+                break;
+            }
             let first_heartbeat = lease.nonce.is_none();
             if let Some(reply) = lease.receive(request) {
                 if first_heartbeat {
@@ -220,6 +228,7 @@ mod tests {
                 RemoteId(PeerId::Local(1)),
                 Connected,
                 lease,
+                LinkBudget::default(),
                 MessageReceiver::<SessionRequest>::default(),
                 MessageSender::<SessionReply>::default(),
             ))
@@ -245,6 +254,7 @@ mod tests {
                 RemoteId(PeerId::Local(1)),
                 Connected,
                 SessionLease::default(),
+                LinkBudget::default(),
                 MessageReceiver::<SessionRequest>::default(),
                 MessageSender::<SessionReply>::default(),
             ))

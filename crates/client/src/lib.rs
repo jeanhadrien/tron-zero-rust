@@ -35,6 +35,7 @@ pub fn add_input_and_prediction(app: &mut App) {
     app.init_resource::<input::InputLifecycle>();
     app.init_resource::<input::TurnSeq>();
     app.init_resource::<input::TurnAckState>();
+    app.init_resource::<input::TurnOutbox>();
     app.init_resource::<input::RespawnUi>();
     app.add_systems(
         PreUpdate,
@@ -46,6 +47,12 @@ pub fn add_input_and_prediction(app: &mut App) {
             .chain()
             .after(bevy::input::InputSystems)
             .after(MessageSystems::Receive),
+    );
+    // The outbox leaves in this frame's packet: after the fixed ticks that
+    // filled it, before Lightyear serializes the messages.
+    app.add_systems(
+        PostUpdate,
+        input::send_turn_batch.before(MessageSystems::Send),
     );
     app.add_systems(
         FixedPreUpdate,
