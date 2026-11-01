@@ -1,0 +1,12 @@
+[package]
+name = "tron-zero-bots"
+version = "0.0.0"
+edition = "2024"
+publish = false
+description = "Bot brain: sensing, memory, forecasting and strategies over a world snapshot."
+
+[dependencies]
+shared = { path = "../shared", package = "tron-zero-shared" }
+bevy_ecs.workspace = true
+glam.workspace = true
+serde.workspace = true

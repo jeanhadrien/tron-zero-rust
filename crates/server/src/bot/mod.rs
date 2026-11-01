@@ -1,35 +1,27 @@
 //! Server-only bot management and the sense → decide → emit AI loop.
 //!
+//! The brain itself lives in the `bots` crate; this module owns the ECS side:
+//! the roster, scheduling, spawning and the `BotDebug` writer.
 //! `bot_brain_input` stays in the FixedUpdate chain before `simulate_players`
 //! and always writes every alive bot's `ActionState`, caching between epochs.
 
-pub(crate) mod config;
 pub(crate) mod debug;
-pub(crate) mod forecast;
-pub(crate) mod memory;
-pub(crate) mod perceive;
-pub(crate) mod schedule;
-pub(crate) mod strategy;
-pub(crate) mod territory;
-pub(crate) mod world;
 
 use bevy::prelude::*;
+use bots::Brain;
+use bots::config::{BotBuild, default_builds};
+use bots::forecast::PhysicsForecaster;
+use bots::schedule::{Tier, should_redecide};
+use bots::strategy::{Action, strategy_for};
+use bots::world::WorldSnapshotBuilder;
 use lightyear::prelude::*;
 use shared::{
     ActionState, Direction, DisplayName, IsAlive, Player, PlayerColor, PlayerInput, Position,
     SpeedMult, Trail, Velocity,
 };
 
-use config::{BotBuild, default_builds};
-use forecast::PhysicsForecaster;
-use memory::BotMemory;
-use perceive::{RaySensor, Sensor};
-use schedule::{Tier, should_redecide};
-use strategy::{Action, decide, strategy_for};
-use world::WorldSnapshotBuilder;
-
+pub use bots::schedule::SchedulerConfig;
 pub use debug::BotDebugConfig;
-pub use schedule::SchedulerConfig;
 
 const CYCLE_DURATION_TICKS: u32 = 3600;
 const RESPAWN_DELAY_TICKS: u32 = 240;
@@ -43,11 +35,8 @@ const BOT_COLORS: [u32; 8] = [
 /// respawn recreate it from the slot's `BotBuild`.
 #[derive(Component)]
 pub struct BotBrain {
-    pub build: BotBuild,
-    pub memory: BotMemory,
-    pub cached: Action,
-    pub epoch: u32,
-    pub degradation: Tier,
+    pub brain: Brain,
+    /// Roster slot; phase-shifts this bot's decision epochs.
     pub slot_index: usize,
 }
 
@@ -126,7 +115,7 @@ pub fn bot_brain_input(
                     &scheduler,
                     tick,
                     brain.slot_index,
-                    brain.build.knobs.reaction_ticks,
+                    brain.brain.build.knobs.reaction_ticks,
                 ),
             )
         })
@@ -152,32 +141,17 @@ pub fn bot_brain_input(
         let mut fresh: Option<Action> = None;
         if redecide && let Some(world) = snapshot.as_ref() {
             let tier = Tier::from_load(alive_riders, &scheduler);
-            brain.degradation = tier;
             if let Some(index) = world.index_of(entity.to_bits()) {
-                let self_id = world.riders[index].id;
-                for rider in &world.riders {
-                    if rider.id != self_id && rider.alive {
-                        brain.memory.opponent.observe(rider.id, rider.dir);
-                    }
-                }
-                let sensor = RaySensor {
-                    rider: index,
-                    bfs_budget: brain.build.knobs.bfs_budget.min(tier.max_bfs()),
-                };
-                let mut perception = sensor.sense(world);
-                brain.memory.observe(perception.freedom, perception.exits);
-                perception.memory_trend = brain.memory.trend();
-                perception.opponent_turn_prob = brain.memory.opponent.turn_prob();
-                let forecaster = PhysicsForecaster;
-                let strategy = strategy_for(brain.build.personality);
-                // Clamp the Elo horizon by the LOD tier before strategies see it.
-                let mut knobs = brain.build.knobs.clone();
-                knobs.lookahead_ticks = knobs.lookahead_ticks.min(tier.max_lookahead());
-                let action = decide(strategy, &perception, world, &forecaster, &knobs);
+                let bots::Decision {
+                    action,
+                    perception,
+                    knobs,
+                } = brain.brain.think(world, index, tier);
+                let strategy = strategy_for(brain.brain.build.personality);
                 // Re-score for the debug snapshot (same inputs `decide`
                 // argmaxed over); skipped entirely when the gate is off.
                 if debug_cfg.enabled {
-                    let scores = strategy.score(&perception, world, &forecaster, &knobs);
+                    let scores = strategy.score(&perception, world, &PhysicsForecaster, &knobs);
                     let foe = world.riders.iter().enumerate().find_map(|(i, r)| {
                         (i != perception.rider && r.alive).then_some((r.pos, r.dir))
                     });
@@ -212,9 +186,7 @@ pub fn bot_brain_input(
                         "bot decision"
                     );
                 }
-                brain.cached = action;
                 fresh = Some(action);
-                brain.epoch = brain.epoch.wrapping_add(1);
             }
         }
         input.0 = fresh.map_or(PlayerInput::None, Action::to_input);
@@ -312,11 +284,7 @@ fn spawn_bot_entity(
         .spawn((
             Player,
             BotBrain {
-                build: build.clone(),
-                memory: BotMemory::default(),
-                cached: Action::Hold,
-                epoch: 0,
-                degradation: Tier::Full,
+                brain: Brain::new(build.clone()),
                 slot_index,
             },
             shared::PlayerId(format!("bot-{}", bot_number)),
@@ -363,7 +331,7 @@ fn random_spawn() -> (Vec2, Vec2) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use config::{Elo, Personality};
+    use bots::config::{Elo, Personality};
 
     #[test]
     fn bot_name_uses_strategy_elo_and_number() {

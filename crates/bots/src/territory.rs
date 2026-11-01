@@ -7,7 +7,7 @@
 
 use std::collections::VecDeque;
 
-use super::world::{GRID_CELLS, GRID_N, GridCache};
+use crate::world::{GRID_CELLS, GRID_N, GridCache};
 
 /// Owner tags for the simultaneous Voronoi flood.
 const UNCLAIMED: u8 = 0;
@@ -264,7 +264,7 @@ fn neighbors(gx: usize, gy: usize) -> impl Iterator<Item = (usize, usize)> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bevy::prelude::Vec2;
+    use glam::Vec2;
     use shared::ARENA_WIDTH;
 
     // Cell-centre helper without touching world internals: mirrors

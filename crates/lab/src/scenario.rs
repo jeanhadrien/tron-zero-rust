@@ -15,10 +15,26 @@
 //! rubber = 120                     # optional starting rubber
 //! script = ["40 left", "100 right", "300 respawn"]
 //! ```
+//!
+//! Bot arenas: a rider with `bot` is driven by the server's bot brain instead
+//! of a script. Leaving out `at`/`heading` places a rider with the safe-spawn
+//! search, seeded by `seed` (overridable with `--seed`), so one file sweeps
+//! many starting layouts.
+//!
+//! ```toml
+//! seed = 7
+//!
+//! [[rider]]
+//! name = "trapper"
+//! bot = "trapper"                  # survivalist | trapper | adaptive |
+//! elo = 2500                       # territorialist | duelist | roamer
+//! respawn_after = 240              # optional: respawn N ticks after a death
+//! ```
 
 use std::collections::BTreeMap;
 use std::path::Path;
 
+use bots::config::{BotBuild, Elo, Personality};
 use glam::Vec2;
 use serde::Deserialize;
 
@@ -31,6 +47,9 @@ pub struct Scenario {
     pub arena: Option<[f32; 2]>,
     #[serde(default)]
     pub walls: Vec<[f32; 4]>,
+    /// Seeds spawn placement for riders without `at`, and every respawn.
+    #[serde(default)]
+    pub seed: u64,
     #[serde(rename = "rider")]
     pub riders: Vec<RiderSpec>,
 }
@@ -39,14 +58,25 @@ pub struct Scenario {
 #[serde(deny_unknown_fields)]
 pub struct RiderSpec {
     pub name: String,
-    pub at: [f32; 2],
-    pub heading: Heading,
+    /// With `heading`, a fixed start; without, a seeded safe spawn.
+    #[serde(default)]
+    pub at: Option<[f32; 2]>,
+    #[serde(default)]
+    pub heading: Option<Heading>,
     #[serde(default = "default_speed")]
     pub speed: f32,
     #[serde(default = "default_rubber")]
     pub rubber: f32,
     #[serde(default)]
     pub script: Vec<String>,
+    /// Bot personality; the rider is then driven by the bot brain.
+    #[serde(default)]
+    pub bot: Option<String>,
+    #[serde(default = "default_elo")]
+    pub elo: u32,
+    /// Respawn automatically this many ticks after each death.
+    #[serde(default)]
+    pub respawn_after: Option<u32>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
@@ -104,6 +134,10 @@ fn default_rubber() -> f32 {
     shared::BASE_RUBBER
 }
 
+fn default_elo() -> u32 {
+    1500
+}
+
 impl Scenario {
     pub fn load(path: &Path) -> Result<Self, String> {
         let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
@@ -117,13 +151,40 @@ impl Scenario {
             if !names.insert(rider.name.as_str()) {
                 return Err(format!("duplicate rider name {:?}", rider.name));
             }
-            rider.commands()?;
+            if rider.at.is_some() != rider.heading.is_some() {
+                return Err(format!(
+                    "{}: give both `at` and `heading`, or neither",
+                    rider.name
+                ));
+            }
+            let commands = rider.commands()?;
+            if rider.bot.is_some() && commands.values().any(|a| *a != Action::Respawn) {
+                return Err(format!("{}: a bot's script may only respawn", rider.name));
+            }
+            rider.build()?;
         }
         Ok(scenario)
     }
 }
 
 impl RiderSpec {
+    /// The bot build for a `bot` rider, `None` for a scripted one.
+    pub fn build(&self) -> Result<Option<BotBuild>, String> {
+        let Some(name) = &self.bot else {
+            return Ok(None);
+        };
+        let personality = match name.to_ascii_lowercase().as_str() {
+            "survivalist" => Personality::Survivalist,
+            "trapper" => Personality::Trapper,
+            "adaptive" => Personality::Adaptive,
+            "territorialist" => Personality::Territorialist,
+            "duelist" => Personality::Duelist,
+            "roamer" => Personality::Roamer,
+            other => return Err(format!("{}: unknown bot {other:?}", self.name)),
+        };
+        Ok(Some(BotBuild::new(Elo(self.elo), personality)))
+    }
+
     /// Parse `"<tick> <action>"` entries into one action per tick. The sim
     /// applies at most one turn per tick, so two entries on a tick is an error.
     pub fn commands(&self) -> Result<BTreeMap<u32, Action>, String> {

@@ -5,8 +5,9 @@
 
 use std::sync::{Arc, OnceLock};
 
-use bevy::ecs::system::SystemParam;
-use bevy::prelude::*;
+use bevy_ecs::prelude::*;
+use bevy_ecs::system::SystemParam;
+use glam::Vec2;
 use shared::physics::Segment;
 use shared::{
     ARENA_WIDTH, Arena, Direction, IsAlive, Player, Position, Rubber, SLOW_DOWN_DISTANCE,

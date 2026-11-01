@@ -7,6 +7,7 @@ description = "Headless, deterministic scenario runner for the shared sim (trace
 
 [dependencies]
 shared = { path = "../shared", package = "tron-zero-shared" }
+bots = { path = "../bots", package = "tron-zero-bots" }
 bevy_ecs.workspace = true
 glam.workspace = true
 serde.workspace = true

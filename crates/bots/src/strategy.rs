@@ -4,17 +4,17 @@
 //! day one; v1 strategies mostly ignore the world and forecaster so algorithms
 //! can be iterated on later without touching the scheduler.
 
-use bevy::prelude::Vec2;
+use glam::Vec2;
 
 use shared::PlayerInput;
 
-use super::config::{BotKnobs, Personality};
-use super::forecast::Forecaster;
-use super::perceive::{
+use crate::config::{BotKnobs, Personality};
+use crate::forecast::Forecaster;
+use crate::perceive::{
     Perception, RAY_FRONT, RAY_FRONT_LEFT, RAY_FRONT_RIGHT, RAY_LEFT, RAY_RIGHT,
 };
-use super::territory::{chamber_stats, voronoi_surplus};
-use super::world::{GRID_CELLS, GridCache, RiderSnapshot, WorldSnapshot};
+use crate::territory::{chamber_stats, voronoi_surplus};
+use crate::world::{GRID_CELLS, GridCache, RiderSnapshot, WorldSnapshot};
 
 /// Turn cost keeps a bot from oscillating between equally scored turns.
 const TURN_COST: f32 = 0.03;
@@ -103,7 +103,7 @@ impl Strategy for Survivalist {
             .get(perception.rider)
             .map(|r| r.speed_mult.max(1.0))
             .unwrap_or(1.0);
-        let horizon = super::perceive::SENSE_HORIZON * speed_scale;
+        let horizon = crate::perceive::SENSE_HORIZON * speed_scale;
         let front = perception.clearance_with(RAY_FRONT, horizon);
         let left = perception.clearance_with(RAY_LEFT, horizon);
         let right = perception.clearance_with(RAY_RIGHT, horizon);
@@ -398,7 +398,7 @@ impl Strategy for Duelist {
 }
 
 /// Closing geometry: in range and at least one of us faces the other.
-pub(crate) fn converging(
+pub fn converging(
     me_pos: Vec2,
     me_dir: Vec2,
     foe_pos: Vec2,
@@ -419,7 +419,7 @@ pub(crate) fn converging(
 }
 
 /// Both riders committed at each other's noses.
-pub(crate) fn head_on(me_pos: Vec2, me_dir: Vec2, foe_pos: Vec2, foe_dir: Vec2) -> bool {
+pub fn head_on(me_pos: Vec2, me_dir: Vec2, foe_pos: Vec2, foe_dir: Vec2) -> bool {
     let to_foe = foe_pos - me_pos;
     let dist = to_foe.length();
     if dist < 1.0 {
@@ -518,7 +518,7 @@ fn forked_step(
 
 fn default_mode(perception: &Perception) -> Mode {
     let front = perception.rays[RAY_FRONT];
-    if (front.is_finite() && front < super::perceive::SENSE_HORIZON * 0.25)
+    if (front.is_finite() && front < crate::perceive::SENSE_HORIZON * 0.25)
         || perception.threat > 0.75
     {
         Mode::Escape
@@ -561,10 +561,7 @@ fn lookahead_safety(
     LOOKAHEAD_SAFE
 }
 
-pub(crate) fn nearest_enemy(
-    world: &WorldSnapshot,
-    rider: usize,
-) -> Option<(usize, &RiderSnapshot)> {
+pub fn nearest_enemy(world: &WorldSnapshot, rider: usize) -> Option<(usize, &RiderSnapshot)> {
     let me = world.riders.get(rider)?;
     world
         .riders
@@ -632,11 +629,11 @@ impl BotRng {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bevy::prelude::Vec2;
+    use glam::Vec2;
     use shared::ARENA_WIDTH;
     use std::sync::Arc;
 
-    use super::super::world::GRID_N;
+    use crate::world::GRID_N;
 
     /// Teleports rider 0 to a per-action cell so scoring sees controlled
     /// projected positions without depending on physics step sizes.
@@ -693,7 +690,7 @@ mod tests {
 
     fn perception() -> Perception {
         Perception {
-            rays: [f32::INFINITY; super::super::perceive::RAY_COUNT],
+            rays: [f32::INFINITY; crate::perceive::RAY_COUNT],
             freedom: 800,
             exits: 4,
             threat: 0.0,

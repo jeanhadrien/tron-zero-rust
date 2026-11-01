@@ -151,3 +151,37 @@ fn respawn_lands_on_a_safe_spawn_and_rides_on() {
     assert_eq!(a.deaths.len(), 1);
     assert_eq!(a.rubber, shared::BASE_RUBBER);
 }
+
+#[test]
+fn bot_arenas_replay_per_seed_and_vary_across_seeds() {
+    let scenario = load("bot_arena");
+    let run = |seed| {
+        let mut lab = Lab::with_seed(&scenario, seed);
+        lab.run(600, SAMPLE);
+        tron_zero_lab::to_jsonl(lab.events())
+    };
+    assert_eq!(run(3), run(3));
+    assert_ne!(run(3), run(4));
+}
+
+#[test]
+fn bots_drive_and_respawn_like_the_server() {
+    let lab = run("bot_arena");
+    let until = load("bot_arena").until;
+    for rider in lab.riders() {
+        assert!(rider.is_bot);
+        let turns = ticks(&lab, &rider.name, |k| matches!(k, EventKind::Turn { .. }));
+        assert!(!turns.is_empty(), "{} never turned", rider.name);
+        // Every death respawns 240 ticks later, as the server's bot spawner.
+        let deaths = ticks(&lab, &rider.name, |k| matches!(k, EventKind::Death { .. }));
+        let respawns = ticks(&lab, &rider.name, |k| {
+            matches!(k, EventKind::Respawn { .. })
+        });
+        let expected: Vec<u32> = deaths
+            .iter()
+            .map(|t| t + 240)
+            .filter(|&t| t < until)
+            .collect();
+        assert_eq!(respawns, expected, "{}", rider.name);
+    }
+}

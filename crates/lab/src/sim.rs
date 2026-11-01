@@ -1,9 +1,13 @@
 //! The lab world: the real `simulate_players` system in a bare ECS world, as
-//! the server runs it, plus scripted inputs, respawns and an event log.
+//! the server runs it, plus scripted or bot inputs, respawns and an event log.
 
 use std::collections::BTreeMap;
 
 use bevy_ecs::prelude::*;
+use bevy_ecs::system::SystemState;
+use bots::Brain;
+use bots::schedule::{SchedulerConfig, Tier, should_redecide};
+use bots::world::WorldSnapshotBuilder;
 use glam::Vec2;
 use serde::Serialize;
 use shared::spawn::find_safe_spawn;
@@ -93,21 +97,43 @@ pub struct RiderView {
     pub colliding: bool,
     pub trail: Vec<Vec2>,
     pub deaths: Vec<Vec2>,
+    pub is_bot: bool,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Score {
+    pub name: String,
+    /// Death count per cause (`wall`, `own_trail`, `trail:<rider>`, ...).
+    pub deaths: BTreeMap<String, u32>,
+    pub kills: u32,
 }
 
 struct LabRider {
     name: String,
     entity: Entity,
     commands: BTreeMap<u32, Action>,
+    /// Spawn seed; each placement adds `lives`, like the server's generation.
+    seed: u64,
     lives: u64,
     deaths: Vec<Vec2>,
     was_colliding: bool,
     was_sliding: bool,
+    bot: Option<LabBot>,
+    respawn_after: Option<u32>,
+    respawn_at: Option<u32>,
+}
+
+/// A bot rider: the server's brain plus its scheduler phase.
+struct LabBot {
+    brain: Brain,
+    slot: usize,
 }
 
 pub struct Lab {
     world: World,
     schedule: Schedule,
+    snapshot: SystemState<WorldSnapshotBuilder<'static, 'static>>,
+    scheduler: SchedulerConfig,
     riders: Vec<LabRider>,
     size: ArenaSize,
     walls: Vec<[f32; 4]>,
@@ -117,6 +143,11 @@ pub struct Lab {
 
 impl Lab {
     pub fn new(scenario: &Scenario) -> Self {
+        Self::with_seed(scenario, scenario.seed)
+    }
+
+    /// Like `new`, with `seed` in place of the scenario's own.
+    pub fn with_seed(scenario: &Scenario, seed: u64) -> Self {
         let size = scenario
             .arena
             .map_or_else(ArenaSize::default, |[width, height]| ArenaSize {
@@ -132,39 +163,73 @@ impl Lab {
         let mut schedule = Schedule::default();
         schedule.add_systems(simulate_players);
 
-        let riders = scenario
-            .riders
-            .iter()
-            .map(|spec| {
-                let position = Vec2::from(spec.at);
-                let entity = world
-                    .spawn((
-                        Player,
-                        Position(position),
-                        Direction(spec.heading.vector()),
-                        SpeedMult(spec.speed),
-                        TargetSpeedMult(spec.speed),
-                        Rubber(spec.rubber),
-                        IsAlive(true),
-                        ShouldHandleDeath(true),
-                        Trail::new(position),
-                    ))
-                    .id();
-                LabRider {
-                    name: spec.name.clone(),
-                    entity,
-                    commands: spec.commands().expect("validated by Scenario::parse"),
-                    lives: 0,
-                    deaths: Vec::new(),
-                    was_colliding: false,
-                    was_sliding: false,
+        let mut riders: Vec<LabRider> = Vec::with_capacity(scenario.riders.len());
+        let mut placed: Vec<Vec2> = Vec::new();
+        let mut slots = 0;
+        for spec in &scenario.riders {
+            // Seed 0 keeps the plain name hash, so fixed-start goldens predate
+            // seeding unchanged.
+            let rider_seed =
+                fnv1a(&spec.name).wrapping_add(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15));
+            let mut lives = 0;
+            let (position, direction) = match (spec.at, spec.heading) {
+                (Some(at), Some(heading)) => (Vec2::from(at), heading.vector()),
+                _ => {
+                    let segments: Vec<[Vec2; 2]> = walls
+                        .iter()
+                        .map(|w| [Vec2::new(w[0], w[1]), Vec2::new(w[2], w[3])])
+                        .collect();
+                    let spawn = find_safe_spawn(size, &segments, &placed, rider_seed)
+                        .unwrap_or_else(|| panic!("{}: no safe spawn", spec.name));
+                    lives = 1;
+                    (spawn.position, spawn.direction)
                 }
-            })
-            .collect();
+            };
+            placed.push(position);
+            let entity = world
+                .spawn((
+                    Player,
+                    Position(position),
+                    Direction(direction),
+                    SpeedMult(spec.speed),
+                    TargetSpeedMult(spec.speed),
+                    Rubber(spec.rubber),
+                    IsAlive(true),
+                    ShouldHandleDeath(true),
+                    Trail::new(position),
+                ))
+                .id();
+            let bot = spec
+                .build()
+                .expect("validated by Scenario::parse")
+                .map(|build| {
+                    slots += 1;
+                    LabBot {
+                        brain: Brain::new(build),
+                        slot: slots - 1,
+                    }
+                });
+            riders.push(LabRider {
+                name: spec.name.clone(),
+                entity,
+                commands: spec.commands().expect("validated by Scenario::parse"),
+                seed: rider_seed,
+                lives,
+                deaths: Vec::new(),
+                was_colliding: false,
+                was_sliding: false,
+                bot,
+                respawn_after: spec.respawn_after,
+                respawn_at: None,
+            });
+        }
 
+        let snapshot = SystemState::new(&mut world);
         Self {
             world,
             schedule,
+            snapshot,
+            scheduler: SchedulerConfig::default(),
             riders,
             size,
             walls,
@@ -216,7 +281,34 @@ impl Lab {
             colliding: w.get::<IsColliding>(e).unwrap().0,
             trail: w.get::<Trail>(e).unwrap().0.clone(),
             deaths: rider.deaths.clone(),
+            is_bot: rider.bot.is_some(),
         }
+    }
+
+    /// Each rider's deaths by cause, and kills: other riders' deaths on its
+    /// trail. Rider order matches `riders()`.
+    pub fn scores(&self) -> Vec<Score> {
+        let mut scores: Vec<Score> = self
+            .riders
+            .iter()
+            .map(|r| Score {
+                name: r.name.clone(),
+                ..Score::default()
+            })
+            .collect();
+        for event in &self.events {
+            let EventKind::Death { cause, .. } = &event.kind else {
+                continue;
+            };
+            if let Some(score) = scores.iter_mut().find(|s| s.name == event.rider) {
+                *score.deaths.entry(cause.clone()).or_default() += 1;
+            }
+            let killer = cause.strip_prefix("trail:");
+            if let Some(score) = scores.iter_mut().find(|s| Some(s.name.as_str()) == killer) {
+                score.kills += 1;
+            }
+        }
+        scores
     }
 
     /// Run until `until` (exclusive), sampling every `sample` ticks if > 0.
@@ -252,23 +344,29 @@ impl Lab {
         }
     }
 
-    /// One server tick: respawns, then inputs, then `simulate_players`.
+    /// One server tick, in the server's order: respawns, then bot decisions
+    /// and scripted inputs, then `simulate_players`.
     pub fn step(&mut self) {
         let tick = self.tick;
         for index in 0..self.riders.len() {
-            if self.riders[index].commands.get(&tick) == Some(&Action::Respawn) {
+            let rider = &self.riders[index];
+            let scripted = rider.commands.get(&tick) == Some(&Action::Respawn);
+            if scripted || rider.respawn_at == Some(tick) {
+                self.riders[index].respawn_at = None;
                 self.respawn(index);
             }
         }
 
+        let decided = self.decide_bots();
         let before = self.riders();
         let mut causes = Vec::with_capacity(before.len());
-        for (rider, view) in self.riders.iter().zip(&before) {
+        for ((rider, view), decided) in self.riders.iter().zip(&before).zip(decided) {
             // Inputs are one-shot: a tick without a command must hold, or a
             // lingering turn would spin the rider.
-            let input = match rider.commands.get(&tick) {
-                Some(Action::Left) => PlayerInput::TurnLeft,
-                Some(Action::Right) => PlayerInput::TurnRight,
+            let input = match (decided, rider.commands.get(&tick)) {
+                (Some(input), _) => input,
+                (None, Some(Action::Left)) => PlayerInput::TurnLeft,
+                (None, Some(Action::Right)) => PlayerInput::TurnRight,
                 _ => PlayerInput::None,
             };
             self.world
@@ -296,9 +394,11 @@ impl Lab {
                 );
             }
             if !after.alive {
-                self.riders[index].deaths.push(before.position);
-                self.riders[index].was_colliding = false;
-                self.riders[index].was_sliding = false;
+                let rider = &mut self.riders[index];
+                rider.deaths.push(before.position);
+                rider.was_colliding = false;
+                rider.was_sliding = false;
+                rider.respawn_at = rider.respawn_after.map(|after| tick + after.max(1));
                 let cause = cause.flatten().unwrap_or_else(|| "unknown".into());
                 self.push(
                     index,
@@ -329,6 +429,51 @@ impl Lab {
             }
         }
         self.tick += 1;
+    }
+
+    /// Mirror of the server's `bot_brain_input`: one snapshot per tick in
+    /// which any bot redecides, and a turn only on a fresh decision. Returns
+    /// each rider's input, `None` for scripted riders.
+    fn decide_bots(&mut self) -> Vec<Option<PlayerInput>> {
+        let tick = self.tick;
+        let mut inputs: Vec<Option<PlayerInput>> = self
+            .riders
+            .iter()
+            .map(|r| r.bot.as_ref().map(|_| PlayerInput::None))
+            .collect();
+        let redecide: Vec<usize> = (0..self.riders.len())
+            .filter(|&i| {
+                let rider = &self.riders[i];
+                rider.bot.as_ref().is_some_and(|bot| {
+                    self.world.get::<IsAlive>(rider.entity).unwrap().0
+                        && should_redecide(
+                            &self.scheduler,
+                            tick,
+                            bot.slot,
+                            bot.brain.build.knobs.reaction_ticks,
+                        )
+                })
+            })
+            .collect();
+        if redecide.is_empty() {
+            return inputs;
+        }
+        let world = self
+            .snapshot
+            .get(&self.world)
+            .expect("snapshot queries are infallible")
+            .build(tick);
+        let alive = world.riders.iter().filter(|r| r.alive).count();
+        let tier = Tier::from_load(alive, &self.scheduler);
+        for i in redecide {
+            let rider = &mut self.riders[i];
+            let Some(index) = world.index_of(rider.entity.to_bits()) else {
+                continue;
+            };
+            let bot = rider.bot.as_mut().expect("filtered to bots");
+            inputs[i] = Some(bot.brain.think(&world, index, tier).action.to_input());
+        }
+        inputs
     }
 
     fn push(&mut self, index: usize, kind: EventKind) {
@@ -429,10 +574,14 @@ impl Lab {
             }
         }
         // The server seeds with entity bits + life; the lab uses a stable
-        // name hash so scenarios replay identically across runs.
+        // name hash (plus the scenario seed) so runs replay identically.
         let rider = &mut self.riders[index];
-        let seed = fnv1a(&rider.name).wrapping_add(rider.lives);
+        let seed = rider.seed.wrapping_add(rider.lives);
         rider.lives += 1;
+        // The server respawns a bot as a fresh entity with a fresh brain.
+        if let Some(bot) = &mut rider.bot {
+            bot.brain = Brain::new(bot.brain.build.clone());
+        }
         let Some(spawn) = find_safe_spawn(self.size, &segments, &riders, seed) else {
             self.push(
                 index,

@@ -4,8 +4,8 @@
 use shared::Trail;
 use shared::physics::step_rider;
 
-use super::strategy::Action;
-use super::world::WorldSnapshot;
+use crate::strategy::Action;
+use crate::world::WorldSnapshot;
 
 pub trait Forecaster {
     fn project(&self, world: &WorldSnapshot, actions: &[Action]) -> WorldSnapshot;
@@ -56,8 +56,9 @@ impl Forecaster for PhysicsForecaster {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bot::world::RiderSnapshot;
-    use bevy::prelude::*;
+    use crate::world::RiderSnapshot;
+    use bevy_ecs::prelude::*;
+    use glam::Vec2;
     use shared::{
         ARENA_HEIGHT, ARENA_WIDTH, ActionState, Arena, Direction, IsAlive, Player, Position,
         Rubber, SimulationRole, SpeedMult, TargetSpeedMult, Trail, WallSegments, arena_walls,

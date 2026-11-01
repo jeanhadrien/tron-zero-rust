@@ -50,7 +50,8 @@ If a build mysteriously rebuilds from scratch, you probably touched the repo fro
 ## Targets
 
 - `tron-zero-shared` — lib, the simulation core (no transport, no rendering).
-- `tron-zero-server` — bin, headless server + bots + manager HTTP.
+- `tron-zero-bots` — lib, the bot brain (sense → decide over a world snapshot; no ECS systems, no networking).
+- `tron-zero-server` — bin, headless server, bot roster/scheduling + manager HTTP.
 - `tron-zero-client` — bin, rendering + UI + audio.
 - `tron-zero-lab` — lib + bin, headless deterministic scenario runner (see below).
 
@@ -82,7 +83,24 @@ cargo run -p tron-zero-lab -- my.toml --frames frames --every 30
 
 Output is a JSONL trace (`turn`, `enter/leave_rubber_zone`, `slide_start/end`,
 `death` with its cause, `respawn`, optional `sample`) plus a `#` summary, and
-PNGs on request. Respawns mirror the server's safe-spawn search.
+PNGs on request. Respawns mirror the server's safe-spawn search. The summary
+also counts kills and groups deaths by cause.
+
+### Bot arenas
+
+A rider with `bot = "<personality>"` (and `elo`) is driven by the same brain
+and decision schedule as the server's bots; leave out `at`/`heading` and it
+gets a seeded safe spawn. `respawn_after = 240` mirrors the server's bot
+respawn delay. `scenarios/bot_arena.toml` is the default five-bot roster:
+
+```
+cargo run -p tron-zero-lab -- crates/lab/scenarios/bot_arena.toml --seed 7
+cargo run -p tron-zero-lab -- crates/lab/scenarios/bot_arena.toml --seed 7 --until 900 --png arena.png
+```
+
+Same seed, same game, so a bad bot death can be replayed, zoomed with
+`--view` and re-run after a tweak. Bot tuning changes the `bot_arena` golden
+trace: bless it once the change is intended.
 
 Tests: `cargo test -p tron-zero-shared` (unit, property and rollback tests) and
 `cargo test -p tron-zero-lab` (mechanics assertions + golden traces for every

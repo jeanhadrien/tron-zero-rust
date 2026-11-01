@@ -5,11 +5,11 @@
 
 use std::collections::VecDeque;
 
-use bevy::prelude::*;
+use glam::Vec2;
 use shared::physics::nearest;
 use shared::{rotate_left, rotate_right};
 
-use super::world::{GRID_CELLS, GRID_N, WorldSnapshot};
+use crate::world::{GRID_CELLS, GRID_N, WorldSnapshot};
 
 /// Full-circle sensor fan: every bot always casts all rays.
 pub const RAY_COUNT: usize = 8;
@@ -150,7 +150,7 @@ impl Sensor for RaySensor {
 /// Capped 4-neighbour BFS from the rider's cell. The start cell is always
 /// reachable even if its own active trail segment rasterized onto it.
 fn measure_freedom(world: &WorldSnapshot, pos: Vec2, budget: u32) -> (u32, u8) {
-    let (sx, sy) = super::world::GridCache::cell_of(pos);
+    let (sx, sy) = crate::world::GridCache::cell_of(pos);
     let mut visited = vec![false; GRID_N * GRID_N];
     let mut queue = VecDeque::new();
     visited[sy * GRID_N + sx] = true;
@@ -213,7 +213,7 @@ mod tests {
     use super::*;
     use std::sync::Arc;
 
-    use super::super::world::RiderSnapshot;
+    use crate::world::RiderSnapshot;
 
     fn rider(id: u64, pos: Vec2, dir: Vec2) -> RiderSnapshot {
         RiderSnapshot {

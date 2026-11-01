@@ -2,6 +2,7 @@
 //!
 //! Options:
 //!   --until N         stop at tick N (default: the scenario's `until`)
+//!   --seed N          override the scenario's spawn seed
 //!   --sample N        add a `sample` event per rider every N ticks
 //!   --events PATH     write the JSONL trace to PATH (default: stdout)
 //!   --png PATH        render the final state
@@ -23,6 +24,7 @@ use tron_zero_lab::{Lab, PALETTE, Scenario, View, render};
 struct Args {
     scenario: PathBuf,
     until: Option<u32>,
+    seed: Option<u64>,
     sample: u32,
     events: Option<PathBuf>,
     png: Option<PathBuf>,
@@ -37,6 +39,7 @@ fn parse_args() -> Result<Args, String> {
     let mut args = Args {
         scenario: PathBuf::new(),
         until: None,
+        seed: None,
         sample: 0,
         events: None,
         png: None,
@@ -53,6 +56,10 @@ fn parse_args() -> Result<Args, String> {
     while let Some(arg) = raw.next() {
         match arg.as_str() {
             "--until" => args.until = Some(number("--until", raw.next())?),
+            "--seed" => {
+                let value = raw.next().and_then(|v| v.parse().ok());
+                args.seed = Some(value.ok_or("--seed expects a number")?);
+            }
             "--sample" => args.sample = number("--sample", raw.next())?,
             "--every" => args.every = number("--every", raw.next())?.max(1),
             "--px" => args.px = number("--px", raw.next())?.max(16),
@@ -77,7 +84,7 @@ fn parse_args() -> Result<Args, String> {
     }
     if args.scenario.as_os_str().is_empty() {
         return Err(
-            "usage: lab <scenario.toml> [--until N] [--sample N] [--events PATH] \
+            "usage: lab <scenario.toml> [--until N] [--seed N] [--sample N] [--events PATH] \
                     [--png PATH] [--frames DIR --every N] [--view X,Y,SIZE] [--px N]"
                 .into(),
         );
@@ -97,7 +104,7 @@ fn save(lab: &Lab, view: View, px: u32, path: &Path) -> Result<(), String> {
 fn run(args: Args) -> Result<(), String> {
     let scenario = Scenario::load(&args.scenario)?;
     let until = args.until.unwrap_or(scenario.until);
-    let mut lab = Lab::new(&scenario);
+    let mut lab = Lab::with_seed(&scenario, args.seed.unwrap_or(scenario.seed));
     let view = args.view.unwrap_or_else(|| View::arena(&lab));
 
     while lab.tick() < until {
@@ -131,7 +138,7 @@ fn run(args: Args) -> Result<(), String> {
     }
 
     writeln!(out, "# tick {until}").map_err(io_err)?;
-    for rider in lab.riders() {
+    for (rider, score) in lab.riders().into_iter().zip(lab.scores()) {
         let color = PALETTE[rider.index % PALETTE.len()].0;
         let state = if rider.alive { "alive" } else { "dead" };
         // `+ 0.0` turns the empty sum's -0.0 into 0.0 for display.
@@ -139,7 +146,7 @@ fn run(args: Args) -> Result<(), String> {
         writeln!(
             out,
             "# {} ({color}) {state} at ({:.1}, {:.1}) heading {} speed {:.3} target {:.3} \
-             rubber {:.1} trail {trail:.1} deaths {}",
+             rubber {:.1} trail {trail:.1} deaths {} kills {}",
             rider.name,
             rider.position.x,
             rider.position.y,
@@ -148,8 +155,17 @@ fn run(args: Args) -> Result<(), String> {
             rider.target,
             rider.rubber,
             rider.deaths.len(),
+            score.kills,
         )
         .map_err(io_err)?;
+        if !score.deaths.is_empty() {
+            let causes: Vec<String> = score
+                .deaths
+                .iter()
+                .map(|(cause, n)| format!("{cause} x{n}"))
+                .collect();
+            writeln!(out, "#   died on {}", causes.join(", ")).map_err(io_err)?;
+        }
     }
     Ok(())
 }

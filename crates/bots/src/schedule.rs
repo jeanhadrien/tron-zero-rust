@@ -1,6 +1,6 @@
 //! Decision scheduling and graceful degradation.
 
-use bevy::prelude::*;
+use bevy_ecs::prelude::Resource;
 
 const T1_RIDERS: usize = 5;
 const T2_RIDERS: usize = 8;

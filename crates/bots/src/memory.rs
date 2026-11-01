@@ -3,7 +3,7 @@
 
 use std::collections::HashMap;
 
-use bevy::prelude::Vec2;
+use glam::Vec2;
 use serde::{Deserialize, Serialize};
 
 pub const MEMORY_SAMPLES: usize = 8;

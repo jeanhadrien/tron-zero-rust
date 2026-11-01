@@ -1,0 +1,34 @@
+# Five-bot arena with the server's default roster, seeded safe spawns and
+# server-like respawns. Sweep layouts with `--seed N`.
+until = 2400
+seed = 1
+
+[[rider]]
+name = "survivalist"
+bot = "survivalist"
+elo = 1000
+respawn_after = 240
+
+[[rider]]
+name = "adaptive"
+bot = "adaptive"
+elo = 1500
+respawn_after = 240
+
+[[rider]]
+name = "territorialist"
+bot = "territorialist"
+elo = 2000
+respawn_after = 240
+
+[[rider]]
+name = "duelist"
+bot = "duelist"
+elo = 2250
+respawn_after = 240
+
+[[rider]]
+name = "trapper"
+bot = "trapper"
+elo = 2500
+respawn_after = 240

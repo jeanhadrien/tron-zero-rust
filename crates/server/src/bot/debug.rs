@@ -7,10 +7,10 @@
 use bevy::prelude::*;
 use shared::{BotDebug, FLAG_CONVERGING, FLAG_HEAD_ON};
 
-use super::config::BotKnobs;
-use super::perceive::Perception;
-use super::strategy::{Action, Strategy, converging, head_on, nearest_enemy};
-use super::world::WorldSnapshot;
+use bots::config::BotKnobs;
+use bots::perceive::Perception;
+use bots::strategy::{Action, Strategy, converging, head_on, nearest_enemy};
+use bots::world::WorldSnapshot;
 
 /// Env var gating the bot debug overlay, server writer included.
 pub const BOT_DEBUG_ENV: &str = "TRON_BOT_DEBUG";
@@ -115,14 +115,14 @@ pub fn insert_if_enabled(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bot::config::{Elo, Personality};
-    use crate::bot::forecast::PhysicsForecaster;
-    use crate::bot::perceive::RAY_COUNT;
-    use crate::bot::strategy::strategy_for;
+    use bots::config::{Elo, Personality};
+    use bots::forecast::PhysicsForecaster;
+    use bots::perceive::RAY_COUNT;
+    use bots::strategy::strategy_for;
     use std::collections::HashMap;
     use std::sync::Arc;
 
-    use super::super::world::RiderSnapshot;
+    use bots::world::RiderSnapshot;
 
     fn map(pairs: &[(&str, &str)]) -> HashMap<String, String> {
         pairs

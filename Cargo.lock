@@ -8266,6 +8266,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "tron-zero-bots"
+version = "0.0.0"
+dependencies = [
+ "bevy_ecs",
+ "glam 0.32.1",
+ "serde",
+ "tron-zero-shared",
+]
+
+[[package]]
 name = "tron-zero-client"
 version = "0.2.0"
 dependencies = [
@@ -8290,6 +8300,7 @@ dependencies = [
  "serde_json",
  "tiny-skia",
  "toml",
+ "tron-zero-bots",
  "tron-zero-shared",
 ]
 
@@ -8304,6 +8315,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tracing",
+ "tron-zero-bots",
  "tron-zero-shared",
  "ureq",
 ]
