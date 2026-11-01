@@ -28,8 +28,9 @@ pub const MAX_SPEED_MULT: f32 = 2.0;
 /// Side-obstacle distance where grinding starts to pay (wider than the front
 /// slowdown zone). Closer is faster: the goal speed scales linearly to the cap.
 pub const SLIDE_DISTANCE: f32 = 24.0;
-/// Boundary walls count as this fraction of their real closeness, so
-/// riding the arena edge is a weaker accelerator than riding trails.
+/// Boundary walls pay this fraction of the grind strength a trail would at
+/// the same distance, so even touching the edge only aims for
+/// `1 + (MAX_SPEED_MULT - 1) * ARENA_WALL_GRIND`.
 pub const ARENA_WALL_GRIND: f32 = 0.4;
 /// Cruise speed gained per second while below the grind goal: ~2 s of tight
 /// grinding for base to cap.

@@ -64,7 +64,7 @@ pub fn spawn_is_safe(
     {
         return false;
     }
-    let clearance_squared = SPAWN_CLEARANCE.powi(2);
+    let clearance_squared = SPAWN_CLEARANCE * SPAWN_CLEARANCE;
     segments.iter().all(|[a, b]| {
         a.is_finite()
             && b.is_finite()

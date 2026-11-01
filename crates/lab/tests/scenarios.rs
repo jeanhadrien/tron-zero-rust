@@ -119,7 +119,7 @@ fn grinding_boosts_and_open_space_decays_to_base() {
     let mut lab = Lab::new(&scenario);
     lab.run(300, 0);
     let boosted = lab.rider("a").unwrap().target;
-    assert!(boosted > 1.3, "boost {boosted}");
+    assert!(boosted > 1.2, "boost {boosted}");
     lab.run(scenario.until, 0);
     let a = lab.rider("a").unwrap();
     assert!(a.alive);
@@ -194,10 +194,12 @@ fn grind_speed_rises_with_closeness_and_respects_the_cap() {
     assert!(target("d2") > target("d4"));
     assert!(target("d4") > target("d6"));
     assert!(target("d6") > target("d9"));
-    assert!(target("d9") > 1.0);
-    assert_eq!(target("d12"), 1.0);
+    assert!(target("d9") > target("d12"));
+    assert!(target("d12") > 1.0);
     assert_eq!(target("dnone"), 1.0);
-    assert!(target("d2") <= shared::MAX_SPEED_MULT);
+    // Walls pay a fraction of the trail boost, even at near contact.
+    let arena_cap = 1.0 + (shared::MAX_SPEED_MULT - 1.0) * shared::ARENA_WALL_GRIND;
+    assert!(target("d2") <= arena_cap);
 }
 
 #[test]
@@ -221,4 +223,31 @@ fn trails_pay_out_over_the_full_slide_distance() {
     let target = lab.rider("a").unwrap().target;
     let expected = 1.0 + (shared::MAX_SPEED_MULT - 1.0) * 0.5;
     assert!((target - expected).abs() < 0.01, "target {target}");
+}
+
+/// Highest cruise speed `rider` reaches while the scenario plays out.
+fn peak_target(name: &str, rider: &str) -> f32 {
+    let scenario = load(name);
+    let mut lab = Lab::new(&scenario);
+    let mut peak = 1.0_f32;
+    for tick in 1..=scenario.until {
+        lab.run(tick, 0);
+        peak = peak.max(lab.rider(rider).unwrap().target);
+    }
+    peak
+}
+
+#[test]
+fn own_trail_never_grinds() {
+    // Double-tap U-turns leave the rider ~3 u from its own trail in open space.
+    assert_eq!(peak_target("self_grind", "a"), 1.0);
+}
+
+#[test]
+fn edge_riding_pays_far_less_than_trail_grinding() {
+    let arena_cap = 1.0 + (shared::MAX_SPEED_MULT - 1.0) * shared::ARENA_WALL_GRIND;
+    let edge = peak_target("edge_ride", "a");
+    assert!(edge > 1.0 && edge <= arena_cap + 1e-3, "edge {edge}");
+    let trail = peak_target("trail_grind", "a");
+    assert!(trail > edge + 0.1, "trail {trail} vs edge {edge}");
 }

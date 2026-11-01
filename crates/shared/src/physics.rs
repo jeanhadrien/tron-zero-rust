@@ -100,21 +100,27 @@ pub fn nearest(
 }
 
 /// Grind strength in `0..=1` for a side ray: 1 touching an obstacle, falling
-/// linearly to 0 at `SLIDE_DISTANCE`. Arena walls count as farther away
-/// (`ARENA_WALL_GRIND`) so the boundary is a weaker accelerator than trails.
+/// linearly to 0 at `SLIDE_DISTANCE`. Grinding rewards risk near *other*
+/// riders' trails, so:
+/// - the rider's own trail never counts (a U-turn corridor is a free farm);
+/// - arena walls pay at most `ARENA_WALL_GRIND` of the full strength, so edge
+///   riding is a weak accelerator even at contact.
 fn grind_proximity(
     obstacles: &[Segment],
     owner: Option<u64>,
     origin: Vec2,
     direction: Vec2,
 ) -> f32 {
-    let distance = contacts(obstacles, owner, origin, direction, true)
-        .map(|(hit, segment)| match segment.owner {
-            Some(_) => hit,
-            None => hit / ARENA_WALL_GRIND,
+    contacts(obstacles, owner, origin, direction, true)
+        .filter(|(_, segment)| owner.is_none() || segment.owner != owner)
+        .map(|(hit, segment)| {
+            let strength = (1.0 - hit / SLIDE_DISTANCE).max(0.0);
+            match segment.owner {
+                Some(_) => strength,
+                None => strength * ARENA_WALL_GRIND,
+            }
         })
-        .fold(f32::INFINITY, f32::min);
-    (1.0 - distance / SLIDE_DISTANCE).max(0.0)
+        .fold(0.0, f32::max)
 }
 
 /// The mutable kinematic state of one rider entering a tick.
@@ -175,7 +181,8 @@ pub fn step_rider(
     let normal_step = BASE_SPEED * cruise * TICK_SECS;
     let colliding = front < SLOW_DOWN_DISTANCE;
     let step = if colliding {
-        let ratio = (front / SLOW_DOWN_DISTANCE).powi(2);
+        let fraction = front / SLOW_DOWN_DISTANCE;
+        let ratio = fraction * fraction;
         let load = 1.0 + cruise;
         rubber -= RUBBER_DRAIN * load * load * load;
         // Zeno decay may never exceed cruise speed: at the zone edge it would

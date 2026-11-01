@@ -1,0 +1,9 @@
+# Ride into the east arena wall, get stuck, turn left: hug the edge.
+arena = [2000, 2000]
+until = 900
+
+[[rider]]
+name = "a"
+at = [700, 0]
+heading = "+x"
+script = ["100 left"]

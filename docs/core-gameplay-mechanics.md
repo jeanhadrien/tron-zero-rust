@@ -31,10 +31,10 @@ Each player controls a continuous-moving lightcycle.
 
 The game encourages risky play by rewarding players who ride close to existing trails. All numbers live in `constants.rs`.
 
-- **Sliding (Acceleration):** A rider is "sliding" when a side ray finds an obstacle (trail or wall) within `SLIDE_DISTANCE` (24 units, wider than the 12-unit front slowdown zone). Closeness sets a *goal speed*: `1 + (MAX_SPEED_MULT - 1) * (1 - distance / SLIDE_DISTANCE)`, so touching the wall aims for the cap (2.0x, 720 u/s) and the edge of the range gives nothing. Arena boundary walls count as `1 / ARENA_WALL_GRIND` (2.5x) farther away, so riding the edge pays far less than riding trails.
+- **Sliding (Acceleration):** A rider is "sliding" when a side ray finds an obstacle (trail or wall) within `SLIDE_DISTANCE` (24 units, wider than the 12-unit front slowdown zone). Closeness sets a *goal speed*: `1 + (MAX_SPEED_MULT - 1) * (1 - distance / SLIDE_DISTANCE)`, so touching the wall aims for the cap (2.0x, 720 u/s) and the edge of the range gives nothing. Grinding rewards risk near *other* riders, so a rider's **own trail never grinds** (no farming a double-tap U-turn corridor), and arena boundary walls pay only `ARENA_WALL_GRIND` (0.4) of the trail strength at the same distance: edge riding aims for at most 1.4x (504 u/s) even at contact, versus the 2.0x cap on an opponent's trail.
 - **Inertia:** `TargetSpeedMult` is the rider's inertial cruise speed. Each tick it moves toward the goal speed at bounded rates and never leaves `[1, MAX_SPEED_MULT]`: up at `SLIDE_ACCEL_PER_SEC` (0.5/s, base to cap in ~2 s of tight grinding), down at `COAST_DECEL_PER_SEC` (0.5/s) in open space or above the goal. Boost must be fed continuously and fades within about 2 s. `SpeedMult` is the realized speed of the tick (cruise, reduced by the Zeno slowdown near a wall).
 - **Crash braking:** while the front ray is inside the slowdown zone, cruise speed drops at `CRASH_BRAKE_PER_SEC` (3.0/s) and does not accelerate. Brushing a wall bleeds boost.
-- **Determinism:** the speed update uses only `+ - * /` and comparisons (no `powf`/`exp`), so client and server stay bit-identical across platforms.
+- **Determinism:** the speed update and Zeno slowdown use only `+ - * /` and comparisons (no `powi`/`powf`/`exp`), so client and server stay bit-identical across platforms.
 
 ## 5. Collision & The "Rubber" System
 
