@@ -57,6 +57,22 @@ If a build mysteriously rebuilds from scratch, you probably touched the repo fro
 
 The WASM web client target (`wasm32-unknown-unknown`) is not set up yet — see `docs/building.md`.
 
+## Lobby (server-manager)
+
+The server browser needs the Node/Bun lobby service in `server-manager/`
+(see its README for the API). To run the full loop locally:
+
+```
+cd server-manager
+bun install          # first time only
+bun run dev          # listens on :3001 (PORT to override)
+```
+
+Then start the Rust server with `MANAGER_URL=http://localhost:3001` (this is
+also the default) and open the client's Rooms screen. The server registers,
+heartbeats every 2s and re-registers on a 404. Without the manager the server
+keeps retrying every 5s and the client still shows its pinned localhost row.
+
 ## Lab (headless scenarios)
 
 The sim is deterministic and tick-stepped, so situations can be scripted and
