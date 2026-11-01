@@ -100,7 +100,8 @@ fn check_delivery_invariants(net: &mut Net, client: usize, run: &Run) {
     );
     assert!(
         trace.reexecuted_ticks.is_empty(),
-        "no tick ran twice outside rollback"
+        "no tick ran twice outside rollback: {:?}",
+        trace.reexecuted_ticks
     );
 }
 

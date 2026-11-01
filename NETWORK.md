@@ -60,6 +60,21 @@ measured numbers are in `docs/netcode-design.md` ("One-shot turn delivery").
   the Lightyear last-input fallback being able to add or invent turns.
 - [x] Headless server + client(s) harness over real UDP with the link conditioner.
 
+## Lightyear behaviour worth remembering
+
+- **Timeline resync is a relabel, not a rewind.** `InputTimeline` emits a
+  `SyncEvent` on the first sync (a large positive delta, ~+45 ticks) and again
+  whenever the error exceeds `max_error_margin` (seen at 150 ms / 3% loss: a
+  -11 tick jump shortly after joining, when lost pings skewed the estimate).
+  The rider keeps simulating forward from its current state; only the tick
+  numbers jump, and Lightyear shifts its prediction/input histories by the same
+  delta (`update_ticks`). No turn runs twice: each fixed step still consumes the
+  `ActionState` once. A backward jump does make the client's state differ from
+  the server's for that tick label, so a normal rollback follows. The nettest
+  client trace follows `SyncEvent`s (`follow_timeline_resync`) so relabelled
+  ticks are not reported as "ran twice outside rollback". Outbox stamps are
+  not shifted (see `docs/netcode-design.md`, redundant delivery).
+
 ## Still open after that session
 
 - [ ] Late turns cost a state rollback on the client. The ack carries

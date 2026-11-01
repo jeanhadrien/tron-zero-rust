@@ -49,6 +49,24 @@ pub struct ClientTrace {
     pub replay_input_mismatches: Vec<u32>,
     /// Non-rollback executions of a tick that already ran (timeline jumps).
     pub reexecuted_ticks: Vec<u32>,
+    /// Tick deltas of the timeline resyncs Lightyear applied.
+    pub resyncs: Vec<i32>,
+}
+
+impl ClientTrace {
+    /// Renumber everything recorded so far by `delta` ticks, as Lightyear does
+    /// to its own prediction and input histories on a timeline resync.
+    fn shift_ticks(&mut self, delta: i32) {
+        fn shifted<T>(map: &mut BTreeMap<u32, T>, delta: i32) {
+            *map = std::mem::take(map)
+                .into_iter()
+                .map(|(tick, value)| (tick.saturating_add_signed(delta), value))
+                .collect();
+        }
+        shifted(&mut self.history, delta);
+        shifted(&mut self.first_input, delta);
+        self.resyncs.push(delta);
+    }
 }
 
 /// A scripted physical press: injected once the client timeline reaches `tick`.
@@ -99,6 +117,7 @@ impl TestClient {
         tc::add_input_and_prediction(&mut app);
         app.init_resource::<ClientTrace>();
         app.add_systems(FixedLast, record_client_tick);
+        app.add_observer(follow_timeline_resync);
         install_conditioner(&mut app, impairment);
         app.finish();
         app.cleanup();
@@ -325,6 +344,19 @@ fn plant_input(
             action.0 = input;
         }
     }
+}
+
+/// A `SyncEvent` moves the client's tick counter (initially, and again when the
+/// sync error exceeds `max_error_margin`, e.g. after a lost-ping streak). No
+/// simulation step is re-run or rewound: the rider just continues, but its
+/// next ticks carry numbers already used. Lightyear relabels its histories with
+/// `update_ticks(delta)` (`lightyear_prediction::predicted_history`), so the
+/// trace must follow or those fresh ticks look like double executions.
+fn follow_timeline_resync(
+    event: On<SyncEvent<client::InputTimelineConfig>>,
+    mut trace: ResMut<ClientTrace>,
+) {
+    trace.shift_ticks(event.tick_delta);
 }
 
 #[allow(clippy::type_complexity)]
