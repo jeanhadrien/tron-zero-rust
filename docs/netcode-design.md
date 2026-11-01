@@ -97,8 +97,9 @@ but the server ignores it for humans.
   which targets `server + RTT/2 + 4*jitter + 1 tick (client margin) + 1 tick
   (server input pipeline) + sync error margin`. It is the same tick count the
   server uses: the native input buffer on the server holds the matching
-  `TurnXFor(generation)` at exactly the tick the command claims (checked by the
-  harness on every command).
+  `TurnXFor(generation)` at exactly the tick the command claims (checked on every
+  command of the clean-link scenario; on impaired links the harness checks that
+  each command's tick equals the tick the client predicted the turn at).
 - **Server** (`turns.rs`): `collect_turn_commands` (PreUpdate) admits commands
   into a per-link `TurnQueue`; `apply_turn_commands` (FixedUpdate, before
   `simulate_players`) writes every human rider's `ActionState` each tick:
@@ -135,12 +136,19 @@ last one already simulated; e.g. -4 = 4 ticks of slack),
 on both ends (RTT split evenly; jitter is uniform +/- per direction):
 
 | Profile (RTT / jitter / loss) | min | p50 | p95 | max | Late (>= 0) | Rollbacks |
-|-------------------------------|-----|-----|-----|-----|------------|-----------|
-| 0 ms / 0 / 0%                 | -4  | -4  | -3  | -3  | 0 of 60    | 0         |
-| 50 ms / 10 / 0%               | -7  | -5  | -5  | -4  | 0 of 60    | 0         |
-| 150 ms / 20 / 0%              | -9  | -7  | -5  | -4  | 0 of 60    | 0         |
-| 250 ms / 50 / 0%              | -12 | -5  | 0   | +1  | >5%, 1-2 ticks late | 14 |
-| 150 ms / 20 / 3% (reliable resend) | -15 | -7 | -4 | +19 | <5%; 1 beyond the window (rejected) | 4 |
+|-------------------------------|-----|-----|-----|-----|-------------|-----------|
+| 0 ms / 0 / 0%                 | -4  | -4  | -4  | -3  | 0 of 60     | 0         |
+| 0 ms / +-5 / 0%               | -4  | -4  | -3  | -3  | 0 of 60     | 0         |
+| 50 ms / +-10 / 0%             | -7  | -6  | -5  | -4  | 0 of 60     | 0         |
+| 150 ms / +-20 / 0%            | -9  | -6  | -4  | -4  | 0 of 60     | 0         |
+| 250 ms / +-50 / 0%            | -12 | -4  | 0   | 0   | 4 of 60 (1 tick) | 5    |
+| 100 ms / +-30 / 5%            | -9  | -6  | -2  | +11 | 2 of 60     | 4         |
+| 150 ms / +-20 / 3%            | -10 | -7  | +7  | +23 | 4 of 50, 2 beyond the window (rejected) | 6 |
+
+One run per row, unseeded conditioner: the lossy rows vary run to run (another
+run of the 3% row gave max +19 with one rejection). The 3% row logged only 50 of 60
+presses because a rejected turn sent the rider into a wall, and a dead rider
+sends no commands.
 
 The premise that no-input-delay makes every turn late was wrong: it makes the
 client lead the server by roughly one-way delay plus 4-9 ticks of margin, and

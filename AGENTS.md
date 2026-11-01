@@ -18,8 +18,9 @@ in open space. Death clears the trail; humans respawn manually (Space/Enter).
 
 - **`shared/` (lib)** — the simulation core. Pure Bevy ECS, no networking/rendering/`rand`/wall-clock. Both client and server run the same `simulate_players` system at **120 Hz** (`TICK_HZ`). Contains: `components/` (player, trail, arena newtypes like `Rubber`, `SpeedMult`, `Position`), `systems/player.rs` (lifecycle + turn → sense → move → rubber; order is load-bearing), `systems/arena.rs`, `trail/` (tail-trim, arc length), `spawn.rs` + `math.rs` (safe-spawn search, rotations), `protocol.rs` (lightyear registration: what is `predict()` vs `replicate_once()` vs local-only), `constants.rs`.
 - **`bots/` (lib)** — the bot brain, split out of the server so the lab can run it: `WorldSnapshot` (+ its ECS builder), ray/BFS sensing, memory, physics forecaster, territory analysis, strategies (survivalist, trapper, adaptive, territorialist, duelist) and the Elo knob curve. `Brain::think` is one decision epoch. Deterministic: no `rand`, no wall clock.
-- **`server/` (bin)** — headless authoritative server. FixedUpdate chain: `handle_respawns → bot_brain_input → simulate_players → bot_spawner`. Plus `bot/` (ECS glue: roster, staggered scheduling, spawning, `BotDebug` writer), `session.rs` (heartbeat/leave/lease), `announce.rs` (manager HTTP), `systems.rs` (connect/disconnect observers, arena spawn, respawn queue).
-- **`client/` (bin)** — native desktop client (WASM target not wired yet). Owns connection lifecycle (`connection.rs`: connect/cancel/timeout/disconnect, readiness gating), keyboard queue (`input/`), rendering + camera (`render/`), egui menu/HUD/death overlay (`menu.rs`, `render/hud.rs`, `render/death.rs`), server browser (`browser.rs`), keybindings (`settings.rs`).
+- **`server/` (lib + bin)** — headless authoritative server; `add_core` is the production wiring shared with `nettest`. FixedUpdate chain: `handle_respawns → bot_brain_input → apply_turn_commands → simulate_players → bot_spawner`, plus `turns.rs` (per-link `TurnQueue`, intended-tick scheduling). Plus `bot/` (ECS glue: roster, staggered scheduling, spawning, `BotDebug` writer), `session.rs` (heartbeat/leave/lease), `announce.rs` (manager HTTP), `systems.rs` (connect/disconnect observers, arena spawn, respawn queue).
+- **`client/` (lib + bin)** — native desktop client (WASM target not wired yet). Owns connection lifecycle (`connection.rs`: connect/cancel/timeout/disconnect, readiness gating), keyboard queue (`input/`), rendering + camera (`render/`), egui menu/HUD/death overlay (`menu.rs`, `render/hud.rs`, `render/death.rs`), server browser (`browser.rs`), keybindings (`settings.rs`).
+- **`nettest/` (lib + tests)** — headless real-UDP harness: the production server and client systems with scripted key presses, Lightyear's link conditioner (latency/jitter/loss) and per-tick traces on both sides. `cargo test -p tron-zero-nettest` (~40 s, serialized, wall-clock); measurements: `-- --ignored --nocapture`. Use it for any netcode change.
 - **`lab/` (lib + bin)** — headless, deterministic scenario runner over the real `simulate_players` (no networking). TOML scenarios in `crates/lab/scenarios/` script riders per tick or hand them to the bot brain (seeded bot arenas); output is a JSONL event trace (turns, rubber zone, slides, deaths with cause, respawns) and PNG snapshots. Tests assert mechanics and compare golden traces. **This is how an agent "plays" the game**: write or edit a scenario, re-run from tick 0, read the trace and PNG. See `docs/dev.md` § Lab.
 - **`server-manager/` (Bun/TS, outside `crates/`)** — standalone lobby service (Express, in-memory room store; imported from the JS repo, no monorepo deps). Rust servers register/heartbeat via `announce.rs`; the client lists rooms via `browser.rs`. Not a cargo member: `bun install && bun run start` (default port 3001). See `server-manager/README.md`.
 
@@ -30,13 +31,16 @@ reconciliation only — no server rewind. Own rider is `Predicted`; opponents/bo
 are interpolated (step interpolation keeps cardinal corners coherent). Trail is
 a single replicated+predicted `Trail(Vec<Vec2>)` component (oldest → head),
 **not** child entities — this deliberately diverges from `PLAN.md`. Turns are
-one-shot Lightyear inputs; respawn/session/leave are ordered-reliable messages
+sequenced `TurnCommand`s on the ordered-reliable `TurnChannel`, stamped with the
+tick the client predicted them at and executed by the server on that tick (late
+ones within 12 ticks run on the first free tick, later ones are rejected); the
+native Lightyear input only drives prediction and is overwritten on the server
+for humans. Respawn/session/leave are ordered-reliable messages
 (`RespawnChannel`, `SessionChannel`), never inputs. Human respawn is
 server-applied and tagged by `LifeGeneration` (connection nonce + life counter)
 so stale turns can't leak across lives. See `docs/netcode-design.md` for the
-implemented contract and `NETWORK.md` for the hardening backlog (one-shot
-delivery under loss, collision fairness, diagnostics — the P0 turn-repeat risk
-is known and unsolved).
+implemented contract and `NETWORK.md` for the hardening backlog (redundant
+resend under loss, late-turn client repair, collision fairness, diagnostics).
 
 ## Gameplay invariants (`docs/core-gameplay-mechanics.md` is normative)
 

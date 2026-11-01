@@ -28,6 +28,10 @@ fn measure(impairment: Impairment, turns: usize) {
         .zip(&net.clients[0].injected_at)
         .map(|(d, pressed)| i64::from(d.received) - i64::from(*pressed))
         .collect();
+    let late = log
+        .iter()
+        .filter(|d| d.arrival_offset().is_some_and(|offset| offset >= 0))
+        .count();
     let rejected = log
         .iter()
         .filter(|d| matches!(d.fate, Fate::Rejected(_)))
@@ -46,10 +50,11 @@ fn measure(impairment: Impairment, turns: usize) {
         Distribution::of(lateness)
     );
     println!(
-        "  pressed {} / sent {} / logged {} / rejected {} / rollbacks {} / rider alive {}",
+        "  pressed {} / sent {} / logged {} / late {} / rejected {} / rollbacks {} / rider alive {}",
         net.clients[0].injected_at.len(),
         net.clients[0].turns_sent(),
         log.len(),
+        late,
         rejected,
         net.clients[0].rollbacks() - rollbacks_before,
         net.clients[0].rider_alive()
@@ -62,6 +67,7 @@ fn arrival_offsets_by_profile() {
     let _guard = serial();
     for impairment in [
         Impairment::NONE,
+        Impairment::new(0, 5, 0.0),
         Impairment::new(50, 10, 0.0),
         Impairment::new(150, 20, 0.0),
         Impairment::new(150, 20, 0.03),
