@@ -15,6 +15,8 @@ COPY --from=deps --chown=app:app /app/node_modules ./node_modules
 COPY --chown=app:app package.json ./
 COPY --chown=app:app src ./src
 ENV NODE_ENV=production
+# One trusted proxy hop (Cloud Run front end) so per-IP rate limiting sees clients.
+ENV TRUST_PROXY=1
 USER app
 
 # Cloud Run injects PORT at runtime; do not hardcode.

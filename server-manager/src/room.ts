@@ -6,9 +6,16 @@ export interface RoomEntry {
   port: number;
   secure?: boolean; // game server is reachable over TLS
   displayName: string;
-  playerCount: number; // updated via heartbeat
+  playerCount: number; // humans only, updated via heartbeat; maxPlayers caps humans
+  botCount?: number; // additive and informational; absent for servers that do not report it
   maxPlayers: number; // set at register
   lastHeartbeat: number; // Date.now() of last register/heartbeat
+}
+
+// POST /api/rooms response: the public entry plus the room's secret. The token
+// is returned exactly once and never appears in GET /api/rooms.
+export interface RegisterResponse extends RoomEntry {
+  token: string;
 }
 
 // POST /api/rooms
@@ -23,4 +30,5 @@ export interface RegisterPayload {
 // POST /api/rooms/:id/heartbeat
 export interface HeartbeatPayload {
   playerCount: number;
+  botCount?: number;
 }
