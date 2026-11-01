@@ -4,6 +4,7 @@
 //! their turn commands. The library holds all gameplay wiring so integration
 //! tests (`tron-zero-nettest`) run the same app as `main.rs`.
 
+pub mod admission;
 pub mod announce;
 pub mod bot;
 pub mod session;
@@ -33,12 +34,15 @@ pub fn add_core(app: &mut App, port: u16) {
     // Disconnect observer — cleans up zombie player entities.
     app.add_observer(systems::on_client_disconnected);
     app.init_resource::<systems::PendingRespawns>();
+    // main.rs inserts the configured cap first; the default only serves tests.
+    app.init_resource::<admission::MaxPlayers>();
     app.add_systems(
         PreUpdate,
         (
             systems::collect_respawn_requests,
             turns::collect_turn_commands,
             session::receive_session_requests,
+            admission::handle_hello,
         )
             .after(MessageSystems::Receive),
     );

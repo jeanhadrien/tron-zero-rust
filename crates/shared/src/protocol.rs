@@ -10,6 +10,67 @@ use lightyear::prelude::input::native::InputPlugin;
 use lightyear::prelude::*;
 use serde::{Deserialize, Serialize};
 
+/// Bumped whenever the wire protocol or gameplay contract changes in a way an
+/// old peer cannot follow. Exchanged in [`SessionHello`]; a mismatch is
+/// rejected with [`JoinRejection::VersionMismatch`].
+pub const PROTOCOL_VERSION: u32 = 1;
+
+/// Longest accepted player name, in characters.
+pub const MAX_NAME_CHARS: usize = 16;
+/// Name used when the requested one is empty or sanitizes to nothing.
+pub const DEFAULT_NAME: &str = "Player";
+
+/// First message of every session (client -> server): who is joining, on which
+/// protocol. The server only spawns a rider after accepting it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SessionHello {
+    pub protocol: u32,
+    pub name: String,
+}
+
+/// Why the server refused a [`SessionHello`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum JoinRejection {
+    VersionMismatch { server: u32 },
+    ServerFull { max_players: u32 },
+}
+
+impl std::fmt::Display for JoinRejection {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::VersionMismatch { server } => write!(
+                f,
+                "Incompatible game version (server protocol {server}, yours {PROTOCOL_VERSION}). \
+                 Update the client or pick another server."
+            ),
+            Self::ServerFull { max_players } => {
+                write!(f, "Server is full ({max_players} players).")
+            }
+        }
+    }
+}
+
+/// Server -> client answer to [`SessionHello`]. `Accepted` carries the name
+/// the server settled on (sanitized, de-duplicated).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum HelloReply {
+    Accepted { name: String },
+    Rejected(JoinRejection),
+}
+
+/// Normalize a player-supplied name: drop control characters, trim, cap the
+/// length, and fall back to [`DEFAULT_NAME`] when nothing is left.
+pub fn sanitize_name(raw: &str) -> String {
+    let cleaned: String = raw.chars().filter(|c| !c.is_control()).collect();
+    let capped: String = cleaned.trim().chars().take(MAX_NAME_CHARS).collect();
+    let name = capped.trim_end();
+    if name.is_empty() {
+        DEFAULT_NAME.to_owned()
+    } else {
+        name.to_owned()
+    }
+}
+
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct RespawnRequest {
     pub generation: u128,
@@ -134,6 +195,13 @@ pub fn register_protocol(app: &mut App) {
         ..Default::default()
     })
     .add_direction(NetworkDirection::Bidirectional);
+    // The hello pair is registered first so its wire ids stay stable across
+    // builds that add or reorder later messages: a mismatched peer can still
+    // decode the handshake and be told why it is refused.
+    app.register_message::<SessionHello>()
+        .add_direction(NetworkDirection::ClientToServer);
+    app.register_message::<HelloReply>()
+        .add_direction(NetworkDirection::ServerToClient);
     app.register_message::<SessionRequest>()
         .add_direction(NetworkDirection::ClientToServer);
     app.register_message::<SessionReply>()
@@ -190,6 +258,8 @@ pub fn register_protocol(app: &mut App) {
     app.component::<BotDebug>().replicate();
     app.component::<Player>().replicate_once();
     app.component::<PlayerId>().replicate_once();
+    // Final at spawn: the server admits a player (fixing the name) before
+    // spawning the rider, so late joiners get it with the initial state.
     app.component::<DisplayName>().replicate_once();
     app.component::<PlayerColor>().replicate_once();
 
@@ -205,4 +275,26 @@ pub fn register_protocol(app: &mut App) {
 // Discrete snapshots keep cardinal turns and trail heads on the same tick.
 fn step<T>(start: T, end: T, t: f32) -> T {
     if t >= 1.0 { end } else { start }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sanitize_strips_controls_trims_and_caps() {
+        assert_eq!(sanitize_name("  Neo \u{7}\n"), "Neo");
+        assert_eq!(sanitize_name("a\tb"), "ab");
+        assert_eq!(sanitize_name(""), DEFAULT_NAME);
+        assert_eq!(sanitize_name(" \u{0}  "), DEFAULT_NAME);
+        assert_eq!(
+            sanitize_name(&"x".repeat(40)).chars().count(),
+            MAX_NAME_CHARS
+        );
+        // Multi-byte characters are counted, never sliced mid-codepoint.
+        assert_eq!(
+            sanitize_name(&"é".repeat(40)).chars().count(),
+            MAX_NAME_CHARS
+        );
+    }
 }

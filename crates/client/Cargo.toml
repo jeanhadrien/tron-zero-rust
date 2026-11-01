@@ -5,11 +5,15 @@ edition = "2024"
 
 [dependencies]
 shared = { path = "../shared", package = "tron-zero-shared" }
-bevy.workspace = true
+bevy = { workspace = true, features = ["serialize"] }
 lightyear = { workspace = true, features = ["udp", "raw_connection", "input_native"] }
+# Only for `TransportSystems` (ordering the simulated uplink delay); same version as lightyear.
+lightyear_transport = "0.28"
 bevy_egui.workspace = true
 bevy_kira_audio.workspace = true
+dirs = "6"
 ehttp = "0.7"
+rand.workspace = true
 serde.workspace = true
 serde_json = "1"
 tracing.workspace = true

@@ -7,13 +7,18 @@ use lightyear::prelude::client::{Connect, Disconnect, InputDelayConfig, RawClien
 use lightyear::prelude::input::native::{InputMarker, NativeBuffer};
 use lightyear::prelude::*;
 use shared::protocol::{
-    SESSION_HEARTBEAT_SECS, SESSION_TIMEOUT_SECS, SessionChannel, SessionReply, SessionRequest,
+    HelloReply, PROTOCOL_VERSION, SESSION_HEARTBEAT_SECS, SESSION_TIMEOUT_SECS, SessionChannel,
+    SessionHello, SessionReply, SessionRequest, sanitize_name,
 };
 
 use crate::input::{InputLifecycle, PendingInput, RespawnUi, TurnAckState, TurnSeq};
 use crate::menu::MenuState;
+use crate::settings::PlayerName;
 
 const CONNECT_TIMEOUT_SECS: f64 = 10.0;
+/// Longest a quit waits for the leave to flush before exiting anyway.
+const QUIT_GRACE_SECS: f64 = 2.0;
+pub const IDLE_STATUS: &str = "Not connected. Connect to Localhost or browse servers.";
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum ConnectionPhase {
@@ -29,6 +34,16 @@ pub enum ConnectionPhase {
 pub struct Session {
     pub phase: ConnectionPhase,
     pub status: String,
+    /// Name sent in the hello; replaced by the server's final choice once
+    /// admitted.
+    pub name: String,
+    /// Protocol advertised in the hello (a field so tests can fake a stale build).
+    pub protocol: u32,
+    address: Option<SocketAddr>,
+    hello_sent: bool,
+    admitted: bool,
+    /// Set by Quit: exit once the session is torn down (or the grace expires).
+    quit_requested_at: Option<f64>,
     client: Option<Entity>,
     started_at: f64,
     last_reply: Option<f64>,
@@ -40,7 +55,13 @@ impl Default for Session {
     fn default() -> Self {
         Self {
             phase: ConnectionPhase::Offline,
-            status: "Choose Localhost to join a running server.".into(),
+            status: IDLE_STATUS.into(),
+            name: shared::protocol::DEFAULT_NAME.into(),
+            protocol: PROTOCOL_VERSION,
+            address: None,
+            hello_sent: false,
+            admitted: false,
+            quit_requested_at: None,
             client: None,
             started_at: 0.0,
             last_reply: None,
@@ -51,7 +72,9 @@ impl Default for Session {
 }
 
 impl Session {
-    pub fn connect(&mut self, address: SocketAddr, now: f64, commands: &mut Commands) {
+    /// Start connecting to `address`, joining as `name` (the server has the
+    /// final say on it).
+    pub fn connect(&mut self, address: SocketAddr, name: &str, now: f64, commands: &mut Commands) {
         if self.phase != ConnectionPhase::Offline || self.client.is_some() {
             return;
         }
@@ -68,6 +91,9 @@ impl Session {
         *self = Self {
             phase: ConnectionPhase::Connecting,
             status: format!("Connecting to {address}..."),
+            name: name.to_owned(),
+            protocol: self.protocol,
+            address: Some(address),
             client: Some(client),
             started_at: now,
             ..Default::default()
@@ -85,16 +111,29 @@ impl Session {
         }
     }
 
-    fn timed_out(&self, now: f64) -> Option<&'static str> {
+    /// Leave the server (if connected) and exit the app once cleanup is done.
+    pub fn request_quit(&mut self, now: f64) {
+        self.quit_requested_at.get_or_insert(now);
+        self.disconnect("Quitting...");
+    }
+
+    fn timed_out(&self, now: f64) -> Option<String> {
+        let target = self
+            .address
+            .map_or_else(|| "the server".to_owned(), |a| a.to_string());
         if self
             .last_reply
             .is_some_and(|last| now - last >= SESSION_TIMEOUT_SECS)
         {
-            Some("Server stopped responding. Check the server and retry.")
+            Some(format!(
+                "Lost contact with {target}. Check the server and retry."
+            ))
         } else if self.phase != ConnectionPhase::Playing
             && now - self.started_at >= CONNECT_TIMEOUT_SECS
         {
-            Some("Connection/synchronization timed out. Start the localhost server and retry.")
+            Some(format!(
+                "No response from {target} (timed out). Is the server running and reachable?"
+            ))
         } else {
             None
         }
@@ -113,6 +152,8 @@ pub fn monitor_connection(
             Option<&Disconnected>,
             Option<&mut MessageReceiver<SessionReply>>,
             Option<&mut MessageSender<SessionRequest>>,
+            Option<&mut MessageReceiver<HelloReply>>,
+            Option<&mut MessageSender<SessionHello>>,
         ),
         With<Client>,
     >,
@@ -136,7 +177,9 @@ pub fn monitor_connection(
         return;
     }
     let now = time.elapsed_secs_f64();
-    let Ok((connected, synced, disconnected, receiver, sender)) = clients.get_mut(entity) else {
+    let Ok((connected, synced, disconnected, receiver, sender, hello_receiver, hello_sender)) =
+        clients.get_mut(entity)
+    else {
         session.disconnect("Connection entity was lost. Please retry.");
         menu.open = true;
         return;
@@ -146,6 +189,35 @@ pub fn monitor_connection(
         session.disconnect(format!("Connection failed: {reason}"));
         menu.open = true;
         return;
+    }
+    if connected
+        && !session.hello_sent
+        && let Some(mut hello_sender) = hello_sender
+    {
+        // Same ordered channel as the heartbeat below, so the server sees the
+        // hello first.
+        hello_sender.send::<SessionChannel>(SessionHello {
+            protocol: session.protocol,
+            name: session.name.clone(),
+        });
+        session.hello_sent = true;
+    }
+    if let Some(mut hello_receiver) = hello_receiver {
+        for reply in hello_receiver.receive() {
+            match reply {
+                HelloReply::Accepted { name } => {
+                    info!(%name, "Join accepted");
+                    session.name = name;
+                    session.admitted = true;
+                }
+                HelloReply::Rejected(reason) => {
+                    warn!(%reason, "Join rejected");
+                    session.disconnect(reason.to_string());
+                    menu.open = true;
+                    return;
+                }
+            }
+        }
     }
     if let Some(mut receiver) = receiver {
         for reply in receiver.receive() {
@@ -179,7 +251,7 @@ pub fn monitor_connection(
         let rider_ready = players
             .iter()
             .any(|owner| owner.is_none_or(|c| c.owner == entity));
-        let ready = connected && synced && !arenas.is_empty() && rider_ready;
+        let ready = connected && synced && session.admitted && !arenas.is_empty() && rider_ready;
         if ready {
             if session.phase != ConnectionPhase::Playing {
                 info!(
@@ -187,7 +259,7 @@ pub fn monitor_connection(
                     "Session ready: clock, arena and controlled rider received"
                 );
                 session.phase = ConnectionPhase::Playing;
-                session.status = "Connected to Localhost.".into();
+                session.status = format!("Connected as {}.", session.name);
                 menu.open = false;
                 menu.block_this_frame = true;
             }
@@ -195,6 +267,8 @@ pub fn monitor_connection(
             session.phase = ConnectionPhase::Synchronizing;
             let status = if !connected {
                 "Server answered. Waiting for connection..."
+            } else if !session.admitted {
+                "Server answered. Waiting for the join to be accepted..."
             } else if !synced {
                 "Server answered. Synchronizing clock..."
             } else if arenas.is_empty() {
@@ -233,6 +307,83 @@ pub fn unlink_session(mut session: ResMut<Session>, mut commands: Commands) {
     }
 }
 
+/// Dev convenience (`TRON_AUTOCONNECT=host:port`): keep trying to join a
+/// server from startup until it works or the player takes over.
+#[derive(Resource, Debug)]
+pub struct AutoConnect {
+    addr: SocketAddr,
+    armed: bool,
+    next_attempt: f64,
+}
+
+/// Pause between auto-connect attempts, so a server that is still starting
+/// up is picked up without hammering it.
+const AUTOCONNECT_RETRY_SECS: f64 = 1.5;
+
+impl AutoConnect {
+    /// Read `TRON_AUTOCONNECT`; an unparsable value is logged and ignored.
+    pub fn from_env() -> Option<Self> {
+        let raw = std::env::var("TRON_AUTOCONNECT").ok()?;
+        match raw.trim().parse::<SocketAddr>() {
+            Ok(addr) => {
+                info!(%addr, "TRON_AUTOCONNECT set: joining automatically");
+                Some(Self {
+                    addr,
+                    armed: true,
+                    next_attempt: 0.0,
+                })
+            }
+            Err(err) => {
+                warn!(%raw, %err, "Ignoring invalid TRON_AUTOCONNECT (expected host:port)");
+                None
+            }
+        }
+    }
+
+    /// Stop auto-connecting (the player cancelled, disconnected or quit).
+    pub fn disarm(&mut self) {
+        self.armed = false;
+    }
+}
+
+/// Join the autoconnect target while armed and idle. Disarms itself once a
+/// session reaches Playing, so a later disconnect stays disconnected.
+pub fn auto_connect(
+    auto: Option<ResMut<AutoConnect>>,
+    mut session: ResMut<Session>,
+    name: Res<PlayerName>,
+    time: Res<Time<Real>>,
+    mut commands: Commands,
+) {
+    let Some(mut auto) = auto.filter(|auto| auto.armed) else {
+        return;
+    };
+    let now = time.elapsed_secs_f64();
+    if session.phase == ConnectionPhase::Playing {
+        auto.disarm();
+    } else if session.phase == ConnectionPhase::Offline && now >= auto.next_attempt {
+        auto.next_attempt = now + AUTOCONNECT_RETRY_SECS;
+        session.connect(auto.addr, &sanitize_name(&name.0), now, &mut commands);
+    }
+}
+
+/// Exit the app once a requested quit has finished tearing the session down
+/// (so the server gets the leave), or after a short grace if it cannot.
+pub fn quit_when_ready(
+    session: Res<Session>,
+    time: Res<Time<Real>>,
+    mut exit: MessageWriter<AppExit>,
+) {
+    let Some(requested_at) = session.quit_requested_at else {
+        return;
+    };
+    if session.phase == ConnectionPhase::Offline
+        || time.elapsed_secs_f64() - requested_at >= QUIT_GRACE_SECS
+    {
+        exit.write(AppExit::Success);
+    }
+}
+
 /// Wait for Lightyear's state-transition cleanup before allowing another link.
 #[allow(clippy::too_many_arguments)]
 pub fn finish_disconnect(
@@ -266,6 +417,7 @@ pub fn finish_disconnect(
     *turn_seq = TurnSeq::default();
     *turn_acks = TurnAckState::default();
     session.phase = ConnectionPhase::Offline;
+    session.admitted = false;
 }
 
 #[cfg(test)]
@@ -281,16 +433,11 @@ mod tests {
             ..Default::default()
         };
         assert!(session.timed_out(9.99).is_none());
-        assert!(session.timed_out(10.0).unwrap().contains("synchronization"));
+        assert!(session.timed_out(10.0).unwrap().contains("timed out"));
         session.phase = ConnectionPhase::Playing;
         session.last_reply = Some(20.0);
         assert!(session.timed_out(24.99).is_none());
-        assert!(
-            session
-                .timed_out(25.0)
-                .unwrap()
-                .contains("stopped responding")
-        );
+        assert!(session.timed_out(25.0).unwrap().contains("Lost contact"));
     }
 
     #[test]
@@ -323,6 +470,7 @@ mod tests {
             world.resource::<Session>().phase,
             ConnectionPhase::Synchronizing
         );
+        // Everything else being ready, an unaccepted join still holds play back.
         world.spawn((shared::Arena, shared::WallSegments::default()));
         world.spawn((
             shared::Player,
@@ -332,6 +480,12 @@ mod tests {
             InputMarker::<shared::PlayerInput>::default(),
             NativeBuffer::<shared::PlayerInput>::default(),
         ));
+        world.run_system_once(monitor_connection).unwrap();
+        assert_eq!(
+            world.resource::<Session>().phase,
+            ConnectionPhase::Synchronizing
+        );
+        world.resource_mut::<Session>().admitted = true;
         world.run_system_once(monitor_connection).unwrap();
         assert_eq!(world.resource::<Session>().phase, ConnectionPhase::Playing);
         assert!(!world.resource::<MenuState>().open);

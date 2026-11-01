@@ -13,6 +13,11 @@ pub struct SessionLease {
 }
 
 impl SessionLease {
+    /// Mark the session for closing (rejected or stalled join).
+    pub fn close(&mut self) {
+        self.leaving = true;
+    }
+
     fn receive(&mut self, request: SessionRequest) -> Option<SessionReply> {
         if self.leaving {
             return None;

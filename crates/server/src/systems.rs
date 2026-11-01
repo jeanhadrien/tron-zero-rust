@@ -55,28 +55,24 @@ pub fn spawn_server_arena_and_start(port: Res<crate::announce::UdpPort>, mut com
 }
 
 /// When a new client's link-of entity becomes connected, set up replication
-/// on the link and spawn a player entity for that client.
+/// and session state on the link. The rider is NOT spawned here: it appears
+/// once the client's hello is accepted (`admission::handle_hello`).
 ///
 /// Observes `ClientOf` (inserted last in the connection bundle) so that
 /// `Connected`, `RemoteId`, etc. are guaranteed present by the time we run.
-pub fn on_client_connected(
-    trigger: On<Add, ClientOf>,
-    query: Query<&RemoteId, With<Connected>>,
-    mut commands: Commands,
-) {
-    let Ok(remote_id) = query.get(trigger.entity) else {
-        return;
-    };
-
-    // Enable replication on this client's link entity.
+pub fn on_client_connected(trigger: On<Add, ClientOf>, mut commands: Commands) {
     commands.entity(trigger.entity).insert((
         ReplicationSender,
         crate::session::SessionLease::default(),
         crate::turns::TurnQueue::default(),
+        crate::admission::AwaitingHello::default(),
     ));
+}
 
-    // Spawn allocation is serialized in FixedUpdate against live geometry.
-    // Keep one controlled entity even when the arena has no safe space.
+/// Spawn the controlled rider for an admitted client link. Spawn allocation
+/// is serialized in FixedUpdate against live geometry (`InitialSpawn`); the
+/// rider exists even when the arena has no safe space yet.
+pub fn spawn_human(commands: &mut Commands, link: Entity, peer: PeerId, name: String) {
     // (Split insert: the 15-component tuple Bundle limit is already reached.)
     commands
         .spawn((
@@ -84,7 +80,7 @@ pub fn on_client_connected(
             Human,
             InitialSpawn,
             shared::LifeGeneration::for_session(rand::random()),
-            shared::PlayerId(remote_id.0.to_string()),
+            shared::PlayerId(peer.to_string()),
             shared::Velocity(Vec2::ZERO),
             shared::SpeedMult(0.0),
             shared::TargetSpeedMult(0.0),
@@ -94,16 +90,16 @@ pub fn on_client_connected(
             // Replicate to all clients.
             Replicate::to_clients(NetworkTarget::All),
             // The owning client predicts this entity.
-            PredictionTarget::to_clients(NetworkTarget::Single(remote_id.0)),
+            PredictionTarget::to_clients(NetworkTarget::Single(peer)),
             // All other clients interpolate it.
-            InterpolationTarget::to_clients(NetworkTarget::AllExceptSingle(remote_id.0)),
+            InterpolationTarget::to_clients(NetworkTarget::AllExceptSingle(peer)),
             // Routes this client's inputs to this entity's ActionState.
             ControlledBy {
-                owner: trigger.entity,
+                owner: link,
                 lifetime: Lifetime::SessionBased,
             },
         ))
-        .insert(shared::DisplayName("Player".to_string()));
+        .insert(shared::DisplayName(name));
 }
 
 /// Drain queued per-link requests, deriving ownership from the link rather than

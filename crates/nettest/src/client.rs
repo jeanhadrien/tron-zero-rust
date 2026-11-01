@@ -11,7 +11,10 @@ use bevy::prelude::*;
 use glam::Vec2;
 use lightyear::prelude::input::native::InputMarker;
 use lightyear::prelude::*;
-use shared::{ActionState, Direction, IsAlive, LifeGeneration, PlayerId, PlayerInput, Position};
+use shared::{
+    ActionState, Direction, DisplayName, IsAlive, LifeGeneration, Player, PlayerId, PlayerInput,
+    Position,
+};
 use tc::connection::{ConnectionPhase, Session};
 use tc::input::{PendingInput, TurnAckState};
 use tc::menu::MenuState;
@@ -105,8 +108,21 @@ impl TestClient {
         }
     }
 
-    /// Start the production connect flow towards `127.0.0.1:port`.
+    /// Like [`TestClient::new`], plus the client-side network simulation the
+    /// real client enables with `TRON_SIM_LATENCY_MS` (on top of `impairment`).
+    pub fn with_sim(impairment: Impairment, sim: tc::sim::NetSim) -> Self {
+        let mut client = Self::new(impairment);
+        sim.install(&mut client.app);
+        client
+    }
+
+    /// Start the production connect flow towards `127.0.0.1:port` as "Player".
     pub fn connect(&mut self, port: u16) {
+        self.connect_as(port, "Player");
+    }
+
+    /// Start the production connect flow, asking for `name`.
+    pub fn connect_as(&mut self, port: u16, name: &'static str) {
         let address = std::net::SocketAddr::from(([127, 0, 0, 1], port));
         self.app
             .world_mut()
@@ -114,10 +130,38 @@ impl TestClient {
                 move |mut session: ResMut<Session>,
                       time: Res<Time<Real>>,
                       mut commands: Commands| {
-                    session.connect(address, time.elapsed_secs_f64(), &mut commands);
+                    session.connect(address, name, time.elapsed_secs_f64(), &mut commands);
                 },
             )
             .expect("connect system runs");
+    }
+
+    pub fn session(&self) -> &Session {
+        self.app.world().resource::<Session>()
+    }
+
+    /// Protocol version the next hello will advertise (fake a stale build).
+    pub fn set_protocol(&mut self, protocol: u32) {
+        self.app.world_mut().resource_mut::<Session>().protocol = protocol;
+    }
+
+    /// Names of every rider this client knows (its own and replicated others).
+    pub fn rider_names(&mut self) -> Vec<String> {
+        let world = self.app.world_mut();
+        let mut query = world.query_filtered::<&DisplayName, With<Player>>();
+        let mut names: Vec<String> = query.iter(world).map(|name| name.0.clone()).collect();
+        names.sort();
+        names
+    }
+
+    /// Measured round-trip time of the client link, as Lightyear estimates it.
+    pub fn link_rtt(&mut self) -> std::time::Duration {
+        let world = self.app.world_mut();
+        let mut query = world.query_filtered::<&Link, With<Client>>();
+        query
+            .iter(world)
+            .next()
+            .map_or(std::time::Duration::ZERO, |link| link.stats.rtt)
     }
 
     /// Start the production disconnect flow.

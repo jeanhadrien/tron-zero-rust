@@ -45,6 +45,13 @@ pub struct RoomInfo {
     pub last_heartbeat: u64,
 }
 
+impl RoomInfo {
+    // `max_players == 0` means "unknown" (the pinned local row): never full.
+    pub fn is_full(&self) -> bool {
+        self.max_players > 0 && self.player_count >= self.max_players
+    }
+}
+
 // One rendered row: the room plus its resolved game address, if any.
 #[derive(Debug, Clone)]
 pub struct BrowserRow {
@@ -187,10 +194,11 @@ impl ManagerConfig {
         }
     }
 
-    // Runtime env wins (dev), then the URL baked in at release-build time
-    // by CI (`TRONZERO_MANAGER_URL`), then localhost for bare dev builds.
-    pub fn from_env() -> Self {
-        Self::new(default_base_url(std::env::var("MANAGER_URL").ok()))
+    // Runtime env wins (dev), then the saved config file, then the URL baked
+    // in at release-build time by CI (`TRONZERO_MANAGER_URL`), then localhost
+    // for bare dev builds.
+    pub fn from_env_and_saved(saved: Option<String>) -> Self {
+        Self::new(default_base_url(std::env::var("MANAGER_URL").ok(), saved))
     }
 
     pub fn rooms_url(&self) -> String {
@@ -199,10 +207,12 @@ impl ManagerConfig {
 }
 
 // Precedence for the manager base URL, pure for testability: explicit value
-// (the `MANAGER_URL` env var at runtime) beats the build-time bake-in, which
-// beats the localhost dev default.
-fn default_base_url(env: Option<String>) -> String {
-    env.or_else(|| option_env!("TRONZERO_MANAGER_URL").map(str::to_string))
+// (the `MANAGER_URL` env var at runtime) beats the saved config value, which
+// beats the build-time bake-in, which beats the localhost dev default.
+fn default_base_url(env: Option<String>, saved: Option<String>) -> String {
+    env.or(saved)
+        .filter(|url| !url.trim().is_empty())
+        .or_else(|| option_env!("TRONZERO_MANAGER_URL").map(str::to_string))
         .unwrap_or_else(|| "http://localhost:3001".into())
 }
 
@@ -442,6 +452,13 @@ mod tests {
     }
 
     #[test]
+    fn full_rooms_are_detected_but_unknown_capacity_is_not() {
+        assert!(!room("a", 7, 0).is_full());
+        assert!(room("a", 8, 0).is_full());
+        assert!(!local_row().room.is_full());
+    }
+
+    #[test]
     fn rooms_url_trims_trailing_slashes() {
         assert_eq!(
             ManagerConfig::new("http://localhost:3001///").rooms_url(),
@@ -457,12 +474,19 @@ mod tests {
     fn default_base_url_prefers_explicit_then_baked_in_then_localhost() {
         // Explicit value always wins, regardless of the build-time bake-in.
         assert_eq!(
-            default_base_url(Some("http://explicit:3001".into())),
+            default_base_url(
+                Some("http://explicit:3001".into()),
+                Some("http://saved".into())
+            ),
             "http://explicit:3001"
+        );
+        assert_eq!(
+            default_base_url(None, Some("http://saved:3001".into())),
+            "http://saved:3001"
         );
         // Without one, the release bake-in (if compiled in) or localhost.
         assert_eq!(
-            default_base_url(None),
+            default_base_url(None, None),
             option_env!("TRONZERO_MANAGER_URL").unwrap_or("http://localhost:3001")
         );
     }

@@ -18,6 +18,14 @@ server lease expiry handles dropped leave messages and abrupt exits.
 Local rider readiness uses the replicated `Controlled` marker, not the
 server-side `ControlledBy` relationship. Input-marker setup runs after replication
 and tolerates either arrival order of `Player` and `Controlled`.
+Admission is a hello handshake on `SessionChannel`: the client's first message
+is `SessionHello { protocol, name }`; the server (`admission.rs`) answers
+`HelloReply::Accepted { name }` (sanitized, de-duplicated) and only then spawns
+the rider, or `Rejected(VersionMismatch | ServerFull)` and closes the link.
+Links that never say hello are closed after the session timeout. The hello
+messages are registered first in `register_protocol` so a mismatched build can
+still decode the rejection. `DisplayName` stays `replicate_once` because the
+name is final when the rider spawns.
 This is basic lifecycle handling, not authenticated admission or a replacement
 for the turn-delivery hardening tracked in `NETWORK.md`.
 

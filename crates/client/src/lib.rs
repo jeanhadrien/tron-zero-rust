@@ -5,11 +5,13 @@
 //! (`tron-zero-nettest`). `main.rs` only adds windowing, menus and rendering.
 
 pub mod browser;
+pub mod config;
 pub mod connection;
 pub mod input;
 pub mod menu;
 pub mod render;
 pub mod settings;
+pub mod sim;
 pub mod theme;
 
 use bevy::prelude::*;

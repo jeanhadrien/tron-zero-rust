@@ -6,10 +6,13 @@ use bevy::prelude::*;
 use bevy_egui::{EguiContexts, egui};
 
 use crate::browser::{BrowserState, FetchStatus, ManagerConfig, connect_supported};
-use crate::connection::{ConnectionPhase, Session};
+use crate::connection::{AutoConnect, ConnectionPhase, IDLE_STATUS, Session};
 use crate::input::PendingInput;
-use crate::settings::{MAX_KEYS_PER_SIDE, RebindState, TurnBindings, TurnSide, key_label};
+use crate::settings::{
+    MAX_KEYS_PER_SIDE, PlayerName, RebindState, TurnBindings, TurnSide, key_label,
+};
 use crate::theme;
+use shared::protocol::{MAX_NAME_CHARS, sanitize_name};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum MenuScreen {
@@ -92,6 +95,7 @@ enum UiAction {
     CancelConnect,
     Resume,
     Disconnect,
+    Quit,
     GotoSettings,
     GotoRooms,
     Back,
@@ -120,6 +124,8 @@ pub fn menu_ui(
     mut menu: ResMut<MenuState>,
     mut session: ResMut<Session>,
     mut bindings: ResMut<TurnBindings>,
+    mut player_name: ResMut<PlayerName>,
+    mut auto: Option<ResMut<AutoConnect>>,
     mut rebind: ResMut<RebindState>,
     mut browser: ResMut<BrowserState>,
     config: Res<ManagerConfig>,
@@ -136,6 +142,9 @@ pub fn menu_ui(
     let phase = session.phase;
     let status = session.status.clone();
     let mut action = UiAction::None;
+    // Edited on a copy so the resource is only marked changed (and saved)
+    // when the text really differs.
+    let mut name_edit = player_name.0.clone();
     // Fullscreen dim backdrop, then a borderless panel centered on screen.
     let viewport = ctx.viewport_rect();
     egui::Area::new("menu_dim".into())
@@ -166,6 +175,16 @@ pub fn menu_ui(
                                 .color(theme::BODY),
                         );
                         ui.separator();
+                        ui.horizontal(|ui| {
+                            ui.label(egui::RichText::new("Name").size(16.0).color(theme::BODY));
+                            ui.add_enabled(
+                                phase == ConnectionPhase::Offline,
+                                egui::TextEdit::singleline(&mut name_edit)
+                                    .char_limit(MAX_NAME_CHARS)
+                                    .hint_text(shared::protocol::DEFAULT_NAME)
+                                    .desired_width(f32::INFINITY),
+                            );
+                        });
                         let caption = primary_caption(phase);
                         let primary = ui
                             .add_enabled_ui(phase != ConnectionPhase::Disconnecting, |ui| {
@@ -194,6 +213,9 @@ pub fn menu_ui(
                             && action.is_none()
                         {
                             action = UiAction::GotoRooms;
+                        }
+                        if theme::action_button(ui, "Quit game").clicked() && action.is_none() {
+                            action = UiAction::Quit;
                         }
                     }
                     MenuScreen::Settings => {
@@ -365,11 +387,14 @@ pub fn menu_ui(
                                     if let Some(error) = &row.resolve_error {
                                         ui.colored_label(egui::Color32::RED, error.as_str());
                                     }
+                                    let full = row.room.is_full();
                                     let can_connect = row.addr.is_some()
                                         && phase == ConnectionPhase::Offline
-                                        && connect_supported();
+                                        && connect_supported()
+                                        && !full;
+                                    let caption = if full { "Full" } else { "Connect" };
                                     if ui
-                                        .add_enabled(can_connect, egui::Button::new("Connect"))
+                                        .add_enabled(can_connect, egui::Button::new(caption))
                                         .clicked()
                                         && action.is_none()
                                         && let Some(addr) = row.addr
@@ -386,20 +411,36 @@ pub fn menu_ui(
                 });
             });
         });
+    if name_edit != player_name.0 {
+        player_name.0 = name_edit;
+    }
+    // Whatever the player does by hand takes over from TRON_AUTOCONNECT.
+    if !action.is_none()
+        && let Some(auto) = auto.as_mut()
+    {
+        auto.disarm();
+    }
+    let join_name = sanitize_name(&player_name.0);
     match action {
         UiAction::None => {}
         UiAction::Connect => {
             menu.block_this_frame = true;
             session.connect(
                 SocketAddr::from((Ipv4Addr::LOCALHOST, 5000)),
+                &join_name,
                 time.elapsed_secs_f64(),
                 &mut commands,
             );
         }
-        UiAction::CancelConnect | UiAction::Disconnect => {
+        UiAction::CancelConnect => {
             menu.block_this_frame = true;
-            session.disconnect("Disconnected. Choose Localhost to reconnect.");
+            session.disconnect(IDLE_STATUS);
         }
+        UiAction::Disconnect => {
+            menu.block_this_frame = true;
+            session.disconnect("Disconnected from server.");
+        }
+        UiAction::Quit => session.request_quit(time.elapsed_secs_f64()),
         UiAction::Resume => {
             menu.block_this_frame = true;
             menu.open = false;
@@ -414,7 +455,7 @@ pub fn menu_ui(
             if session.phase == ConnectionPhase::Offline {
                 menu.screen = MenuScreen::Main;
                 menu.block_this_frame = true;
-                session.connect(addr, time.elapsed_secs_f64(), &mut commands);
+                session.connect(addr, &join_name, time.elapsed_secs_f64(), &mut commands);
             }
         }
         UiAction::Back => menu.screen = MenuScreen::Main,

@@ -71,6 +71,31 @@ impl TestServer {
         query.iter(world).map(|id| id.0.clone()).collect()
     }
 
+    /// Cap the number of human riders (what `MAX_PLAYERS` does in production).
+    pub fn set_max_players(&mut self, max: u32) {
+        self.app
+            .world_mut()
+            .insert_resource(ts::admission::MaxPlayers(max));
+    }
+
+    /// Number of client links the server currently holds (admitted or not).
+    pub fn link_count(&mut self) -> usize {
+        let world = self.app.world_mut();
+        world
+            .query_filtered::<(), With<lightyear::prelude::server::ClientOf>>()
+            .iter(world)
+            .count()
+    }
+
+    /// Display names of the human riders, sorted.
+    pub fn human_names(&mut self) -> Vec<String> {
+        let world = self.app.world_mut();
+        let mut query = world.query_filtered::<&shared::DisplayName, With<Human>>();
+        let mut names: Vec<String> = query.iter(world).map(|name| name.0.clone()).collect();
+        names.sort();
+        names
+    }
+
     /// Rider entity and its owning link, by player id.
     pub fn rider(&mut self, player_id: &str) -> Option<(Entity, Entity)> {
         let world = self.app.world_mut();

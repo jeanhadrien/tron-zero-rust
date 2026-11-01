@@ -6,11 +6,12 @@
 use bevy::prelude::*;
 use bevy_egui::{EguiContexts, egui};
 use lightyear::prelude::input::native::InputMarker;
-use lightyear::prelude::{Client, Connected, Controlled, ControlledBy, Predicted};
+use lightyear::prelude::{Client, Connected, Controlled, ControlledBy, Link, Predicted};
 use shared::{BASE_RUBBER, IsAlive, Player, PlayerInput, Rubber, SpeedMult};
 
 use crate::connection::{ConnectionPhase, Session};
 use crate::menu::MenuState;
+use crate::sim::NetSim;
 use crate::theme;
 
 // Fixed card width (matches the old 220px Bevy-UI cards). Without the max,
@@ -36,6 +37,56 @@ pub fn rubber_percent(fraction: f32) -> u32 {
 pub fn format_speed(speed: f32) -> String {
     let number = (speed.max(0.0) * 100.0).round() as u32;
     format!("{}.{:02}x", number / 100, number % 100)
+}
+
+// Measured round-trip time as "ping 21ms"; empty until Lightyear has a sample.
+pub fn format_ping(rtt: std::time::Duration) -> Option<String> {
+    (!rtt.is_zero()).then(|| format!("ping {}ms", rtt.as_millis()))
+}
+
+/// Top-right badge while playing: who you are, measured ping, and (loudly)
+/// whether the network is being simulated, so it is never mistaken for real
+/// conditions. Unlike the meters it stays up while dead.
+pub fn status_badge_ui(
+    mut contexts: EguiContexts,
+    session: Res<Session>,
+    menu: Res<MenuState>,
+    sim: Option<Res<NetSim>>,
+    links: Query<&Link, With<Client>>,
+) {
+    if session.phase != ConnectionPhase::Playing || menu.open {
+        return;
+    }
+    let Ok(ctx) = contexts.ctx_mut() else {
+        return;
+    };
+    let ping = links
+        .iter()
+        .next()
+        .and_then(|link| format_ping(link.stats.rtt));
+    egui::Area::new("hud_badge".into())
+        .anchor(egui::Align2::RIGHT_TOP, [-20.0, 20.0])
+        .interactable(false)
+        .show(ctx, |ui| {
+            theme::card_frame().show(ui, |ui| {
+                ui.label(
+                    egui::RichText::new(session.name.as_str())
+                        .size(16.0)
+                        .color(theme::CYAN),
+                );
+                if let Some(ping) = ping {
+                    ui.label(egui::RichText::new(ping).size(13.0).color(theme::BODY));
+                }
+                if let Some(sim) = sim {
+                    ui.label(
+                        egui::RichText::new(sim.label())
+                            .size(13.0)
+                            .strong()
+                            .color(theme::RUBBER_AMBER),
+                    );
+                }
+            });
+        });
 }
 
 #[allow(clippy::type_complexity)]
@@ -134,6 +185,15 @@ mod tests {
         assert_eq!(theme::rubber_bevy(0.21), RUBBER_AMBER_BEVY);
         assert_eq!(theme::rubber_bevy(0.2), RUBBER_RED_BEVY);
         assert_eq!(theme::rubber_bevy(0.0), RUBBER_RED_BEVY);
+    }
+
+    #[test]
+    fn ping_text_waits_for_a_sample() {
+        assert_eq!(format_ping(std::time::Duration::ZERO), None);
+        assert_eq!(
+            format_ping(std::time::Duration::from_millis(21)).as_deref(),
+            Some("ping 21ms")
+        );
     }
 
     #[test]

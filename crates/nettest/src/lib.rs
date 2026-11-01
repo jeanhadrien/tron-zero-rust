@@ -124,7 +124,26 @@ impl Net {
 
     /// Spawn a client app and start connecting; returns its index.
     pub fn add_client(&mut self) -> usize {
+        self.add_client_with("Player", |_| {})
+    }
+
+    /// Spawn a client asking for `name`, after `configure` has adjusted it
+    /// (e.g. a different protocol version); returns its index.
+    pub fn add_client_with(
+        &mut self,
+        name: &'static str,
+        configure: impl FnOnce(&mut TestClient),
+    ) -> usize {
         let mut client = TestClient::new(self.impairment);
+        configure(&mut client);
+        client.connect_as(self.port, name);
+        self.clients.push(client);
+        self.clients.len() - 1
+    }
+
+    /// Spawn a client behind the client-side simulation (`TRON_SIM_*`).
+    pub fn add_simulated_client(&mut self, sim: tron_zero_client::sim::NetSim) -> usize {
+        let mut client = TestClient::with_sim(self.impairment, sim);
         client.connect(self.port);
         self.clients.push(client);
         self.clients.len() - 1

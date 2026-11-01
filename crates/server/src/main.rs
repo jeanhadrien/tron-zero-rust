@@ -2,7 +2,7 @@
 
 use bevy::prelude::*;
 use std::sync::{Arc, Mutex, atomic::AtomicU32};
-use tron_zero_server::{add_core, announce, bot, systems};
+use tron_zero_server::{add_core, admission, announce, bot, systems};
 
 fn main() {
     let announce_cfg = announce::AnnounceConfig::from_env();
@@ -35,6 +35,7 @@ fn main() {
     // Headless: no window, event-driven I/O loop.
     app.add_plugins(MinimalPlugins);
     app.add_plugins(bevy::log::LogPlugin::default());
+    app.insert_resource(admission::MaxPlayers(announce_cfg.max_players));
     add_core(&mut app, announce_cfg.port);
 
     // Player count published for the announcer heartbeat.

@@ -1,4 +1,5 @@
-//! Turn key bindings (in-memory only, no persistence).
+//! Player-facing settings: turn key bindings and the player name. Persisted
+//! by `crate::config`.
 //!
 //! Defaults mirror the JS client (`ControlSettings.ts`): left on
 //! Q/S/D/ArrowLeft, right on K/L/M/ArrowRight. Validation ports the JS rules:
@@ -7,6 +8,8 @@
 
 use bevy::input::keyboard::Key;
 use bevy::prelude::*;
+use serde::{Deserialize, Serialize};
+use shared::protocol::DEFAULT_NAME;
 
 /// Maximum bindings per side (ports JS `MAX_KEYS_PER_DIRECTION`).
 pub const MAX_KEYS_PER_SIDE: usize = 5;
@@ -20,10 +23,21 @@ pub enum TurnSide {
 /// One turn binding: `code` is the physical match identity, `label` is the
 /// layout-aware glyph shown on settings chips. Matching, capture identity,
 /// and validation only ever look at `code`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Binding {
     pub code: KeyCode,
     pub label: String,
+}
+
+/// The name typed in the menu, as the player wrote it. Sanitized when sent;
+/// the server may still adjust it (see `Session::name` for the final one).
+#[derive(Resource, Debug, Clone, PartialEq, Eq)]
+pub struct PlayerName(pub String);
+
+impl Default for PlayerName {
+    fn default() -> Self {
+        Self(DEFAULT_NAME.to_owned())
+    }
 }
 
 impl Binding {
@@ -100,6 +114,24 @@ impl TurnBindings {
 
     pub fn is_right(&self, key: KeyCode) -> bool {
         self.right.iter().any(|b| b.code == key)
+    }
+
+    /// Whether `left`/`right` form a legal binding set (same rules the
+    /// settings screen enforces), used to vet a hand-edited config file.
+    pub fn is_valid(&self) -> bool {
+        let mut seen: Vec<KeyCode> = Vec::new();
+        for side in [&self.left, &self.right] {
+            if side.is_empty() || side.len() > MAX_KEYS_PER_SIDE {
+                return false;
+            }
+            for binding in side {
+                if binding.code == KeyCode::Escape || seen.contains(&binding.code) {
+                    return false;
+                }
+                seen.push(binding.code);
+            }
+        }
+        true
     }
 
     /// Restore the JS defaults and drop any in-progress capture state held elsewhere.
