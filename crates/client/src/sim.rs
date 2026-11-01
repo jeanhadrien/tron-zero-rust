@@ -10,9 +10,10 @@
 //! own it would shape one direction. To make a client-only simulation
 //! symmetric, the downlink uses the conditioner (RTT/2 on the client's receive
 //! side) and the uplink uses [`delay_uplink`], which holds outgoing packets
-//! for RTT/2 before they reach the socket. Loopback adds ~0 ms, so the
-//! measured RTT is the requested one (plus up to one frame of quantisation on
-//! the uplink).
+//! for RTT/2 before they reach the socket. Both directions treat every packet
+//! independently, so jitter can reorder packets in either one. Loopback adds
+//! ~0 ms, so the measured RTT is the requested one (plus up to one frame of
+//! quantisation on the uplink).
 
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
@@ -134,17 +135,23 @@ fn delay_uplink(
             }
             delayed.0.push_back((now + uplink_delay(&sim), payload));
         }
-        // FIFO release: jitter may stretch a packet but never reorders the uplink.
-        while delayed
-            .0
-            .front()
-            .is_some_and(|(due, _)| flush || *due <= now)
-        {
-            if let Some((_, payload)) = delayed.0.pop_front() {
-                link.send.push(payload);
-            }
+        for payload in release_due(&mut delayed.0, now, flush) {
+            link.send.push(payload);
         }
     }
+}
+
+/// Take every packet whose own delay has elapsed (all of them when `flush`),
+/// oldest due time first. A held-up packet never blocks later ones, which is
+/// what the downlink conditioner does too, so jitter averages out the same way
+/// in both directions.
+fn release_due<T>(queue: &mut VecDeque<(Instant, T)>, now: Instant, flush: bool) -> Vec<T> {
+    let (mut due, waiting): (Vec<_>, Vec<_>) = std::mem::take(queue)
+        .into_iter()
+        .partition(|(due, _)| flush || *due <= now);
+    *queue = waiting.into();
+    due.sort_by_key(|(due, _)| *due);
+    due.into_iter().map(|(_, payload)| payload).collect()
 }
 
 /// One packet's uplink delay: RTT/2 with uniform +/- jitter, never negative.
@@ -201,6 +208,18 @@ mod tests {
         .unwrap();
         assert_eq!((sim.rtt_ms, sim.jitter_ms, sim.loss), (20, 0, 0.0));
         assert_eq!(sim.label(), "sim 20ms");
+    }
+
+    #[test]
+    fn a_slow_packet_does_not_hold_back_faster_ones() {
+        let start = Instant::now();
+        let at = |ms: u64| start + Duration::from_millis(ms);
+        let mut queue = VecDeque::from([(at(50), 'a'), (at(10), 'b'), (at(20), 'c')]);
+        assert_eq!(release_due(&mut queue, at(25), false), vec!['b', 'c']);
+        assert_eq!(queue.len(), 1);
+        assert!(release_due(&mut queue, at(25), false).is_empty());
+        assert_eq!(release_due(&mut queue, at(25), true), vec!['a']);
+        assert!(queue.is_empty());
     }
 
     #[test]

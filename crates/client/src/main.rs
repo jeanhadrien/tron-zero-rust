@@ -41,8 +41,13 @@ fn main() {
     if let Some(auto) = connection::AutoConnect::from_env() {
         app.insert_resource(auto);
     }
+    // A quit requested this frame must be seen before auto-connect can start a
+    // new session.
     app.add_systems(Update, connection::auto_connect);
-    app.add_systems(Update, request_quit_on_window_close);
+    app.add_systems(
+        Update,
+        request_quit_on_window_close.before(connection::auto_connect),
+    );
     app.add_systems(
         Update,
         connection::quit_when_ready.after(connection::finish_disconnect),

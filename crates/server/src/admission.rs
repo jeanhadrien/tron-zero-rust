@@ -4,8 +4,8 @@
 use bevy::prelude::*;
 use lightyear::prelude::*;
 use shared::protocol::{
-    HelloReply, JoinRejection, MAX_NAME_CHARS, PROTOCOL_VERSION, SESSION_TIMEOUT_SECS,
-    SessionChannel, SessionHello, sanitize_name,
+    HelloReply, JoinRejection, MAX_NAME_CHARS, PROTOCOL_ID, SESSION_TIMEOUT_SECS, SessionChannel,
+    SessionHello, name_key, sanitize_name,
 };
 
 use crate::session::SessionLease;
@@ -38,9 +38,9 @@ fn admit(
     humans: usize,
     taken: &[String],
 ) -> Result<String, JoinRejection> {
-    if hello.protocol != PROTOCOL_VERSION {
+    if hello.protocol != PROTOCOL_ID {
         return Err(JoinRejection::VersionMismatch {
-            server: PROTOCOL_VERSION,
+            server: PROTOCOL_ID,
         });
     }
     if humans >= max.0 as usize {
@@ -50,13 +50,10 @@ fn admit(
 }
 
 /// `base`, or `base 2`, `base 3`... (trimming `base` to stay within the cap)
-/// until it differs, ignoring case, from every name in `taken`.
+/// until its [`name_key`] differs from that of every name in `taken`.
 fn unique_name(base: &str, taken: &[String]) -> String {
-    let is_taken = |candidate: &str| {
-        taken
-            .iter()
-            .any(|name| name.to_lowercase() == candidate.to_lowercase())
-    };
+    let taken_keys: Vec<String> = taken.iter().map(|name| name_key(name)).collect();
+    let is_taken = |candidate: &str| taken_keys.contains(&name_key(candidate));
     if !is_taken(base) {
         return base.to_owned();
     }
@@ -138,18 +135,23 @@ mod tests {
 
     #[test]
     fn version_mismatch_is_rejected_before_capacity() {
-        let result = admit(&hello(PROTOCOL_VERSION + 1, "a"), MaxPlayers(1), 5, &[]);
+        let result = admit(
+            &hello(PROTOCOL_ID.wrapping_add(1), "a"),
+            MaxPlayers(1),
+            5,
+            &[],
+        );
         assert_eq!(
             result,
             Err(JoinRejection::VersionMismatch {
-                server: PROTOCOL_VERSION
+                server: PROTOCOL_ID
             })
         );
     }
 
     #[test]
     fn full_server_rejects_and_free_slot_admits() {
-        let h = hello(PROTOCOL_VERSION, "a");
+        let h = hello(PROTOCOL_ID, "a");
         assert_eq!(
             admit(&h, MaxPlayers(2), 2, &[]),
             Err(JoinRejection::ServerFull { max_players: 2 })
@@ -160,17 +162,21 @@ mod tests {
     #[test]
     fn names_are_sanitized_and_deduplicated_case_insensitively() {
         let taken = vec!["Neo".to_owned(), "neo 2".to_owned()];
-        let result = admit(
-            &hello(PROTOCOL_VERSION, " NEO\u{7} "),
-            MaxPlayers(9),
-            0,
-            &taken,
-        );
+        let result = admit(&hello(PROTOCOL_ID, " NEO\u{7} "), MaxPlayers(9), 0, &taken);
         assert_eq!(result, Ok("NEO 3".into()));
         assert_eq!(
-            admit(&hello(PROTOCOL_VERSION, ""), MaxPlayers(9), 0, &[]),
+            admit(&hello(PROTOCOL_ID, ""), MaxPlayers(9), 0, &[]),
             Ok(shared::protocol::DEFAULT_NAME.into())
         );
+    }
+
+    #[test]
+    fn lookalike_names_cannot_impersonate_an_existing_player() {
+        let taken = vec!["Neo".to_owned()];
+        for sneaky in ["N\u{200B}eo", "\u{202E}NEO", "N e o"] {
+            let name = admit(&hello(PROTOCOL_ID, sneaky), MaxPlayers(9), 0, &taken).unwrap();
+            assert_ne!(name_key(&name), name_key("Neo"), "{sneaky:?} -> {name:?}");
+        }
     }
 
     #[test]

@@ -7,7 +7,7 @@ use lightyear::prelude::client::{Connect, Disconnect, InputDelayConfig, RawClien
 use lightyear::prelude::input::native::{InputMarker, NativeBuffer};
 use lightyear::prelude::*;
 use shared::protocol::{
-    HelloReply, PROTOCOL_VERSION, SESSION_HEARTBEAT_SECS, SESSION_TIMEOUT_SECS, SessionChannel,
+    HelloReply, PROTOCOL_ID, SESSION_HEARTBEAT_SECS, SESSION_TIMEOUT_SECS, SessionChannel,
     SessionHello, SessionReply, SessionRequest, sanitize_name,
 };
 
@@ -43,7 +43,11 @@ pub struct Session {
     hello_sent: bool,
     admitted: bool,
     /// Set by Quit: exit once the session is torn down (or the grace expires).
+    /// Survives `connect`, and once set no new connection may start.
     quit_requested_at: Option<f64>,
+    /// The server refused this session's hello. Kept until the next `connect`
+    /// so automatic reconnecting can tell a refusal from a dropped link.
+    join_rejected: bool,
     client: Option<Entity>,
     started_at: f64,
     last_reply: Option<f64>,
@@ -57,11 +61,12 @@ impl Default for Session {
             phase: ConnectionPhase::Offline,
             status: IDLE_STATUS.into(),
             name: shared::protocol::DEFAULT_NAME.into(),
-            protocol: PROTOCOL_VERSION,
+            protocol: PROTOCOL_ID,
             address: None,
             hello_sent: false,
             admitted: false,
             quit_requested_at: None,
+            join_rejected: false,
             client: None,
             started_at: 0.0,
             last_reply: None,
@@ -73,9 +78,12 @@ impl Default for Session {
 
 impl Session {
     /// Start connecting to `address`, joining as `name` (the server has the
-    /// final say on it).
+    /// final say on it). Does nothing while a session exists or a quit is pending.
     pub fn connect(&mut self, address: SocketAddr, name: &str, now: f64, commands: &mut Commands) {
-        if self.phase != ConnectionPhase::Offline || self.client.is_some() {
+        if self.phase != ConnectionPhase::Offline
+            || self.client.is_some()
+            || self.quit_requested_at.is_some()
+        {
             return;
         }
         let client = commands
@@ -96,6 +104,7 @@ impl Session {
             address: Some(address),
             client: Some(client),
             started_at: now,
+            quit_requested_at: self.quit_requested_at,
             ..Default::default()
         };
         info!(?client, %address, "Connecting to server");
@@ -115,6 +124,15 @@ impl Session {
     pub fn request_quit(&mut self, now: f64) {
         self.quit_requested_at.get_or_insert(now);
         self.disconnect("Quitting...");
+    }
+
+    pub fn quit_requested(&self) -> bool {
+        self.quit_requested_at.is_some()
+    }
+
+    /// Whether the server refused this session's hello (version, capacity).
+    pub fn join_rejected(&self) -> bool {
+        self.join_rejected
     }
 
     fn timed_out(&self, now: f64) -> Option<String> {
@@ -212,6 +230,7 @@ pub fn monitor_connection(
                 }
                 HelloReply::Rejected(reason) => {
                     warn!(%reason, "Join rejected");
+                    session.join_rejected = true;
                     session.disconnect(reason.to_string());
                     menu.open = true;
                     return;
@@ -264,6 +283,11 @@ pub fn monitor_connection(
                 menu.block_this_frame = true;
             }
         } else {
+            if session.phase == ConnectionPhase::Playing {
+                // A momentary hiccup while playing gets a fresh deadline; the
+                // connect clock started long ago and would expire at once.
+                session.started_at = now;
+            }
             session.phase = ConnectionPhase::Synchronizing;
             let status = if !connected {
                 "Server answered. Waiting for connection..."
@@ -347,7 +371,9 @@ impl AutoConnect {
 }
 
 /// Join the autoconnect target while armed and idle. Disarms itself once a
-/// session reaches Playing, so a later disconnect stays disconnected.
+/// session reaches Playing (so a later disconnect stays disconnected), when the
+/// server refuses the join (retrying cannot help and would wipe the reason from
+/// the menu), and as soon as a quit is requested.
 pub fn auto_connect(
     auto: Option<ResMut<AutoConnect>>,
     mut session: ResMut<Session>,
@@ -359,7 +385,10 @@ pub fn auto_connect(
         return;
     };
     let now = time.elapsed_secs_f64();
-    if session.phase == ConnectionPhase::Playing {
+    if session.phase == ConnectionPhase::Playing
+        || session.join_rejected()
+        || session.quit_requested()
+    {
         auto.disarm();
     } else if session.phase == ConnectionPhase::Offline && now >= auto.next_attempt {
         auto.next_attempt = now + AUTOCONNECT_RETRY_SECS;
@@ -438,6 +467,116 @@ mod tests {
         session.last_reply = Some(20.0);
         assert!(session.timed_out(24.99).is_none());
         assert!(session.timed_out(25.0).unwrap().contains("Lost contact"));
+    }
+
+    fn auto_world(session: Session) -> World {
+        let mut world = World::new();
+        world.init_resource::<Time<Real>>();
+        world.insert_resource(PlayerName::default());
+        world.insert_resource(session);
+        world.insert_resource(AutoConnect {
+            addr: SocketAddr::from(([127, 0, 0, 1], 9)),
+            armed: true,
+            next_attempt: 0.0,
+        });
+        world
+    }
+
+    #[test]
+    fn autoconnect_stops_on_refusal_and_on_quit() {
+        for session in [
+            Session {
+                join_rejected: true,
+                status: "Server is full".into(),
+                ..Default::default()
+            },
+            Session {
+                quit_requested_at: Some(1.0),
+                ..Default::default()
+            },
+        ] {
+            let status = session.status.clone();
+            let mut world = auto_world(session);
+            world.run_system_once(auto_connect).unwrap();
+            assert!(!world.resource::<AutoConnect>().armed);
+            let session = world.resource::<Session>();
+            assert_eq!(session.phase, ConnectionPhase::Offline);
+            assert!(session.client.is_none());
+            assert_eq!(session.status, status, "the refusal stays visible");
+        }
+        // Otherwise an idle session does start connecting.
+        let mut world = auto_world(Session::default());
+        world.run_system_once(auto_connect).unwrap();
+        assert_eq!(
+            world.resource::<Session>().phase,
+            ConnectionPhase::Connecting
+        );
+    }
+
+    #[test]
+    fn connect_never_starts_or_forgets_a_pending_quit() {
+        let mut world = World::new();
+        world.insert_resource(Session::default());
+        let address = SocketAddr::from(([127, 0, 0, 1], 9));
+        world.resource_mut::<Session>().request_quit(3.0);
+        world
+            .run_system_once(
+                move |mut session: ResMut<Session>, mut commands: Commands| {
+                    session.connect(address, "x", 4.0, &mut commands);
+                },
+            )
+            .unwrap();
+        let session = world.resource::<Session>();
+        assert_eq!(session.phase, ConnectionPhase::Offline);
+        assert!(session.client.is_none());
+        assert_eq!(session.quit_requested_at, Some(3.0));
+        // A quit requested right after a connect started is not wiped by it.
+        let mut session = Session::default();
+        let mut world = World::new();
+        world
+            .run_system_once(move |mut commands: Commands| {
+                session.connect(address, "x", 1.0, &mut commands);
+                session.request_quit(2.0);
+                assert_eq!(session.quit_requested_at, Some(2.0));
+                assert_eq!(session.phase, ConnectionPhase::Disconnecting);
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn a_hiccup_while_playing_restarts_the_deadline_instead_of_timing_out() {
+        let mut world = World::new();
+        world.init_resource::<Time<Real>>();
+        world.init_resource::<MenuState>();
+        let entity = world
+            .spawn((Client::default(), RemoteId(PeerId::Server), Connected))
+            .id();
+        world.insert_resource(Session {
+            phase: ConnectionPhase::Playing,
+            client: Some(entity),
+            started_at: 0.0,
+            admitted: true,
+            last_reply: Some(100.0),
+            ..Default::default()
+        });
+        world
+            .resource_mut::<Time<Real>>()
+            .advance_by(std::time::Duration::from_secs(100));
+        // Not synced, no arena: not ready, 100 s after the connect clock began.
+        world.run_system_once(monitor_connection).unwrap();
+        let session = world.resource::<Session>();
+        assert_eq!(session.phase, ConnectionPhase::Synchronizing);
+        assert_eq!(session.started_at, 100.0);
+        assert!(session.timed_out(100.0).is_none());
+        // The usual connect deadline now counts from the hiccup.
+        let mut session = Session {
+            last_reply: None,
+            ..Default::default()
+        };
+        session.phase = ConnectionPhase::Synchronizing;
+        session.started_at = 100.0;
+        assert!(session.timed_out(109.9).is_none());
+        assert!(session.timed_out(110.0).unwrap().contains("timed out"));
     }
 
     #[test]

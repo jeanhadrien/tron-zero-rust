@@ -75,7 +75,7 @@ fn mismatched_protocol_is_rejected_with_a_reason_and_no_rider() {
     let _guard = serial();
     let mut net = Net::new(Impairment::NONE);
     let stale = net.add_client_with("Old", |c| {
-        c.set_protocol(shared::protocol::PROTOCOL_VERSION + 1)
+        c.set_protocol(shared::protocol::PROTOCOL_ID.wrapping_add(1))
     });
     let rejected = net.run_until(WAIT, |net| {
         net.clients[stale].session().status.contains("Incompatible")

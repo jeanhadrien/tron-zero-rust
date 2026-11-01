@@ -10,10 +10,74 @@ use lightyear::prelude::input::native::InputPlugin;
 use lightyear::prelude::*;
 use serde::{Deserialize, Serialize};
 
-/// Bumped whenever the wire protocol or gameplay contract changes in a way an
-/// old peer cannot follow. Exchanged in [`SessionHello`]; a mismatch is
-/// rejected with [`JoinRejection::VersionMismatch`].
-pub const PROTOCOL_VERSION: u32 = 1;
+/// Bumped by hand whenever the wire protocol or the gameplay *logic* changes in
+/// a way an old peer cannot follow. Changes to the sim constants listed in
+/// [`SIM_CONSTANTS`] need no bump: they change [`PROTOCOL_ID`] by themselves.
+pub const PROTOCOL_VERSION: u32 = 2;
+
+/// Name and value of every constant the client and server must agree on to
+/// simulate identically (`constants.rs` in full, plus the turn timing rules).
+/// A test fails when a `pub const` in `constants.rs` is missing from this list,
+/// so a retune cannot silently stay wire-compatible.
+macro_rules! sim_constants {
+    ($($name:ident => $bits:expr),+ $(,)?) => {
+        pub const SIM_CONSTANTS: &[(&str, u64)] = &[$((stringify!($name), $bits)),+];
+    };
+}
+
+sim_constants! {
+    TICK_HZ => TICK_HZ.to_bits(),
+    TICK_SECS => TICK_SECS.to_bits() as u64,
+    TICK_MS => TICK_MS.to_bits() as u64,
+    BASE_SPEED => BASE_SPEED.to_bits() as u64,
+    BASE_RUBBER => BASE_RUBBER.to_bits() as u64,
+    DELTA_STUFF => DELTA_STUFF.to_bits() as u64,
+    SLOW_DOWN_DISTANCE => SLOW_DOWN_DISTANCE.to_bits() as u64,
+    TRAIL_MAX_LENGTH => TRAIL_MAX_LENGTH.to_bits() as u64,
+    ROTATION_ANGLE => ROTATION_ANGLE.to_bits() as u64,
+    ARENA_WIDTH => ARENA_WIDTH.to_bits() as u64,
+    ARENA_HEIGHT => ARENA_HEIGHT.to_bits() as u64,
+    MAX_SPEED_MULT => MAX_SPEED_MULT.to_bits() as u64,
+    SLIDE_DISTANCE => SLIDE_DISTANCE.to_bits() as u64,
+    ARENA_WALL_GRIND => ARENA_WALL_GRIND.to_bits() as u64,
+    SLIDE_ACCEL_PER_SEC => SLIDE_ACCEL_PER_SEC.to_bits() as u64,
+    COAST_DECEL_PER_SEC => COAST_DECEL_PER_SEC.to_bits() as u64,
+    CRASH_BRAKE_PER_SEC => CRASH_BRAKE_PER_SEC.to_bits() as u64,
+    SLIDE_ACCEL => SLIDE_ACCEL.to_bits() as u64,
+    COAST_DECEL => COAST_DECEL.to_bits() as u64,
+    CRASH_BRAKE => CRASH_BRAKE.to_bits() as u64,
+    RUBBER_DRAIN => RUBBER_DRAIN.to_bits() as u64,
+    RUBBER_REGEN => RUBBER_REGEN.to_bits() as u64,
+    TURN_LATE_WINDOW_TICKS => TURN_LATE_WINDOW_TICKS as u64,
+    TURN_MAX_LEAD_TICKS => TURN_MAX_LEAD_TICKS as u64,
+}
+
+/// 64-bit FNV-1a over the version and every [`SIM_CONSTANTS`] value, folded to
+/// 32 bits. Computed at compile time.
+const fn protocol_id() -> u32 {
+    const PRIME: u64 = 0x0000_0100_0000_01b3;
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    let mut word = PROTOCOL_VERSION as u64;
+    let mut next = 0;
+    loop {
+        let mut byte = 0;
+        while byte < 8 {
+            hash = (hash ^ ((word >> (8 * byte)) & 0xff)).wrapping_mul(PRIME);
+            byte += 1;
+        }
+        if next == SIM_CONSTANTS.len() {
+            break;
+        }
+        word = SIM_CONSTANTS[next].1;
+        next += 1;
+    }
+    (hash ^ (hash >> 32)) as u32
+}
+
+/// What peers actually compare in [`SessionHello`]: [`PROTOCOL_VERSION`] mixed
+/// with the sim constants, so two builds with different physics never play
+/// together even if nobody remembered to bump the version.
+pub const PROTOCOL_ID: u32 = protocol_id();
 
 /// Longest accepted player name, in characters.
 pub const MAX_NAME_CHARS: usize = 16;
@@ -24,6 +88,7 @@ pub const DEFAULT_NAME: &str = "Player";
 /// protocol. The server only spawns a rider after accepting it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionHello {
+    /// The sender's [`PROTOCOL_ID`].
     pub protocol: u32,
     pub name: String,
 }
@@ -40,7 +105,7 @@ impl std::fmt::Display for JoinRejection {
         match self {
             Self::VersionMismatch { server } => write!(
                 f,
-                "Incompatible game version (server protocol {server}, yours {PROTOCOL_VERSION}). \
+                "Incompatible game version (server build {server:08x}, yours {PROTOCOL_ID:08x}). \
                  Update the client or pick another server."
             ),
             Self::ServerFull { max_players } => {
@@ -58,10 +123,49 @@ pub enum HelloReply {
     Rejected(JoinRejection),
 }
 
-/// Normalize a player-supplied name: drop control characters, trim, cap the
-/// length, and fall back to [`DEFAULT_NAME`] when nothing is left.
+/// Invisible "format" characters (Unicode category Cf) that can reorder or hide
+/// text in a name: bidi overrides and isolates, zero-width marks, joiners,
+/// soft hyphen, BOM and language tags.
+fn is_format_char(c: char) -> bool {
+    matches!(
+        c,
+        '\u{00AD}'
+            | '\u{061C}'
+            | '\u{180E}'
+            | '\u{200B}'..='\u{200F}'
+            | '\u{202A}'..='\u{202E}'
+            | '\u{2060}'..='\u{2064}'
+            | '\u{2066}'..='\u{206F}'
+            | '\u{FEFF}'
+            | '\u{FFF9}'..='\u{FFFB}'
+            | '\u{E0000}'..='\u{E007F}'
+    )
+}
+
+/// Comparison form of a (sanitized) name for de-duplication: case-folded with
+/// all whitespace removed, so `Neo`, `neo` and `N e o` count as the same name.
+pub fn name_key(name: &str) -> String {
+    name.chars()
+        .filter(|c| !c.is_whitespace())
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
+/// Normalize a player-supplied name: drop control and invisible format
+/// characters, turn exotic whitespace into plain spaces and collapse runs of
+/// them, trim, cap the length, and fall back to [`DEFAULT_NAME`] when nothing
+/// is left.
 pub fn sanitize_name(raw: &str) -> String {
-    let cleaned: String = raw.chars().filter(|c| !c.is_control()).collect();
+    let mut cleaned = String::new();
+    for c in raw
+        .chars()
+        .filter(|c| !c.is_control() && !is_format_char(*c))
+    {
+        let c = if c.is_whitespace() { ' ' } else { c };
+        if c != ' ' || !cleaned.ends_with(' ') {
+            cleaned.push(c);
+        }
+    }
     let capped: String = cleaned.trim().chars().take(MAX_NAME_CHARS).collect();
     let name = capped.trim_end();
     if name.is_empty() {
@@ -280,6 +384,46 @@ fn step<T>(start: T, end: T, t: f32) -> T {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sanitize_strips_invisible_and_bidi_characters() {
+        // Right-to-left override, zero-width space, BOM, soft hyphen.
+        assert_eq!(sanitize_name("\u{202E}Neo\u{200B}\u{FEFF}\u{AD}"), "Neo");
+        assert_eq!(sanitize_name("a\u{2066}b\u{2069}"), "ab");
+        assert_eq!(sanitize_name("\u{200B}\u{202E}"), DEFAULT_NAME);
+        // Exotic spaces become one plain space.
+        assert_eq!(sanitize_name("a\u{00A0}\u{3000} b"), "a b");
+    }
+
+    #[test]
+    fn name_key_ignores_case_and_spacing() {
+        assert_eq!(name_key("Neo"), name_key("nEo"));
+        assert_eq!(name_key("N e o"), name_key("neo"));
+        assert_ne!(name_key("Neo 2"), name_key("Neo"));
+    }
+
+    #[test]
+    fn every_constant_is_part_of_the_protocol_id() {
+        let source = include_str!("constants.rs");
+        let declared: Vec<&str> = source
+            .lines()
+            .filter_map(|line| line.strip_prefix("pub const "))
+            .filter_map(|rest| rest.split(':').next())
+            .collect();
+        assert!(declared.len() > 10, "constants.rs was not parsed");
+        for name in declared {
+            assert!(
+                SIM_CONSTANTS.iter().any(|(listed, _)| *listed == name),
+                "{name} is not in SIM_CONSTANTS: add it so a retune changes PROTOCOL_ID"
+            );
+        }
+    }
+
+    #[test]
+    fn protocol_id_depends_on_the_sim_constants() {
+        assert_ne!(PROTOCOL_ID, PROTOCOL_VERSION);
+        assert!(SIM_CONSTANTS.iter().all(|(_, bits)| *bits != 0));
+    }
 
     #[test]
     fn sanitize_strips_controls_trims_and_caps() {

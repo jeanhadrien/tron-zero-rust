@@ -78,21 +78,35 @@ pub fn load_from(path: &Path) -> SavedConfig {
     }
 }
 
-/// Write the config, creating its directory. Errors are returned for the
-/// caller to log.
+/// Write the config, creating its directory. The file is written next to its
+/// destination and renamed over it, so a crash or a full disk mid-write leaves
+/// the previous config intact instead of a truncated one. Errors are returned
+/// for the caller to log.
 pub fn save_to(path: &Path, config: &SavedConfig) -> std::io::Result<()> {
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
     }
     let text = serde_json::to_string_pretty(config).map_err(std::io::Error::other)?;
-    std::fs::write(path, text)
+    let mut temp = path.as_os_str().to_owned();
+    temp.push(".tmp");
+    let temp = PathBuf::from(temp);
+    std::fs::write(&temp, text)?;
+    std::fs::rename(&temp, path).inspect_err(|_| {
+        let _ = std::fs::remove_file(&temp);
+    })
 }
+
+/// How long the preferences must stay unchanged before they are written, so
+/// typing a name does not hit the disk on every keystroke.
+const SAVE_DEBOUNCE_SECS: f64 = 0.5;
 
 /// Where and what to persist; the manager URL is carried through untouched.
 #[derive(Resource, Debug, Clone)]
 pub struct Preferences {
     path: Option<PathBuf>,
     manager_url: Option<String>,
+    /// When the newest unsaved change happened (`Time<Real>` seconds).
+    dirty_since: Option<f64>,
 }
 
 impl Preferences {
@@ -107,26 +121,37 @@ impl Preferences {
         let prefs = Self {
             path,
             manager_url: saved.manager_url.clone(),
+            dirty_since: None,
         };
         (prefs, saved)
     }
 }
 
-/// Save name and bindings whenever either changes. The first run is skipped:
-/// resources just inserted from the file count as "changed".
+/// Save name and bindings once they have stopped changing for
+/// [`SAVE_DEBOUNCE_SECS`], and immediately on app exit. The first run is
+/// skipped: resources just inserted from the file count as "changed".
 pub fn persist_preferences(
-    prefs: Res<Preferences>,
+    mut prefs: ResMut<Preferences>,
     name: Res<PlayerName>,
     bindings: Res<TurnBindings>,
+    time: Res<Time<Real>>,
+    mut exits: MessageReader<AppExit>,
     mut started: Local<bool>,
 ) {
+    let now = time.elapsed_secs_f64();
+    let exiting = exits.read().count() > 0;
     if !*started {
         *started = true;
+    } else if name.is_changed() || bindings.is_changed() {
+        prefs.dirty_since = Some(now);
+    }
+    let Some(since) = prefs.dirty_since else {
+        return;
+    };
+    if !exiting && now - since < SAVE_DEBOUNCE_SECS {
         return;
     }
-    if !(name.is_changed() || bindings.is_changed()) {
-        return;
-    }
+    prefs.dirty_since = None;
     let Some(path) = &prefs.path else {
         return;
     };
@@ -168,6 +193,78 @@ mod tests {
         assert_eq!(loaded, config);
         assert_eq!(loaded.name().0, "Neo");
         assert_eq!(loaded.bindings(), bindings);
+        let _ = std::fs::remove_dir_all(path.parent().unwrap().parent().unwrap());
+    }
+
+    #[test]
+    fn saving_replaces_the_file_atomically_and_leaves_no_temp_file() {
+        let path = temp_file("atomic");
+        let first = SavedConfig {
+            player_name: Some("One".into()),
+            ..Default::default()
+        };
+        let second = SavedConfig {
+            player_name: Some("Two".into()),
+            ..Default::default()
+        };
+        save_to(&path, &first).unwrap();
+        save_to(&path, &second).unwrap();
+        assert_eq!(load_from(&path), second);
+        let entries: Vec<_> = std::fs::read_dir(path.parent().unwrap())
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        assert_eq!(entries, vec![std::ffi::OsString::from(FILE_NAME)]);
+        let _ = std::fs::remove_dir_all(path.parent().unwrap().parent().unwrap());
+    }
+
+    fn persist_world(path: PathBuf) -> World {
+        let mut world = World::new();
+        world.init_resource::<Time<Real>>();
+        world.init_resource::<Messages<AppExit>>();
+        world.init_resource::<TurnBindings>();
+        world.insert_resource(PlayerName("Neo".into()));
+        world.insert_resource(Preferences {
+            path: Some(path),
+            manager_url: None,
+            dirty_since: None,
+        });
+        world
+    }
+
+    /// Run the system once with a persistent `Local` (the real one runs every
+    /// frame); a schedule keeps its state between runs.
+    fn frame(world: &mut World, schedule: &mut Schedule, advance_ms: u64) {
+        world
+            .resource_mut::<Time<Real>>()
+            .advance_by(std::time::Duration::from_millis(advance_ms));
+        schedule.run(world);
+        world.clear_trackers();
+    }
+
+    #[test]
+    fn typing_is_saved_once_after_the_debounce_and_on_exit() {
+        let path = temp_file("debounce");
+        let mut world = persist_world(path.clone());
+        let mut schedule = Schedule::default();
+        schedule.add_systems(persist_preferences);
+        frame(&mut world, &mut schedule, 1); // first run is skipped
+        assert!(!path.exists());
+        for letter in ["N", "Ne", "Neo2"] {
+            world.resource_mut::<PlayerName>().0 = letter.into();
+            frame(&mut world, &mut schedule, 100);
+            assert!(!path.exists(), "no write while typing");
+        }
+        frame(&mut world, &mut schedule, 600);
+        assert_eq!(load_from(&path).player_name.as_deref(), Some("Neo2"));
+        std::fs::remove_file(&path).unwrap();
+        frame(&mut world, &mut schedule, 600);
+        assert!(!path.exists(), "nothing new to save");
+        // A change right before exit is flushed without waiting.
+        world.resource_mut::<PlayerName>().0 = "Last".into();
+        world.write_message(AppExit::Success);
+        frame(&mut world, &mut schedule, 1);
+        assert_eq!(load_from(&path).player_name.as_deref(), Some("Last"));
         let _ = std::fs::remove_dir_all(path.parent().unwrap().parent().unwrap());
     }
 
