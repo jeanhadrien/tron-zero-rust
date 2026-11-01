@@ -152,7 +152,11 @@ pub fn step_rider(
     let step = if colliding {
         let ratio = (front / SLOW_DOWN_DISTANCE).powi(2);
         rubber -= DELTA_STUFF * 0.03 * (1.0 + target_speed).powi(3);
-        (front * ratio).min((front - EPSILON).max(0.0))
+        // Zeno decay may never exceed cruise speed: at the zone edge it would
+        // otherwise lurch the rider forward (~12 u in one tick at base speed).
+        (front * ratio)
+            .min(normal_step)
+            .min((front - EPSILON).max(0.0))
     } else {
         rubber = (rubber + 0.006 * TICK_MS * DELTA_STUFF).min(BASE_RUBBER);
         // Swept sensing: even arbitrarily high slide speeds cannot tunnel.

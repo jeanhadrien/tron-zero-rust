@@ -124,6 +124,16 @@ fn wall_rubber_drains_then_death_clears_trail_once() {
 }
 
 #[test]
+fn entering_the_slowdown_zone_never_speeds_the_rider_up() {
+    let (mut world, mut schedule) = setup();
+    let entity = cycle(&mut world, Vec2::new(1188.1, 0.0), Vec2::X);
+    schedule.run(&mut world);
+    assert!(world.get::<IsColliding>(entity).unwrap().0);
+    let speed = world.get::<SpeedMult>(entity).unwrap().0;
+    assert!(speed <= 1.0 + 1e-4, "lurched forward at {speed}x");
+}
+
+#[test]
 fn escape_regenerates_rubber_and_preserves_speed_inertia() {
     let (mut world, mut schedule) = setup();
     let entity = cycle(&mut world, Vec2::new(1199.0, 0.0), Vec2::X);
