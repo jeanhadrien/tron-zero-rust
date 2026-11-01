@@ -41,6 +41,9 @@ pub struct AnnounceConfig {
     pub server_name: String,
     pub max_players: u32,
     pub advertised_secure: bool,
+    /// `ALLOW_LOOPBACK_ANNOUNCE`: dev opt-in that downgrades the loopback
+    /// refusal (see [`AnnounceConfig::announce_blocker`]) to a warning.
+    pub allow_loopback_announce: bool,
 }
 
 impl AnnounceConfig {
@@ -96,6 +99,11 @@ impl AnnounceConfig {
 
         let advertised_secure = get("ADVERTISED_SECURE").as_deref() == Some("true");
 
+        let allow_loopback_announce = matches!(
+            get("ALLOW_LOOPBACK_ANNOUNCE").as_deref().map(str::trim),
+            Some("1" | "true")
+        );
+
         Self {
             manager_url,
             advertised_host,
@@ -104,6 +112,7 @@ impl AnnounceConfig {
             server_name,
             max_players,
             advertised_secure,
+            allow_loopback_announce,
         }
     }
 
@@ -122,13 +131,24 @@ impl AnnounceConfig {
     /// Why announcing would be harmful, if it would. A loopback address on a
     /// non-local manager is unreachable for every other player, and servers
     /// that all fall back to the default endpoint would fight over one room.
+    /// `None` when the dev opt-in `ALLOW_LOOPBACK_ANNOUNCE` is set; see
+    /// [`AnnounceConfig::announce_warning`] for the opted-in case.
     pub fn announce_blocker(&self) -> Option<String> {
+        self.loopback_problem()
+            .filter(|_| !self.allow_loopback_announce)
+    }
+
+    /// The loopback problem as a warning, when the opt-in overrides it.
+    pub fn announce_warning(&self) -> Option<String> {
+        self.loopback_problem()
+            .filter(|_| self.allow_loopback_announce)
+    }
+
+    fn loopback_problem(&self) -> Option<String> {
         let loopback_host = is_loopback_host(&self.advertised_host);
         (loopback_host && !is_loopback_host(url_host(&self.manager_url))).then(|| {
             format!(
-                "ADVERTISED_HOST is {} but MANAGER_URL ({}) is not local. Players could not \
-                 reach that address, and servers sharing the default endpoint would collide. \
-                 Set ADVERTISED_HOST (and ADVERTISED_PORT) to this server's public address",
+                "ADVERTISED_HOST is {} but MANAGER_URL ({}) is not local. Players could not                  reach that address, and servers sharing the default endpoint would collide.                  Set ADVERTISED_HOST (and ADVERTISED_PORT) to this server's public address",
                 self.advertised_host, self.manager_url
             )
         })
@@ -440,6 +460,11 @@ pub fn spawn_announcer(
             tracing::error!("Not announcing to the manager: {problem}");
             return;
         }
+        if let Some(problem) = cfg.announce_warning() {
+            tracing::warn!(
+                "ALLOW_LOOPBACK_ANNOUNCE is set, announcing anyway (dev only, the room will                  be listed publicly but unreachable for other players): {problem}"
+            );
+        }
         let agent = agent();
         tracing::info!(url = %cfg.manager_url, "Registering with manager");
         loop {
@@ -614,6 +639,7 @@ mod tests {
             server_name: "Rust Arena".into(),
             max_players: 10,
             advertised_secure: false,
+            allow_loopback_announce: false,
         };
         let value = serde_json::to_value(cfg.register_payload()).unwrap();
         let obj = value.as_object().unwrap();
@@ -718,6 +744,32 @@ mod tests {
                 .announce_blocker()
                 .is_none()
         );
+    }
+
+    #[test]
+    fn loopback_announce_opt_in_turns_the_block_into_a_warning() {
+        let remote = "https://manager-abc.run.app";
+        let m = map(&[
+            ("MANAGER_URL", remote),
+            ("ADVERTISED_HOST", "127.0.0.1"),
+            ("ALLOW_LOOPBACK_ANNOUNCE", "1"),
+        ]);
+        let cfg = AnnounceConfig::from_map(&|k| m.get(k).cloned());
+        assert!(cfg.allow_loopback_announce);
+        assert!(cfg.announce_blocker().is_none());
+        assert!(cfg.announce_warning().is_some());
+        // Off by default, and anything but 1/true does not count.
+        assert!(!cfg_for(remote, "127.0.0.1").allow_loopback_announce);
+        let m = map(&[("ALLOW_LOOPBACK_ANNOUNCE", "0")]);
+        assert!(!AnnounceConfig::from_map(&|k| m.get(k).cloned()).allow_loopback_announce);
+        // Nothing to warn about when the setup is fine anyway.
+        let m = map(&[
+            ("MANAGER_URL", remote),
+            ("ADVERTISED_HOST", "play.example.com"),
+            ("ALLOW_LOOPBACK_ANNOUNCE", "1"),
+        ]);
+        let cfg = AnnounceConfig::from_map(&|k| m.get(k).cloned());
+        assert!(cfg.announce_warning().is_none());
     }
 
     #[test]

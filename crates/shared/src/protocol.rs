@@ -13,7 +13,12 @@ use serde::{Deserialize, Serialize};
 /// Bumped by hand whenever the wire protocol or the gameplay *logic* changes in
 /// a way an old peer cannot follow. Changes to the sim constants listed in
 /// [`SIM_CONSTANTS`] need no bump: they change [`PROTOCOL_ID`] by themselves.
-pub const PROTOCOL_VERSION: u32 = 2;
+///
+/// Physics/simulation *logic* changes (grind rules, collision, rubber, turn
+/// handling, anything in `simulate_players`) are NOT captured by the constant
+/// fingerprint and REQUIRE a manual bump here: otherwise mixed builds connect
+/// fine and then silently mispredict.
+pub const PROTOCOL_VERSION: u32 = 3;
 
 /// Name and value of every constant the client and server must agree on to
 /// simulate identically (`constants.rs` in full, plus the turn timing rules).

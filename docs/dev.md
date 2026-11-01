@@ -115,7 +115,7 @@ bun run dev          # listens on :3001 (PORT to override)
 
 Then start the Rust server with `MANAGER_URL=http://localhost:3001` (this is
 also the default) and open the client's Rooms screen. The server registers,
-heartbeats every 2s (humans-only `playerCount`, plus `botCount`) and re-registers on a 404. The manager issues a per-room token that the server sends on heartbeat/unregister (a legacy manager without tokens still works). A server announcing a loopback `ADVERTISED_HOST` to a non-local `MANAGER_URL` refuses to announce; set `ADVERTISED_HOST`/`ADVERTISED_PORT` to the public address. Without the manager the server
+heartbeats every 2s (humans-only `playerCount`, plus `botCount`) and re-registers on a 404. The manager issues a per-room token that the server sends on heartbeat/unregister (a legacy manager without tokens still works). A server announcing a loopback `ADVERTISED_HOST` to a non-local `MANAGER_URL` refuses to announce; set `ADVERTISED_HOST`/`ADVERTISED_PORT` to the public address. `ALLOW_LOOPBACK_ANNOUNCE=1` (dev only; `dev-cloud.bat` sets it) turns that refusal into a loud warning, e.g. to test the browser path on one machine against the Cloud Run manager. Without the manager the server
 keeps retrying every 5s and the client still shows its pinned localhost row.
 
 ## Lab (headless scenarios)
