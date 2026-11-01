@@ -76,6 +76,10 @@ fn main() {
     );
     app.add_systems(
         PreUpdate,
+        systems::collect_turn_commands.after(lightyear::prelude::MessageSystems::Receive),
+    );
+    app.add_systems(
+        PreUpdate,
         session::receive_session_requests.after(lightyear::prelude::MessageSystems::Receive),
     );
     app.add_systems(
@@ -84,12 +88,21 @@ fn main() {
     );
 
     // Simulation systems in FixedUpdate.
+    //
+    // `apply_turn_commands` runs after lightyear's `UpdateActionState`
+    // (FixedPreUpdate) and before `simulate_players`, overwriting the native
+    // `get_predict` fallback for human riders so missing input means no turn.
+    // `clear_turn_queues_on_life_change` runs right after respawns (same tick
+    // visibility for generation bumps) and after `simulate_players` deaths are
+    // observed at the top of the next tick.
     app.insert_resource(shared::SimulationRole::Server);
     app.add_systems(
         FixedUpdate,
         (
             systems::handle_respawns,
+            systems::clear_turn_queues_on_life_change,
             bot::bot_brain_input,
+            systems::apply_turn_commands,
             shared::simulate_players,
             bot::bot_spawner,
         )

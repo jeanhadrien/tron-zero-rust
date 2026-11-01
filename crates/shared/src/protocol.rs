@@ -46,6 +46,76 @@ pub struct SessionReply {
 
 pub struct SessionChannel;
 
+/// One-shot turn delivery (phantom-turn fix).
+///
+/// DESIGN DECISION — bounded late execution, not strict intended-tick
+/// rejection: our client uses `no_input_delay`, so every turn arrives "late"
+/// relative to its prediction tick under any RTT. Rejecting late turns would
+/// drop every turn. Instead each physical press is a sequenced command the
+/// server executes at most once, in order, on the next available fixed tick(s)
+/// after receipt. Missing input executes nothing; duplicates execute nothing.
+/// The server never rewrites past ticks, so there is no server rollback.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TurnDirection {
+    Left,
+    Right,
+}
+
+impl TurnDirection {
+    /// Tag the turn with the life it was pressed in so the sim's
+    /// `eligible_turn` gate only fires it for that life.
+    pub fn to_input(self, generation: u128) -> PlayerInput {
+        match self {
+            Self::Left => PlayerInput::TurnLeftFor(generation),
+            Self::Right => PlayerInput::TurnRightFor(generation),
+        }
+    }
+}
+
+/// Client → server turn command. Carries NO player/entity id; the server
+/// derives ownership from the link, like respawns.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TurnCommand {
+    /// Per-client-link monotonic sequence, reset only on disconnect.
+    pub seq: u64,
+    pub direction: TurnDirection,
+    /// `LifeGeneration` of the rider at press time; mismatches are stale.
+    pub generation: u128,
+    /// `LocalTimeline` tick at send (diagnostics only, never execution).
+    pub client_tick: u32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TurnRejectReason {
+    Duplicate,
+    StaleLife,
+    NotAlive,
+    QueueFull,
+    Expired,
+    NotEligible,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TurnOutcome {
+    Applied { server_tick: u32 },
+    Rejected { reason: TurnRejectReason },
+}
+
+/// Server → client ack for every accepted-or-rejected command.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TurnAck {
+    pub seq: u64,
+    pub outcome: TurnOutcome,
+}
+
+pub struct TurnChannel;
+
+/// Max buffered turns per player; beyond this new commands are rejected with
+/// `QueueFull` (accepted commands are never silently dropped).
+pub const TURN_QUEUE_CAP: usize = 32;
+/// Queued commands older than ~1s (120 ticks at 120 Hz) expire with `Expired`.
+pub const TURN_QUEUE_TTL_TICKS: u32 = 120;
+
 pub fn register_protocol(app: &mut App) {
     app.add_channel::<SessionChannel>(ChannelSettings {
         mode: ChannelMode::OrderedReliable(ReliableSettings::default()),
@@ -64,6 +134,16 @@ pub fn register_protocol(app: &mut App) {
     app.register_message::<RespawnRequest>()
         .add_direction(NetworkDirection::ClientToServer);
     app.register_message::<RespawnReply>()
+        .add_direction(NetworkDirection::ServerToClient);
+    // --- One-shot turns (phantom-turn fix) ---
+    app.add_channel::<TurnChannel>(ChannelSettings {
+        mode: ChannelMode::OrderedReliable(ReliableSettings::default()),
+        ..Default::default()
+    })
+    .add_direction(NetworkDirection::Bidirectional);
+    app.register_message::<TurnCommand>()
+        .add_direction(NetworkDirection::ClientToServer);
+    app.register_message::<TurnAck>()
         .add_direction(NetworkDirection::ServerToClient);
     // --- Input ---
     app.add_plugins(InputPlugin::<PlayerInput>::default());

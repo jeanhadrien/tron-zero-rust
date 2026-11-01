@@ -10,7 +10,7 @@ use shared::protocol::{
     SESSION_HEARTBEAT_SECS, SESSION_TIMEOUT_SECS, SessionChannel, SessionReply, SessionRequest,
 };
 
-use crate::input::{InputLifecycle, PendingInput, RespawnUi};
+use crate::input::{InputLifecycle, PendingInput, RespawnUi, TurnAckState, TurnSeq};
 use crate::menu::MenuState;
 
 const CONNECT_TIMEOUT_SECS: f64 = 10.0;
@@ -234,6 +234,7 @@ pub fn unlink_session(mut session: ResMut<Session>, mut commands: Commands) {
 }
 
 /// Wait for Lightyear's state-transition cleanup before allowing another link.
+#[allow(clippy::too_many_arguments)]
 pub fn finish_disconnect(
     mut session: ResMut<Session>,
     clients: Query<Has<Disconnected>, With<Client>>,
@@ -241,6 +242,8 @@ pub fn finish_disconnect(
     mut pending: ResMut<PendingInput>,
     mut lifecycle: ResMut<InputLifecycle>,
     mut respawn: ResMut<RespawnUi>,
+    mut turn_seq: ResMut<TurnSeq>,
+    mut turn_acks: ResMut<TurnAckState>,
     mut commands: Commands,
 ) {
     if session.phase != ConnectionPhase::Disconnecting || !session.unlink_requested {
@@ -260,12 +263,15 @@ pub fn finish_disconnect(
     pending.0.clear();
     *lifecycle = InputLifecycle::default();
     *respawn = RespawnUi::default();
+    *turn_seq = TurnSeq::default();
+    *turn_acks = TurnAckState::default();
     session.phase = ConnectionPhase::Offline;
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::input::keyboard::PendingPress;
     use bevy::ecs::system::RunSystemOnce;
 
     #[test]
@@ -341,6 +347,8 @@ mod tests {
         let mut world = World::new();
         world.init_resource::<PendingInput>();
         world.init_resource::<InputLifecycle>();
+        world.init_resource::<TurnSeq>();
+        world.init_resource::<TurnAckState>();
         world.init_resource::<RespawnUi>();
         // No remaining link, but replicated entities may await StateTransition.
         world.insert_resource(Session {
@@ -358,7 +366,12 @@ mod tests {
         world
             .resource_mut::<PendingInput>()
             .0
-            .push_back(shared::PlayerInput::TurnLeft);
+            .push_back(PendingPress {
+                input: shared::PlayerInput::TurnLeft,
+                seq: None,
+                generation: None,
+                client_tick: 0,
+            });
         world.resource_mut::<RespawnUi>().pending_generation = Some(3);
         world.run_system_once(finish_disconnect).unwrap();
         assert_eq!(world.resource::<Session>().phase, ConnectionPhase::Offline);

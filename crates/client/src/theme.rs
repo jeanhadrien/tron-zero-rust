@@ -157,8 +157,12 @@ mod tests {
         ] {
             assert_eq!(channels_egui(e), channels_bevy(b));
         }
-        assert_eq!(channels_egui(dim()), channels_bevy(dim_bevy()));
-        assert_eq!(channels_egui(panel()), channels_bevy(panel_bevy()));
+        // egui stores alpha colors premultiplied; rebuild from the straight
+        // Bevy channels the same way `dim()`/`panel()` do.
+        for (e, b) in [(dim(), dim_bevy()), (panel(), panel_bevy())] {
+            let [r, g, bl, a] = channels_bevy(b);
+            assert_eq!(e, egui::Color32::from_rgba_unmultiplied(r, g, bl, a));
+        }
     }
 
     #[test]

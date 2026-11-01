@@ -112,6 +112,7 @@ mod tests {
         world.init_resource::<Session>();
         world.init_resource::<MenuState>();
         world.init_resource::<RespawnUi>();
+        world.init_resource::<Probe>();
         world.spawn((Client::default(), RemoteId(PeerId::Server), Connected));
         let rider = world
             .spawn((

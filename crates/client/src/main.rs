@@ -77,10 +77,16 @@ fn main() {
     // Input: buffer key presses every frame, consume per fixed tick.
     app.init_resource::<input::PendingInput>();
     app.init_resource::<input::InputLifecycle>();
+    app.init_resource::<input::TurnSeq>();
+    app.init_resource::<input::TurnAckState>();
     app.init_resource::<input::RespawnUi>();
     app.add_systems(
         PreUpdate,
-        (input::receive_respawn_replies, input::buffer_keyboard_input)
+        (
+            input::receive_respawn_replies,
+            input::receive_turn_acks,
+            input::buffer_keyboard_input,
+        )
             .chain()
             .after(bevy::input::InputSystems)
             .after(MessageSystems::Receive),

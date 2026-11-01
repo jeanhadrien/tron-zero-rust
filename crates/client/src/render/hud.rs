@@ -164,6 +164,7 @@ mod tests {
         let mut world = World::new();
         world.init_resource::<Session>();
         world.init_resource::<MenuState>();
+        world.init_resource::<Probe>();
 
         // No client yet: nothing visible.
         world.run_system_once(update_probe).unwrap();
