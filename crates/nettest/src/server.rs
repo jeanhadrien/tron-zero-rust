@@ -87,6 +87,18 @@ impl TestServer {
             .count()
     }
 
+    /// Number of client links the server replicates the world to.
+    pub fn replicating_link_count(&mut self) -> usize {
+        let world = self.app.world_mut();
+        world
+            .query_filtered::<(), (
+                With<lightyear::prelude::server::ClientOf>,
+                With<ReplicationSender>,
+            )>()
+            .iter(world)
+            .count()
+    }
+
     /// Display names of the human riders, sorted.
     pub fn human_names(&mut self) -> Vec<String> {
         let world = self.app.world_mut();

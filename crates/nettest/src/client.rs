@@ -11,6 +11,7 @@ use bevy::prelude::*;
 use glam::Vec2;
 use lightyear::prelude::input::native::InputMarker;
 use lightyear::prelude::*;
+use shared::protocol::{TurnBatch, TurnChannel};
 use shared::{
     ActionState, Direction, DisplayName, IsAlive, LifeGeneration, Player, PlayerId, PlayerInput,
     Position,
@@ -194,6 +195,22 @@ impl TestClient {
         self.app.world().resource::<tc::input::TurnSeq>().0
     }
 
+    /// Turn commands still being repeated because the server has not reported
+    /// them decided.
+    pub fn turns_unacked(&self) -> usize {
+        self.app.world().resource::<tc::input::TurnOutbox>().len()
+    }
+
+    /// Cheat: put a hand-made batch on the wire next to the real ones (what
+    /// a modified client flooding the server would do).
+    pub fn send_raw_turn_batch(&mut self, batch: TurnBatch) {
+        let world = self.app.world_mut();
+        let mut senders = world.query_filtered::<&mut MessageSender<TurnBatch>, With<Client>>();
+        for mut sender in senders.iter_mut(world) {
+            sender.send::<TurnChannel>(batch.clone());
+        }
+    }
+
     pub fn pending_presses(&self) -> usize {
         self.app.world().resource::<PendingInput>().0.len()
     }
@@ -265,7 +282,7 @@ impl TestClient {
     }
 
     /// Cheat: write a native Lightyear input for the next fixed tick without
-    /// sending a `TurnCommand` (what a modified client could do).
+    /// sending a turn command (what a modified client could do).
     pub fn plant_native_input(&mut self, input: PlayerInput) {
         self.app
             .world_mut()

@@ -418,3 +418,119 @@ fn respawn_and_reconnect_never_leak_turns() {
 }
 
 const RIGHT_RESPAWN: bevy::input::keyboard::KeyCode = bevy::input::keyboard::KeyCode::Space;
+
+#[test]
+fn redundant_turns_keep_every_press_on_time_at_150ms_and_3_percent_loss() {
+    let _guard = serial();
+    let mut net = Net::new(Impairment::new(150, 20, 0.03));
+    net.add_client();
+    net.join_and_settle();
+    let start = net.clients[0].tick() + 30;
+    staircase(&mut net.clients[0], start, 40, 16);
+    finish_script(&mut net, 0);
+
+    let run = Run::collect(&mut net, 0);
+    check_delivery_invariants(&mut net, 0, &run);
+    let rejected: Vec<_> = run
+        .log
+        .iter()
+        .filter(|d| matches!(d.fate, Fate::Rejected(_)))
+        .collect();
+    assert!(
+        rejected.is_empty(),
+        "nothing is rejected as too late: {rejected:?}"
+    );
+    assert_eq!(run.log.len(), 40, "the rider survived the whole staircase");
+    let late = run.log.iter().filter(|d| d.lateness() != Some(0)).count();
+    println!("late (executed after the intended tick): {late} of 40");
+    // The 4-9 tick margin absorbs jitter and a lost packet (next one is 1 tick behind).
+    assert!(late <= 2, "{late} of 40 turns ran late");
+    assert_eq!(
+        net.clients[0].turns_unacked(),
+        0,
+        "acks reach the client and empty its outbox"
+    );
+}
+
+#[test]
+fn a_flooding_client_is_disconnected_and_others_are_unaffected() {
+    let _guard = serial();
+    let mut net = Net::new(Impairment::NONE);
+    let honest = net.add_client_with("Honest", |_| {});
+    let hostile = net.add_client_with("Hostile", |_| {});
+    let ready = net.run_until(Duration::from_secs(15), |net| {
+        net.clients.iter().all(|c| c.is_playing())
+    });
+    assert!(ready, "both clients join");
+
+    // Fresh seqs with a life that does not exist: every command is a rejection.
+    let mut seq = 1_000_000;
+    let closed = net.run_until(Duration::from_secs(10), |net| {
+        let commands = (0..4)
+            .map(|_| {
+                seq += 1;
+                shared::protocol::TurnCommand {
+                    seq,
+                    direction: shared::protocol::TurnDirection::Left,
+                    generation: 0xBAD,
+                    tick: 0,
+                }
+            })
+            .collect();
+        net.clients[hostile].send_raw_turn_batch(shared::protocol::TurnBatch { commands });
+        net.server.link_count() == 1
+    });
+    assert!(closed, "the flooding link is closed by the server");
+    assert_eq!(net.server.human_names(), vec!["Honest".to_string()]);
+    net.run_server_ticks(60);
+    assert!(net.clients[honest].is_playing());
+    // The abuse cost one budget's worth of work, not an unbounded amount.
+    assert!(
+        net.server.turn_log().0.len() < 500,
+        "{} events",
+        net.server.turn_log().0.len()
+    );
+}
+
+#[test]
+fn resent_copies_of_one_command_are_free_but_a_message_flood_is_not() {
+    let _guard = serial();
+    let (mut net, _) = clean_session();
+    let generation = net.clients[0].rider_generation().expect("life");
+    let command = shared::protocol::TurnCommand {
+        seq: 0,
+        direction: shared::protocol::TurnDirection::Left,
+        generation,
+        tick: net.clients[0].tick() + 40,
+    };
+    let batch = shared::protocol::TurnBatch {
+        commands: vec![command; 1],
+    };
+    // A realistic redundancy burst is ignored after the first copy...
+    for _ in 0..20 {
+        net.clients[0].send_raw_turn_batch(batch.clone());
+        net.step();
+    }
+    assert_eq!(net.server.link_count(), 1);
+    let queued = net
+        .server
+        .turn_log()
+        .0
+        .iter()
+        .filter(|e| {
+            matches!(
+                e.kind,
+                tron_zero_server::turns::TurnEventKind::Queued { .. }
+            )
+        })
+        .count();
+    assert_eq!(queued, 1, "one decision for twenty copies");
+    // ...while thousands of messages per second are not tolerated.
+    let closed = net.run_until(Duration::from_secs(10), |net| {
+        for _ in 0..4 {
+            net.clients[0].send_raw_turn_batch(batch.clone());
+        }
+        net.server.link_count() == 0
+    });
+    assert!(closed, "a duplicate flood closes the link");
+}

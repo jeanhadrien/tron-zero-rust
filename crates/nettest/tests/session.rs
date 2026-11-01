@@ -182,3 +182,94 @@ fn simulated_latency_sets_the_round_trip_not_one_direction() {
         "requested {rtt} ms RTT, measured {measured:?}"
     );
 }
+
+/// Open `count` UDP sockets that each send one junk datagram to the server:
+/// to a raw-UDP server every new source address is a connection.
+fn spoofed_peers(net: &Net, count: usize) -> Vec<std::net::UdpSocket> {
+    (0..count)
+        .map(|_| {
+            let socket = std::net::UdpSocket::bind("127.0.0.1:0").expect("bind");
+            socket
+                .send_to(&[0u8; 4], ("127.0.0.1", net.port()))
+                .expect("send");
+            socket
+        })
+        .collect()
+}
+
+#[test]
+fn nothing_is_replicated_to_a_link_before_its_hello() {
+    let _guard = serial();
+    let mut net = Net::new(Impairment::NONE);
+    let _spoofed = spoofed_peers(&net, 1);
+    assert!(
+        net.run_until(WAIT, |net| net.server.link_count() == 1),
+        "the stray packet creates a link"
+    );
+    net.run_server_ticks(120);
+    assert_eq!(net.server.link_count(), 1);
+    assert_eq!(
+        net.server.replicating_link_count(),
+        0,
+        "an unadmitted link is never replicated to"
+    );
+
+    // A real client is admitted next to it and only it gets the world.
+    let client = net.add_client();
+    assert!(playing(&mut net, &[client]));
+    assert_eq!(net.server.replicating_link_count(), 1);
+
+    // The silent link is dropped by the hello timeout, the player stays.
+    assert!(
+        net.run_until(WAIT, |net| net.server.link_count() == 1),
+        "the silent link times out"
+    );
+    assert!(net.clients[client].is_playing());
+}
+
+#[test]
+fn unadmitted_links_are_capped() {
+    let _guard = serial();
+    let mut net = Net::new(Impairment::NONE);
+    let cap = tron_zero_server::admission::MAX_UNADMITTED_LINKS;
+    let _spoofed = spoofed_peers(&net, cap + 12);
+    net.run_until(Duration::from_secs(3), |_| false);
+    let links = net.server.link_count();
+    assert!(
+        (cap / 2..=cap).contains(&links),
+        "{links} links held for {} would-be peers (cap {cap})",
+        cap + 12
+    );
+    assert_eq!(net.server.replicating_link_count(), 0);
+}
+
+#[test]
+fn rejection_survives_packet_loss() {
+    let _guard = serial();
+    // 30% loss each way: before the rejected link was kept open to retransmit,
+    // a single lost rejection left that client with a timeout message.
+    let mut net = Net::new(Impairment::new(40, 0, 0.3));
+    let stale: Vec<usize> = (0..8)
+        .map(|_| {
+            net.add_client_with("Old", |c| {
+                c.set_protocol(shared::protocol::PROTOCOL_ID.wrapping_add(1))
+            })
+        })
+        .collect();
+    let all_told = net.run_until(WAIT, |net| {
+        stale.iter().all(|&i| {
+            net.clients[i].session().status.contains("Incompatible")
+                && net.clients[i].phase() == tron_zero_client::connection::ConnectionPhase::Offline
+        })
+    });
+    let statuses: Vec<String> = stale
+        .iter()
+        .map(|&i| net.clients[i].session().status.clone())
+        .collect();
+    assert!(all_told, "statuses: {statuses:?}");
+    assert!(net.server.player_ids().is_empty());
+    assert!(
+        net.run_until(WAIT, |net| net.server.link_count() == 0),
+        "the server closes the refused links"
+    );
+}
