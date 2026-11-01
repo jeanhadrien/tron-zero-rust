@@ -1,0 +1,9 @@
+# Open-space self-grind: ride, then U-turn (two lefts one tick apart) and ride back along own trail.
+arena = [2000, 2000]
+until = 520
+
+[[rider]]
+name = "a"
+at = [-600, 0]
+heading = "+x"
+script = ["200 left", "201 left", "380 right", "381 right"]

@@ -6,4 +6,4 @@
 {"tick":110,"rider":"a","event":"slide_start","at":[1197.862,3.0],"target":1.004}
 {"tick":120,"rider":"a","event":"sample","at":[1197.862,30.563],"heading":"+y","speed":1.038,"target":1.042,"rubber":84.06,"sliding":true,"colliding":false,"trail":328.425}
 {"tick":180,"rider":"a","event":"sample","at":[1197.862,240.188],"heading":"+y","speed":1.288,"target":1.292,"rubber":93.06,"sliding":true,"colliding":false,"trail":538.05}
-{"tick":240,"rider":"a","event":"sample","at":[1197.862,494.814],"heading":"+y","speed":1.538,"target":1.542,"rubber":102.06,"sliding":true,"colliding":false,"trail":792.676}
+{"tick":240,"rider":"a","event":"sample","at":[1197.862,483.761],"heading":"+y","speed":1.364,"target":1.364,"rubber":102.06,"sliding":true,"colliding":false,"trail":781.624}

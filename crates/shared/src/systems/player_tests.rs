@@ -172,8 +172,8 @@ fn grinding_converges_on_a_proximity_scaled_cap() {
         assert!(target >= last && target <= MAX_SPEED_MULT);
         last = target;
     }
-    // Arena walls count as 6 / ARENA_WALL_GRIND units away.
-    let proximity = 1.0 - 6.0 / ARENA_WALL_GRIND / SLIDE_DISTANCE;
+    // Arena walls pay only ARENA_WALL_GRIND of the trail strength.
+    let proximity = (1.0 - 6.0 / SLIDE_DISTANCE) * ARENA_WALL_GRIND;
     near(last, 1.0 + (MAX_SPEED_MULT - 1.0) * proximity);
 }
 
