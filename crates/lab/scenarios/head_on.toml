@@ -1,0 +1,12 @@
+# Two riders meet head-on on the same line.
+until = 300
+
+[[rider]]
+name = "a"
+at = [-300, 0]
+heading = "+x"
+
+[[rider]]
+name = "b"
+at = [300, 0]
+heading = "-x"

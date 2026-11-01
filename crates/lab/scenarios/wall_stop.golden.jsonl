@@ -1,0 +1,5 @@
+{"tick":0,"rider":"a","event":"sample","at":[900.0,0.0],"heading":"+x","speed":1.0,"target":1.0,"rubber":120.0,"sliding":false,"colliding":false,"trail":0.0}
+{"tick":60,"rider":"a","event":"sample","at":[1080.0,0.0],"heading":"+x","speed":1.0,"target":1.0,"rubber":120.0,"sliding":false,"colliding":false,"trail":180.0}
+{"tick":97,"rider":"a","event":"enter_rubber_zone","at":[1196.063,0.0],"rubber":117.12}
+{"tick":120,"rider":"a","event":"sample","at":[1198.398,0.0],"heading":"+x","speed":0.01,"target":1.0,"rubber":53.76,"sliding":false,"colliding":true,"trail":298.398}
+{"tick":138,"rider":"a","event":"death","at":[1198.755,0.0],"cause":"wall"}

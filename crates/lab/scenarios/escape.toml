@@ -1,0 +1,9 @@
+# Enter the rubber zone, turn away before rubber runs out, regenerate.
+# The escape turn runs along the east wall, so it also grinds.
+until = 300
+
+[[rider]]
+name = "a"
+at = [900, 0]
+heading = "+x"
+script = ["110 left"]

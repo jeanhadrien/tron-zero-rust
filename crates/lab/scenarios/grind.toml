@@ -1,0 +1,9 @@
+# Grind 6 units under a long wall (slide boost), then leave it (decay).
+until = 600
+walls = [[-1000, 6, 1100, 6]]
+
+[[rider]]
+name = "a"
+at = [-900, 0]
+heading = "+x"
+script = ["300 right"]

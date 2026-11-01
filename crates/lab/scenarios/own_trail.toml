@@ -1,0 +1,8 @@
+# Three left turns close a 60-unit square back into the rider's own trail.
+until = 300
+
+[[rider]]
+name = "a"
+at = [0, 0]
+heading = "+x"
+script = ["20 left", "40 left", "60 left"]

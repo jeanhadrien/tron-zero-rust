@@ -1,0 +1,14 @@
+{"tick":0,"rider":"a","event":"sample","at":[-900.0,0.0],"heading":"+x","speed":1.0,"target":1.0,"rubber":120.0,"sliding":false,"colliding":false,"trail":0.0}
+{"tick":0,"rider":"a","event":"slide_start","at":[-897.0,0.0],"target":1.002}
+{"tick":60,"rider":"a","event":"sample","at":[-708.041,0.0],"heading":"+x","speed":1.136,"target":1.138,"rubber":120.0,"sliding":true,"colliding":false,"trail":191.959}
+{"tick":120,"rider":"a","event":"sample","at":[-489.56,0.0],"heading":"+x","speed":1.293,"target":1.295,"rubber":120.0,"sliding":true,"colliding":false,"trail":410.44}
+{"tick":180,"rider":"a","event":"sample","at":[-240.893,0.0],"heading":"+x","speed":1.471,"target":1.474,"rubber":120.0,"sliding":true,"colliding":false,"trail":659.107}
+{"tick":240,"rider":"a","event":"sample","at":[42.129,0.0],"heading":"+x","speed":1.674,"target":1.678,"rubber":120.0,"sliding":true,"colliding":false,"trail":942.129}
+{"tick":300,"rider":"a","event":"sample","at":[364.254,0.0],"heading":"+x","speed":1.906,"target":1.91,"rubber":120.0,"sliding":true,"colliding":false,"trail":1264.254}
+{"tick":300,"rider":"a","event":"turn","at":[364.254,0.0],"heading":"-y"}
+{"tick":300,"rider":"a","event":"slide_end","at":[364.254,-5.73],"target":1.906}
+{"tick":360,"rider":"a","event":"sample","at":[364.254,-324.673],"heading":"-y","speed":1.698,"target":1.694,"rubber":120.0,"sliding":false,"colliding":false,"trail":1588.928}
+{"tick":420,"rider":"a","event":"sample","at":[364.254,-610.467],"heading":"-y","speed":1.482,"target":1.478,"rubber":120.0,"sliding":false,"colliding":false,"trail":1666.667}
+{"tick":480,"rider":"a","event":"sample","at":[364.254,-857.38],"heading":"-y","speed":1.266,"target":1.262,"rubber":120.0,"sliding":false,"colliding":false,"trail":1666.667}
+{"tick":540,"rider":"a","event":"sample","at":[364.254,-1065.413],"heading":"-y","speed":1.05,"target":1.046,"rubber":120.0,"sliding":false,"colliding":false,"trail":1666.667}
+{"tick":581,"rider":"a","event":"enter_rubber_zone","at":[364.254,-1197.721],"rubber":117.12}

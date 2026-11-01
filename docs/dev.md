@@ -52,8 +52,42 @@ If a build mysteriously rebuilds from scratch, you probably touched the repo fro
 - `tron-zero-shared` — lib, the simulation core (no transport, no rendering).
 - `tron-zero-server` — bin, headless server + bots + manager HTTP.
 - `tron-zero-client` — bin, rendering + UI + audio.
+- `tron-zero-lab` — lib + bin, headless deterministic scenario runner (see below).
 
 The WASM web client target (`wasm32-unknown-unknown`) is not set up yet — see `docs/building.md`.
+
+## Lab (headless scenarios)
+
+The sim is deterministic and tick-stepped, so situations can be scripted and
+replayed exactly instead of played at 120 Hz. A scenario places riders and
+schedules their actions per tick (format documented in
+`crates/lab/src/scenario.rs`):
+
+```toml
+until = 300
+walls = [[-1000, 6, 1100, 6]]   # optional extra segments
+
+[[rider]]
+name = "a"
+at = [-900, 0]
+heading = "+x"                  # y points up, as in the client
+script = ["120 left", "200 right", "260 respawn"]
+```
+
+```
+cargo run -p tron-zero-lab -- crates/lab/scenarios/grind.toml --sample 60 --png grind.png
+cargo run -p tron-zero-lab -- my.toml --until 150 --view 1190,0,60 --png zoom.png
+cargo run -p tron-zero-lab -- my.toml --frames frames --every 30
+```
+
+Output is a JSONL trace (`turn`, `enter/leave_rubber_zone`, `slide_start/end`,
+`death` with its cause, `respawn`, optional `sample`) plus a `#` summary, and
+PNGs on request. Respawns mirror the server's safe-spawn search.
+
+Tests: `cargo test -p tron-zero-shared` (unit, property and rollback tests) and
+`cargo test -p tron-zero-lab` (mechanics assertions + golden traces for every
+scenario). After an intended behaviour change, regenerate goldens with
+`LAB_BLESS=1 cargo test -p tron-zero-lab` and review the diff.
 
 ## Gameplay smoke check
 

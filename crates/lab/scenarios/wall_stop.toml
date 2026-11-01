@@ -1,0 +1,7 @@
+# Ride straight into the east wall: Zeno slowdown, rubber drain, death.
+until = 300
+
+[[rider]]
+name = "a"
+at = [900, 0]
+heading = "+x"

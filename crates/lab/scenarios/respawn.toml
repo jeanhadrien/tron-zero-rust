@@ -1,0 +1,13 @@
+# Die on the east wall, then respawn through the server's safe-spawn search.
+until = 400
+
+[[rider]]
+name = "a"
+at = [900, 0]
+heading = "+x"
+script = ["200 respawn"]
+
+[[rider]]
+name = "b"
+at = [-900, -600]
+heading = "+y"
