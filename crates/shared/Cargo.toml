@@ -10,3 +10,6 @@ bevy_reflect.workspace = true
 glam.workspace = true
 serde.workspace = true
 lightyear = { workspace = true, features = ["input_native"] }
+
+[dev-dependencies]
+proptest = "1"
