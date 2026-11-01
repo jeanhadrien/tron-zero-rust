@@ -43,6 +43,14 @@ impl Run {
 /// explicit fate for everything, no phantom turns, client replay consistent.
 /// Assumes the client session started at seq 0 and sent `sent` commands.
 fn check_delivery_invariants(net: &mut Net, client: usize, run: &Run) {
+    check_delivery(net, client, run, false);
+}
+
+/// [`check_delivery_invariants`]; with `relabelled` the stamp a turn carried
+/// may differ from the client trace by timeline resyncs that happened between
+/// its press and its first receipt (the trace is renumbered by every resync;
+/// a copy the server decided earlier keeps the stamp it had then).
+fn check_delivery(net: &mut Net, client: usize, run: &Run, relabelled: bool) {
     let sent = net.clients[client].turns_sent() as usize;
     assert_eq!(run.log.len(), sent, "every sent command reaches the server");
     let client_turns = turns_of(&net.clients[client].trace().first_input);
@@ -52,11 +60,25 @@ fn check_delivery_invariants(net: &mut Net, client: usize, run: &Run) {
     let mut applied = Vec::new();
     for (i, delivery) in run.log.iter().enumerate() {
         assert_eq!(delivery.seq, i as u64, "sequence has no gaps");
-        assert_eq!(
-            delivery.intended,
-            Some(client_turns[i].0),
-            "seq {i}: the stamp is the tick the client predicted the turn at"
-        );
+        let predicted_at = client_turns[i].0;
+        if relabelled {
+            let deltas = &net.clients[client].trace().resyncs;
+            let possible = (0..=deltas.len()).any(|from| {
+                let later: i32 = deltas[from..].iter().sum();
+                delivery.intended == Some(predicted_at.wrapping_add_signed(-later))
+            });
+            assert!(
+                possible,
+                "seq {i}: stamp {:?} is not the predicted tick {predicted_at} under any                  resync history {deltas:?}",
+                delivery.intended
+            );
+        } else {
+            assert_eq!(
+                delivery.intended,
+                Some(predicted_at),
+                "seq {i}: the stamp is the tick the client predicted the turn at"
+            );
+        }
         match delivery.fate {
             Fate::Waiting => panic!("seq {} never got a verdict", delivery.seq),
             Fate::Rejected(reason) => assert!(
@@ -419,6 +441,54 @@ fn respawn_and_reconnect_never_leak_turns() {
 }
 
 const RIGHT_RESPAWN: bevy::input::keyboard::KeyCode = bevy::input::keyboard::KeyCode::Space;
+
+/// Run until `presses_left` or fewer scripted presses remain and one of the
+/// popped ones is on the wire but not yet acknowledged, then relabel the client
+/// timeline by `delta`.
+fn resync_with_turns_in_flight(net: &mut Net, presses_left: usize, delta: i32) {
+    let in_flight = net.run_until(Duration::from_secs(20), |net| {
+        net.clients[0].scripted_remaining() <= presses_left && net.clients[0].turns_unacked() > 0
+    });
+    assert!(in_flight, "no press was in flight");
+    let before = net.clients[0].outbox_stamps();
+    net.clients[0].force_resync(delta);
+    let expected: Vec<u32> = before
+        .iter()
+        .map(|t| t.wrapping_add_signed(delta))
+        .collect();
+    assert_eq!(
+        net.clients[0].outbox_stamps(),
+        expected,
+        "unacknowledged commands follow the relabelled timeline"
+    );
+}
+
+#[test]
+fn timeline_resyncs_mid_script_lose_and_duplicate_no_turn() {
+    let _guard = serial();
+    // ~12 ticks round trip: every press is unacked for a while after it is stamped.
+    let mut net = Net::new(Impairment::new(100, 0, 0.0));
+    net.add_client();
+    net.join_and_settle();
+    let start = net.clients[0].tick() + 30;
+    staircase(&mut net.clients[0], start, 24, 16);
+    for (presses_left, delta) in [(18, 7), (10, -10), (4, 4)] {
+        resync_with_turns_in_flight(&mut net, presses_left, delta);
+    }
+    finish_script(&mut net, 0);
+
+    let run = Run::collect(&mut net, 0);
+    assert!(net.clients[0].trace().resyncs.len() >= 3);
+    check_delivery(&mut net, 0, &run, true);
+    let rejected: Vec<_> = run
+        .log
+        .iter()
+        .filter(|d| matches!(d.fate, Fate::Rejected(_)))
+        .collect();
+    assert!(rejected.is_empty(), "no turn rejected: {rejected:?}");
+    assert_eq!(run.log.len(), 24, "the rider survived the whole staircase");
+    assert_eq!(net.clients[0].turns_unacked(), 0);
+}
 
 #[test]
 fn redundant_turns_keep_every_press_on_time_at_150ms_and_3_percent_loss() {

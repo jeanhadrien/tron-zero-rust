@@ -220,6 +220,15 @@ impl TestClient {
         self.app.world().resource::<tc::input::TurnOutbox>().len()
     }
 
+    /// Stamps of the commands still being repeated, oldest first.
+    pub fn outbox_stamps(&self) -> Vec<u32> {
+        self.app
+            .world()
+            .resource::<tc::input::TurnOutbox>()
+            .stamps()
+            .collect()
+    }
+
     /// Cheat: put a hand-made batch on the wire next to the real ones (what
     /// a modified client flooding the server would do).
     pub fn send_raw_turn_batch(&mut self, batch: TurnBatch) {
@@ -298,6 +307,21 @@ impl TestClient {
             .world_mut()
             .resource_mut::<StateRollbackMetadata>()
             .request_forced_rollback(Tick(tick));
+    }
+
+    /// Relabel the client timeline by `delta` ticks, exactly as a Lightyear
+    /// resync does (the same `SyncEvent` the sync system triggers). Lightyear's
+    /// own histories and the turn outbox follow; nothing is re-simulated. The
+    /// presses still scripted are renumbered too: the player does not press
+    /// at a different moment because the tick labels moved.
+    pub fn force_resync(&mut self, delta: i32) {
+        for press in &mut self.script {
+            press.tick = press.tick.saturating_add_signed(delta);
+        }
+        let world = self.app.world_mut();
+        let mut query = world.query_filtered::<Entity, With<Client>>();
+        let client = query.single(world).expect("one client entity");
+        world.trigger(SyncEvent::<client::InputTimelineConfig>::new(client, delta));
     }
 
     /// Cheat: write a native Lightyear input for the next fixed tick without

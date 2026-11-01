@@ -72,8 +72,9 @@ measured numbers are in `docs/netcode-design.md` ("One-shot turn delivery").
   `ActionState` once. A backward jump does make the client's state differ from
   the server's for that tick label, so a normal rollback follows. The nettest
   client trace follows `SyncEvent`s (`follow_timeline_resync`) so relabelled
-  ticks are not reported as "ran twice outside rollback". Outbox stamps are
-  not shifted (see `docs/netcode-design.md`, redundant delivery).
+  ticks are not reported as "ran twice outside rollback". The client turn
+  outbox follows the same event (`input::follow_timeline_resync`) and shifts its
+  undecided stamps (see `docs/netcode-design.md`, timeline resync).
 
 ## Still open after that session
 
@@ -89,8 +90,8 @@ measured numbers are in `docs/netcode-design.md` ("One-shot turn delivery").
   at most). Needs real-player data before it is called competitive-ready.
 - [ ] Not measured: frame hitches/catch-up bursts on the client, long stalls
   and outages, 2+ simultaneous clients playing together, sequence behaviour
-  across a Lightyear timeline resync mid-session (server floors ticks
-  monotonic; not exercised). The abuse budget limits are reasoned, not tuned
+  across a *natural* Lightyear resync under real jitter (a forced one is
+  covered by a nettest). The abuse budget limits are reasoned, not tuned
   against real client traces.
 - [ ] Spoofed-source floods are only bounded (32 unadmitted links, 5 s hello
   timeout, no replication, one tiny ack per frame): raw UDP has no handshake,

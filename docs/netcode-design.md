@@ -137,10 +137,25 @@ reliable channel.
   `TooLate` anyway), or when 16 newer ones push it out. Cost: an undecided
   30-byte command is sent every tick, about 3.6 KB/s while outstanding, i.e.
   roughly 0.5 KB per press at 150 ms RTT (until its ack returns); nothing is
-  sent while the outbox is empty. Pruning removes a prefix as long as stamps
-  rise with seq; if the timeline jumps backward in a resync, a later seq can
-  carry an older stamp and be pruned first, which the server sees as a skipped
-  gap (still exactly-once and in order, that one command is just lost).
+  sent while the outbox is empty.
+- **Timeline resync.** A Lightyear resync (`SyncEvent<InputTimelineConfig>`)
+  relabels ticks by `tick_delta`; nothing is re-simulated. Stamps are labels
+  on that timeline, so `follow_timeline_resync` (an observer, same event as
+  Lightyear's own `update_ticks`) shifts every undecided command's stamp by the
+  delta and forgets which tick a batch last went out on. That keeps the age
+  prune (`now - stamp <= 48`) honest and puts commands the server has not yet
+  seen on the label their prediction now has. A command the server already
+  decided keeps its old stamp there (the shifted copies are dropped as
+  decided) and runs once, at that old label, as a late/early turn would:
+  client and server disagree for that tick and a normal rollback follows. A
+  copy sent before the resync can also overtake a later shifted one; whichever
+  arrives first decides the seq. Either way each press executes exactly once
+  and in seq order (the server schedules by seq with a per-rider tick floor,
+  so a smaller stamp after a backward jump just waits for the floor). Acks
+  (`received_below`, `Applied { server_tick }`) are seq- or server-labeled and
+  need no shift. Covered by `timeline_resyncs_mid_script_lose_and_duplicate_no_turn`
+  (nettest, resync forced with a `SyncEvent` while commands are in flight) and
+  the outbox unit tests.
 - **Timeline.** The client's `LocalTimeline` is driven by `InputTimeline`,
   which targets `server + RTT/2 + 4*jitter + 1 tick (client margin) + 1 tick
   (server input pipeline) + sync error margin`. It is the same tick count the

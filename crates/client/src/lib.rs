@@ -54,6 +54,7 @@ pub fn add_input_and_prediction(app: &mut App) {
         PostUpdate,
         input::send_turn_batch.before(MessageSystems::Send),
     );
+    app.add_observer(input::follow_timeline_resync);
     app.add_systems(
         FixedPreUpdate,
         input::read_keyboard

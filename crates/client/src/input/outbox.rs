@@ -7,11 +7,22 @@
 //! a round trip and a half later. The server drops the copies it has already
 //! decided, so redundancy costs bandwidth only: a few dozen bytes per tick for
 //! about one round trip after each press.
+//!
+//! The stamps are labels on Lightyear's input timeline, which a resync
+//! (`SyncEvent`) relabels by a tick delta without re-simulating anything.
+//! [`follow_timeline_resync`] moves every stamp in the outbox by that delta, so
+//! the age-based prune and the stamps agree with the new labeling, and Lightyear's own
+//! prediction/input histories (which it shifts by the same delta) still line
+//! up with what the server is asked to do. Commands the server decided before
+//! the resync keep their old stamp there (the shifted copies are dropped as
+//! already decided): such a turn runs once, at the old label, and the client
+//! corrects it by rollback like any late turn. Never lost, never doubled.
 
 use std::collections::VecDeque;
 
 use bevy::prelude::*;
-use lightyear::prelude::{Client, Connected, LocalTimeline, MessageSender, Tick};
+use lightyear::prelude::client::InputTimelineConfig;
+use lightyear::prelude::{Client, Connected, LocalTimeline, MessageSender, SyncEvent, Tick};
 use shared::protocol::{TURN_BATCH_MAX, TURN_RESEND_TICKS, TurnBatch, TurnChannel, TurnCommand};
 
 /// Commands the server has not yet reported as decided, oldest first. Because
@@ -30,6 +41,11 @@ impl TurnOutbox {
 
     pub fn is_empty(&self) -> bool {
         self.unacked.is_empty()
+    }
+
+    /// Intended ticks of the unacknowledged commands, oldest first.
+    pub fn stamps(&self) -> impl Iterator<Item = u32> + '_ {
+        self.unacked.iter().map(|command| command.tick)
     }
 
     /// Add a freshly pressed command. A full outbox (the server has been silent
@@ -52,6 +68,19 @@ impl TurnOutbox {
         }
     }
 
+    /// The timeline was relabelled by `delta` ticks: renumber every stamp the
+    /// same way, so the outbox keeps meaning "the tick the client predicted
+    /// this turn at" in the new labeling.
+    pub fn shift_ticks(&mut self, delta: i32) {
+        let shift = |tick: u32| (Tick(tick) + delta).0;
+        for command in &mut self.unacked {
+            command.tick = shift(command.tick);
+        }
+        // A batch already went out under the old labeling; the new tick that
+        // happens to equal the old one is a different tick.
+        self.last_sent_tick = None;
+    }
+
     /// The batch to send at client tick `now`: everything still unacked, at
     /// most once per tick. Commands stamped more than `TURN_RESEND_TICKS` ago
     /// are dropped first; the server would reject them as too late anyway.
@@ -66,6 +95,14 @@ impl TurnOutbox {
             commands: self.unacked.iter().copied().collect(),
         })
     }
+}
+
+/// Keep the outbox stamps in step with the input timeline (see module docs).
+pub fn follow_timeline_resync(
+    event: On<SyncEvent<InputTimelineConfig>>,
+    mut outbox: ResMut<TurnOutbox>,
+) {
+    outbox.shift_ticks(event.tick_delta);
 }
 
 /// Send the outbox to the server. PostUpdate, before Lightyear serializes
@@ -136,6 +173,33 @@ mod tests {
             batch.commands.last().unwrap().seq,
             1 + 2 * TURN_BATCH_MAX as u64,
             "the newest commands survive"
+        );
+    }
+
+    #[test]
+    fn a_resync_relabels_stamps_and_keeps_the_age_prune_honest() {
+        let mut outbox = TurnOutbox::default();
+        outbox.push(command(0, 100));
+        outbox.push(command(1, 110));
+        assert!(outbox.batch(112).is_some());
+        // Backward jump: tick 112 is now labelled 101; the same batch tick
+        // must not be skipped as "already sent".
+        outbox.shift_ticks(-11);
+        let batch = outbox.batch(101).expect("sent again under the new labels");
+        assert_eq!(
+            batch.commands.iter().map(|c| c.tick).collect::<Vec<_>>(),
+            vec![89, 99]
+        );
+        // Forward jump: without the shift these would look 60 ticks old.
+        outbox.shift_ticks(60);
+        let batch = outbox.batch(161).expect("still within the resend window");
+        assert_eq!(
+            batch
+                .commands
+                .iter()
+                .map(|c| (c.seq, c.tick))
+                .collect::<Vec<_>>(),
+            vec![(0, 149), (1, 159)]
         );
     }
 }
