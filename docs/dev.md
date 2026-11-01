@@ -57,6 +57,51 @@ If a build mysteriously rebuilds from scratch, you probably touched the repo fro
 
 The WASM web client target (`wasm32-unknown-unknown`) is not set up yet — see `docs/building.md`.
 
+## One-click local test (`play-local.bat`)
+
+```
+play-local.bat            # dev profile
+play-local.bat release    # --release (longer first build, fastest game)
+```
+
+Opens two windows: the server (with its bot roster) and the client, which
+joins `127.0.0.1:5000` by itself and plays with a **simulated 20 ms round-trip
+ping**. The dev profile already builds dependencies at `opt-level = 3` and our
+crates at 1 (see `Cargo.toml`), so it is playable and shares `target/` with
+`cargo watch`; use `release` only if the frame rate disappoints.
+
+Environment variables (all opt-in, read by the client):
+
+| Variable | Effect |
+|----------|--------|
+| `TRON_SIM_LATENCY_MS` | Simulated **round-trip** latency. The bat defaults it to 20; `0` or unset disables. |
+| `TRON_SIM_JITTER_MS` | Uniform ± jitter applied to each direction. |
+| `TRON_SIM_LOSS_PCT` | Packet loss percentage applied to each direction. |
+| `TRON_AUTOCONNECT` | `host:port` to join at startup; retries every 1.5 s until the server is up. Any menu action by hand (Cancel, Disconnect, Quit) turns it off, as does reaching play once. |
+| `TRON_CONFIG_FILE` | Use this settings file instead of the platform one. |
+
+**How the simulation works.** Lightyear's link conditioner only delays what a
+peer *receives*, so a client-only conditioner would shape just the server ->
+client direction. The client therefore splits the requested RTT: half goes to
+the conditioner on its receive side, half to a small uplink queue
+(`crates/client/src/sim.rs`) that holds outgoing packets before they reach the
+socket. Loopback adds ~0 ms, so the RTT you experience is the requested one.
+`crates/nettest/tests/session.rs` checks this against Lightyear's own RTT
+estimate (100 ms requested -> ~100 ms measured). Jitter and loss apply to each
+direction independently; the uplink keeps packet order (jitter stretches, never
+reorders). When active the client logs a `NETWORK SIMULATION ACTIVE` warning
+and the in-game badge (top right) shows an amber `sim 20ms` next to the
+measured `ping`.
+
+## Settings file
+
+The client persists the player name, turn key bindings and an optional
+`manager_url` to `%APPDATA%\tron-zero\client.json` (platform config dir; the
+file is created on first change). Reading or writing can fail without
+consequence: a missing, corrupt or illegal file falls back to defaults and a
+failed save is only logged. Manager URL precedence: `MANAGER_URL` env, file,
+build-time `TRONZERO_MANAGER_URL`, `http://localhost:3001`.
+
 ## Lobby (server-manager)
 
 The server browser needs the Node/Bun lobby service in `server-manager/`
@@ -127,11 +172,20 @@ scenario). After an intended behaviour change, regenerate goldens with
 
 ### Menu and localhost connection
 
-The client starts disconnected, with a menu over an empty grid. Start the
-server separately, then click **Connect to Localhost** (or press Enter) to join
-`127.0.0.1:5000`. There is no automatic connection or server process launch.
-Only localhost is exposed for now; address entry, saved servers, and fetching
-a server list from a master-server endpoint are deferred.
+The client starts disconnected, with a menu over an empty grid (unless
+`TRON_AUTOCONNECT` is set, see above). Type a **Name** (16 characters max,
+saved), start the server separately, then click **Connect to Localhost** to
+join `127.0.0.1:5000`, or pick a room under **Browse Servers**. Full rooms show
+a disabled **Full** button. **Quit game** leaves the server first (so the rider
+is removed at once) and then exits; the window close button does the same.
+
+The first message of every session is a hello carrying the protocol version
+(`PROTOCOL_VERSION` in `protocol.rs`, bump it on incompatible changes) and the
+requested name. The server only spawns the rider after accepting it: a version
+mismatch or a full server (`MAX_PLAYERS` humans; bots do not count) is answered
+with a reason the menu shows, and the link is closed. The server trims the
+name, strips control characters, caps it at 16 characters, falls back to
+`Player` and appends ` 2`, ` 3`... if another player or bot already uses it.
 
 - The menu distinguishes connecting, synchronizing, and ready. A locally opened
   UDP socket alone is not readiness: the server must answer, timeline sync must
