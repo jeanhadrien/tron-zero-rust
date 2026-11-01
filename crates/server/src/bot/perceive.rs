@@ -1,4 +1,4 @@
-//! Perception: a 7-ray continuous fan plus a capped BFS over the grid cache.
+//! Perception: an 8-ray continuous fan plus a capped BFS over the grid cache.
 //!
 //! Rays are cast against the exact polyline segments (never the grid); the grid
 //! only supplies coarse reachable-area and exit counts.
@@ -11,12 +11,21 @@ use shared::{rotate_left, rotate_right};
 
 use super::world::{GRID_CELLS, GRID_N, WorldSnapshot};
 
-pub const RAY_COUNT: usize = 7;
+/// Full-circle sensor fan: every bot always casts all rays.
+pub const RAY_COUNT: usize = 8;
+/// Dead-ahead ray (forward semantics in `nearest`).
 pub const RAY_FRONT: usize = 0;
+/// 90° counter-clockwise ray.
 pub const RAY_LEFT: usize = 1;
+/// 90° clockwise ray.
 pub const RAY_RIGHT: usize = 2;
-pub const RAY_FRONT_LEFT: usize = 3;
-pub const RAY_FRONT_RIGHT: usize = 4;
+/// Rear ray (`-dir`). Sensed/replicated/visualized only: no scoring weight
+/// reads it, and it normally sees the rider's own older trail behind.
+pub const RAY_REAR: usize = 3;
+/// Front-left diagonal (45° between front and left).
+pub const RAY_FRONT_LEFT: usize = 4;
+/// Front-right diagonal (45° between front and right).
+pub const RAY_FRONT_RIGHT: usize = 5;
 
 /// Distance at which an obstacle stops reducing a ray's clearance.
 pub const SENSE_HORIZON: f32 = 240.0;
@@ -29,6 +38,9 @@ pub struct Perception {
     pub exits: u8,
     pub threat: f32,
     pub memory_trend: f32,
+    /// Duelist's enemy turn-rate estimate, fed from `OpponentHistory` after
+    /// sensing (keeps the `Strategy::score` signature stable).
+    pub opponent_turn_prob: f32,
     pub tick: u32,
     /// Index into the snapshot's riders; lets strategies identify self.
     pub rider: usize,
@@ -42,6 +54,7 @@ impl Default for Perception {
             exits: 0,
             threat: 0.0,
             memory_trend: 0.0,
+            opponent_turn_prob: 0.0,
             tick: 0,
             rider: 0,
         }
@@ -73,11 +86,12 @@ pub trait Sensor {
     fn sense(&self, world: &WorldSnapshot) -> Perception;
 }
 
-/// The default sensor: a fan of up to `ray_count` rays plus a BFS capped at
+/// The default sensor: the full 8-ray fan plus a BFS capped at
 /// `bfs_budget` nodes.
 pub struct RaySensor {
+    /// Index into the snapshot's riders.
     pub rider: usize,
-    pub ray_count: usize,
+    /// Capped BFS node budget.
     pub bfs_budget: u32,
 }
 
@@ -88,24 +102,28 @@ impl Sensor for RaySensor {
         };
         let obstacles = world.obstacles();
         let dir = rider.dir;
+        let left = rotate_left(dir);
+        let right = rotate_right(dir);
         let directions = [
             dir,
-            rotate_left(dir),
-            rotate_right(dir),
-            (dir + rotate_left(dir)).normalize_or_zero(),
-            (dir + rotate_right(dir)).normalize_or_zero(),
-            (rotate_left(dir) - dir).normalize_or_zero(),
-            (rotate_right(dir) - dir).normalize_or_zero(),
+            left,
+            right,
+            // Rear ray: sensed/replicated/visualized only; normally sees
+            // the rider's own older trail behind.
+            -dir,
+            (dir + left).normalize_or_zero(),
+            (dir + right).normalize_or_zero(),
+            (left - dir).normalize_or_zero(),
+            (right - dir).normalize_or_zero(),
         ];
+        // The rear ray mirrors `-dir` at its named index; scoring never reads
+        // it, but the full fan is always cast and replicated.
+        debug_assert!((directions[RAY_REAR] + dir).length_squared() < f32::EPSILON);
         let mut rays = [f32::INFINITY; RAY_COUNT];
-        for (index, direction) in directions
-            .iter()
-            .enumerate()
-            .take(self.ray_count.min(RAY_COUNT))
-        {
+        for (index, direction) in directions.iter().enumerate() {
             // Mirror `simulate_players`: only the front sensor uses forward
-            // semantics; every side/diagonal ray excludes the rider's own
-            // active edge and departure corner.
+            // semantics; every other ray (including rear) excludes the
+            // rider's own active edge and departure corner.
             let side = index != RAY_FRONT;
             rays[index] = nearest(
                 obstacles,
@@ -122,6 +140,7 @@ impl Sensor for RaySensor {
             exits,
             threat: threat_level(world, self.rider),
             memory_trend: 0.0,
+            opponent_turn_prob: 0.0,
             tick: world.tick,
             rider: self.rider,
         }
@@ -186,5 +205,66 @@ fn threat_level(world: &WorldSnapshot, rider: usize) -> f32 {
     match nearest.reduce(f32::min) {
         Some(distance) => (1.0 - distance / THREAT_RANGE).clamp(0.0, 1.0),
         None => 0.0,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+
+    use super::super::world::RiderSnapshot;
+
+    fn rider(id: u64, pos: Vec2, dir: Vec2) -> RiderSnapshot {
+        RiderSnapshot {
+            id,
+            pos,
+            dir,
+            // Short active edge only, so the rear ray is not blocked by our
+            // own trail and a wall placed behind is visible.
+            trail: vec![pos - dir * 10.0, pos],
+            alive: true,
+            rubber: 0.0,
+            speed_mult: 1.0,
+            target_speed_mult: 1.0,
+        }
+    }
+
+    #[test]
+    fn fan_order_matches_named_constants() {
+        assert_eq!(RAY_COUNT, 8);
+        assert_eq!(RAY_FRONT, 0);
+        assert_eq!(RAY_LEFT, 1);
+        assert_eq!(RAY_RIGHT, 2);
+        assert_eq!(RAY_REAR, 3);
+        assert_eq!(RAY_FRONT_LEFT, 4);
+        assert_eq!(RAY_FRONT_RIGHT, 5);
+    }
+
+    #[test]
+    fn rear_ray_is_cast_and_sees_obstacle_behind() {
+        // Vertical wall at x = -50; rider at the origin facing +X.
+        let walls = Arc::new(vec![[-50.0, -100.0, -50.0, 100.0]]);
+        let world = WorldSnapshot::new(walls, vec![rider(7, Vec2::ZERO, Vec2::X)], 1);
+        let perception = RaySensor {
+            rider: 0,
+            bfs_budget: 64,
+        }
+        .sense(&world);
+        assert!(
+            perception.rays[RAY_REAR].is_finite(),
+            "rear ray must be cast: {:?}",
+            perception.rays
+        );
+        assert!(
+            (perception.rays[RAY_REAR] - 50.0).abs() < 1.0,
+            "rear ray should see the wall behind: {:?}",
+            perception.rays
+        );
+        assert!(
+            perception.rays[RAY_FRONT].is_infinite(),
+            "no wall ahead: {:?}",
+            perception.rays
+        );
     }
 }

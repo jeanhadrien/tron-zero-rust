@@ -61,7 +61,12 @@ fn main() {
     // any same-order tie (menu.open also hides both outright).
     app.add_systems(
         EguiPrimaryContextPass,
-        (render::hud_ui, render::death_ui, menu::menu_ui),
+        (
+            render::hud_ui,
+            render::death_ui,
+            render::debug_panel_ui,
+            menu::menu_ui,
+        ),
     );
     app.add_systems(Update, connection::send_leave);
     app.add_systems(
@@ -93,11 +98,13 @@ fn main() {
     app.add_systems(FixedUpdate, shared::simulate_players);
 
     // Rendering.
+    app.insert_resource(render::DebugOverlay::from_env());
     app.add_systems(Startup, render::setup_camera);
     app.add_systems(
         Update,
         (
             render::draw_arena,
+            render::draw_bot_debug,
             render::draw_trails,
             render::draw_players,
             render::sync_name_labels,

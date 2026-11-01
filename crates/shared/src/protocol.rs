@@ -95,6 +95,7 @@ pub fn register_protocol(app: &mut App) {
         .add_interpolation_with(step);
 
     // --- Replicated-only (no prediction needed) ---
+    app.component::<BotDebug>().replicate();
     app.component::<Player>().replicate_once();
     app.component::<PlayerId>().replicate_once();
     app.component::<DisplayName>().replicate_once();

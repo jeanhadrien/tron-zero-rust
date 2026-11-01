@@ -15,7 +15,6 @@ const MISTAKE_PROB: [f32; 5] = [0.30, 0.15, 0.07, 0.02, 0.003];
 const GREED: [f32; 5] = [0.10, 0.30, 0.50, 0.75, 0.95];
 const AGGRESSION: [f32; 5] = [0.05, 0.20, 0.40, 0.70, 0.95];
 const CAUTION: [f32; 5] = [0.95, 0.80, 0.60, 0.35, 0.15];
-const SENSOR_RAYS: [f32; 5] = [3.0, 5.0, 7.0, 7.0, 7.0];
 const BFS_BUDGET: [f32; 5] = [64.0, 128.0, 256.0, 512.0, 800.0];
 const STRATEGY_MIX: [f32; 5] = [0.0, 0.25, 0.5, 0.8, 1.0];
 
@@ -28,13 +27,14 @@ pub enum Personality {
     Trapper,
     Adaptive,
     Territorialist,
-    /// Named placeholder; not implemented yet.
+    /// Close-combat nose-cutter; seeks head-on duels and cuts across bows.
     Duelist,
     /// Named placeholder; not implemented yet.
     Roamer,
 }
 
 /// Policy-only knobs. Never physics values: bots drive ordinary inputs.
+/// Sensing is always the full 8-ray fan, so there is no ray-count knob.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct BotKnobs {
     pub reaction_ticks: u32,
@@ -43,7 +43,6 @@ pub struct BotKnobs {
     pub greed: f32,
     pub aggression: f32,
     pub caution: f32,
-    pub sensor_rays: u32,
     pub bfs_budget: u32,
     pub strategy_mix: f32,
 }
@@ -52,7 +51,6 @@ impl BotKnobs {
     fn clamp(&mut self) {
         self.reaction_ticks = self.reaction_ticks.max(1);
         self.lookahead_ticks = self.lookahead_ticks.max(1);
-        self.sensor_rays = self.sensor_rays.clamp(1, 7);
         self.bfs_budget = self.bfs_budget.max(1);
         self.mistake_prob = self.mistake_prob.clamp(0.0, 1.0);
         self.greed = self.greed.clamp(0.0, 1.0);
@@ -91,7 +89,6 @@ impl Elo {
             greed: interp(&GREED, elo),
             aggression: interp(&AGGRESSION, elo),
             caution: interp(&CAUTION, elo),
-            sensor_rays: interp(&SENSOR_RAYS, elo).round() as u32,
             bfs_budget: interp(&BFS_BUDGET, elo).round() as u32,
             strategy_mix: interp(&STRATEGY_MIX, elo),
         };
@@ -120,9 +117,15 @@ impl Personality {
                 knobs.aggression += 0.1;
                 knobs.caution -= 0.05;
             }
+            // Close-combat lean: seeks contact, tolerates rubber burns.
+            Personality::Duelist => {
+                knobs.aggression += 0.25;
+                knobs.caution -= 0.15;
+                knobs.greed += 0.05;
+            }
             // Adaptive deliberately keeps the Elo-derived `strategy_mix`, and
             // remaining placeholders share the base curve until implemented.
-            Personality::Adaptive | Personality::Duelist | Personality::Roamer => {}
+            Personality::Adaptive | Personality::Roamer => {}
         }
     }
 }
@@ -155,6 +158,7 @@ pub fn default_builds() -> Vec<BotBuild> {
         BotBuild::new(Elo(1000), Personality::Survivalist),
         BotBuild::new(Elo(1500), Personality::Adaptive),
         BotBuild::new(Elo(2000), Personality::Territorialist),
+        BotBuild::new(Elo(2250), Personality::Duelist),
         BotBuild::new(Elo(2500), Personality::Trapper),
     ]
 }

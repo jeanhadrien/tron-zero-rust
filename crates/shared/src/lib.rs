@@ -14,6 +14,7 @@ pub mod systems;
 
 // Re-export everything at the crate root for ergonomic access.
 pub use components::arena::*;
+pub use components::debug::*;
 pub use components::player::*;
 pub use components::trail::*;
 pub use constants::*;

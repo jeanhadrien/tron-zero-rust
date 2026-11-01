@@ -4,6 +4,7 @@
 //! and always writes every alive bot's `ActionState`, caching between epochs.
 
 pub(crate) mod config;
+pub(crate) mod debug;
 pub(crate) mod forecast;
 pub(crate) mod memory;
 pub(crate) mod perceive;
@@ -27,6 +28,7 @@ use schedule::{Tier, should_redecide};
 use strategy::{Action, decide, strategy_for};
 use world::WorldSnapshotBuilder;
 
+pub use debug::BotDebugConfig;
 pub use schedule::SchedulerConfig;
 
 const CYCLE_DURATION_TICKS: u32 = 3600;
@@ -102,6 +104,8 @@ pub fn setup_bots(mut commands: Commands) {
 /// rider (Left, Left = 180° into its own trail).
 #[allow(clippy::type_complexity)]
 pub fn bot_brain_input(
+    mut commands: Commands,
+    debug_cfg: Res<BotDebugConfig>,
     scheduler: Res<SchedulerConfig>,
     mut manager: ResMut<BotManager>,
     builder: WorldSnapshotBuilder,
@@ -150,29 +154,64 @@ pub fn bot_brain_input(
             let tier = Tier::from_load(alive_riders, &scheduler);
             brain.degradation = tier;
             if let Some(index) = world.index_of(entity.to_bits()) {
+                let self_id = world.riders[index].id;
+                for rider in &world.riders {
+                    if rider.id != self_id && rider.alive {
+                        brain.memory.opponent.observe(rider.id, rider.dir);
+                    }
+                }
                 let sensor = RaySensor {
                     rider: index,
-                    ray_count: brain.build.knobs.sensor_rays.min(tier.max_rays()) as usize,
                     bfs_budget: brain.build.knobs.bfs_budget.min(tier.max_bfs()),
                 };
                 let mut perception = sensor.sense(world);
                 brain.memory.observe(perception.freedom, perception.exits);
                 perception.memory_trend = brain.memory.trend();
+                perception.opponent_turn_prob = brain.memory.opponent.turn_prob();
                 let forecaster = PhysicsForecaster;
                 let strategy = strategy_for(brain.build.personality);
                 // Clamp the Elo horizon by the LOD tier before strategies see it.
                 let mut knobs = brain.build.knobs.clone();
                 knobs.lookahead_ticks = knobs.lookahead_ticks.min(tier.max_lookahead());
                 let action = decide(strategy, &perception, world, &forecaster, &knobs);
-                debug!(
-                    bot = %strategy.name(),
-                    mode = ?strategy.mode(&perception),
-                    ?action,
-                    freedom = perception.freedom,
-                    threat = perception.threat,
-                    "bot decision"
-                );
-                brain.memory.opponent.record(action);
+                // Re-score for the debug snapshot (same inputs `decide`
+                // argmaxed over); skipped entirely when the gate is off.
+                if debug_cfg.enabled {
+                    let scores = strategy.score(&perception, world, &forecaster, &knobs);
+                    let foe = world.riders.iter().enumerate().find_map(|(i, r)| {
+                        (i != perception.rider && r.alive).then_some((r.pos, r.dir))
+                    });
+                    let (tx, ty) = foe.map_or((0.0, 0.0), |(p, _)| (p.x, p.y));
+                    debug!(
+                        bot = %strategy.name(),
+                        mode = ?strategy.mode(&perception),
+                        ?action,
+                        freedom = perception.freedom,
+                        threat = perception.threat,
+                        scores = ?scores,
+                        aggression = knobs.aggression,
+                        caution = knobs.caution,
+                        greed = knobs.greed,
+                        lookahead = knobs.lookahead_ticks,
+                        reaction = knobs.reaction_ticks,
+                        foe_x = tx,
+                        foe_y = ty,
+                        turn_prob = perception.opponent_turn_prob,
+                        "bot decision"
+                    );
+                    let snapshot =
+                        debug::build_debug(strategy, &perception, scores, world, action, &knobs);
+                    debug::insert_if_enabled(&mut commands, &debug_cfg, entity, snapshot);
+                } else {
+                    debug!(
+                        bot = %strategy.name(),
+                        mode = ?strategy.mode(&perception),
+                        ?action,
+                        freedom = perception.freedom,
+                        threat = perception.threat,
+                        "bot decision"
+                    );
+                }
                 brain.cached = action;
                 fresh = Some(action);
                 brain.epoch = brain.epoch.wrapping_add(1);
@@ -257,6 +296,9 @@ pub(crate) fn format_bot_name(build: &BotBuild, bot_number: u32) -> String {
 }
 
 /// Spawn a bot `Player` entity at a random position with the given number.
+///
+/// Inserts a default [`shared::BotDebug`] only when `TRON_BOT_DEBUG` is truthy;
+/// the writer overwrites it on the next decision epoch.
 fn spawn_bot_entity(
     commands: &mut Commands,
     bot_number: u32,
@@ -266,7 +308,7 @@ fn spawn_bot_entity(
     let color = BOT_COLORS[(bot_number - 1) as usize % BOT_COLORS.len()];
     let (pos, dir) = random_spawn();
 
-    commands
+    let entity = commands
         .spawn((
             Player,
             BotBrain {
@@ -290,7 +332,11 @@ fn spawn_bot_entity(
             Replicate::to_clients(NetworkTarget::All),
             InterpolationTarget::to_clients(NetworkTarget::All),
         ))
-        .id()
+        .id();
+    if debug::enabled_from_env() {
+        commands.entity(entity).insert(shared::BotDebug::default());
+    }
+    entity
 }
 
 /// Pick a random spawn position (with `SPAWN_MARGIN` from walls) and a cardinal

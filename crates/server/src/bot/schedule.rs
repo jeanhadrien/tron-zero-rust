@@ -2,8 +2,8 @@
 
 use bevy::prelude::*;
 
-const T1_RIDERS: usize = 4;
-const T2_RIDERS: usize = 7;
+const T1_RIDERS: usize = 5;
+const T2_RIDERS: usize = 8;
 
 #[derive(Resource, Clone, Copy, Debug)]
 pub struct SchedulerConfig {
@@ -38,14 +38,6 @@ impl Tier {
             Tier::T1
         } else {
             Tier::Full
-        }
-    }
-
-    pub fn max_rays(self) -> u32 {
-        match self {
-            Tier::Full => 7,
-            Tier::T1 => 5,
-            Tier::T2 => 3,
         }
     }
 
@@ -85,4 +77,21 @@ pub fn should_redecide(
     };
     let epoch = epoch.max(1);
     tick % epoch == (slot_index as u32) % epoch
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Five-bot roster: small games stay Full LOD, degradation kicks in at
+    /// five riders (T1) and eight riders (T2).
+    #[test]
+    fn tier_thresholds_fit_five_bot_roster() {
+        let config = SchedulerConfig::default();
+        assert_eq!(Tier::from_load(1, &config), Tier::Full);
+        assert_eq!(Tier::from_load(4, &config), Tier::Full);
+        assert_eq!(Tier::from_load(5, &config), Tier::T1);
+        assert_eq!(Tier::from_load(7, &config), Tier::T1);
+        assert_eq!(Tier::from_load(8, &config), Tier::T2);
+    }
 }

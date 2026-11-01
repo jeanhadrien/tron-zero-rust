@@ -1,4 +1,4 @@
-//! Strategy trait and the three v1 strategies, plus action selection.
+//! Strategy trait and the v1 strategies, plus action selection.
 //!
 //! The full `score` signature (perception + world + forecaster) is stable from
 //! day one; v1 strategies mostly ignore the world and forecaster so algorithms
@@ -55,6 +55,18 @@ pub enum Mode {
     Survival,
     Attack,
     Explore,
+}
+
+impl Mode {
+    /// Stable id for the `BotDebug` snapshot.
+    pub fn to_u8(self) -> u8 {
+        match self {
+            Mode::Escape => shared::MODE_ESCAPE,
+            Mode::Survival => shared::MODE_SURVIVAL,
+            Mode::Attack => shared::MODE_ATTACK,
+            Mode::Explore => shared::MODE_EXPLORE,
+        }
+    }
 }
 
 pub trait Strategy: Send + Sync {
@@ -211,16 +223,18 @@ static SURVIVALIST: Survivalist = Survivalist;
 static TRAPPER: Trapper = Trapper;
 static ADAPTIVE: Adaptive = Adaptive;
 static TERRITORIALIST: Territorialist = Territorialist;
+static DUELIST: Duelist = Duelist;
 
-/// Map a personality to its strategy. Duelist/Roamer placeholders fall back to
-/// `Survivalist` rather than panicking.
+/// Map a personality to its strategy. Only the Roamer placeholder still falls
+/// back to `Survivalist` rather than panicking.
 pub fn strategy_for(personality: Personality) -> &'static dyn Strategy {
     match personality {
         Personality::Survivalist => &SURVIVALIST,
         Personality::Trapper => &TRAPPER,
         Personality::Adaptive => &ADAPTIVE,
         Personality::Territorialist => &TERRITORIALIST,
-        Personality::Duelist | Personality::Roamer => &SURVIVALIST,
+        Personality::Duelist => &DUELIST,
+        Personality::Roamer => &SURVIVALIST,
     }
 }
 
@@ -290,6 +304,199 @@ impl Strategy for Territorialist {
     }
 }
 
+/// Close-combat nose-cutter. At range it rides the survival baseline; once
+/// converging on the nearest enemy it scores each of its three moves by a
+/// shallow 2-ply search (our 3 x enemy 3, one physics step each) and plays the
+/// max over the turn-probability-weighted leaves. Leaves are scored from
+/// continuous geometry + rider state only — never the grid, which projected
+/// snapshots leave unresolved by design. Rubber courage is deliberate: low
+/// rubber costs nothing, only a projected death is penalised.
+pub struct Duelist;
+
+/// Duel range before Elo-horizon stretch; matches `DUEL_THREAT` below.
+const DUEL_RANGE: f32 = 480.0;
+/// `1 - DUEL_RANGE / 600`, the threat proxy `mode` uses for "converging".
+const DUEL_THREAT: f32 = 0.2;
+/// Cut window ahead of the enemy nose and across it.
+const CUT_AHEAD: f32 = 160.0;
+const CUT_WIDTH: f32 = 90.0;
+/// Max cut bonus (× aggression, ×1.5 head-on); kept below `DUEL_DEATH` so a
+/// projected death is never picked for its cut value.
+const CUT_GAIN: f32 = 0.9;
+/// Projected-death guardrail; dominates any plausible cut swing.
+const DUEL_DEATH: f32 = -2.0;
+
+impl Strategy for Duelist {
+    fn name(&self) -> &'static str {
+        "duelist"
+    }
+
+    fn score(
+        &self,
+        perception: &Perception,
+        world: &WorldSnapshot,
+        forecast: &dyn Forecaster,
+        knobs: &BotKnobs,
+    ) -> [f32; 3] {
+        let base = Survivalist.score(perception, world, forecast, knobs);
+        let (Some(me), Some((foe_index, foe))) = (
+            world.riders.get(perception.rider),
+            nearest_enemy(world, perception.rider),
+        ) else {
+            return base;
+        };
+        if !converging(me.pos, me.dir, foe.pos, foe.dir, knobs) {
+            return base;
+        }
+        // Head-on duels pay extra: crossing the nose there wins the most.
+        let gain = if head_on(me.pos, me.dir, foe.pos, foe.dir) {
+            1.5
+        } else {
+            1.0
+        };
+        // Enemy model from memory: hold with `1 - p`, split `p` over the
+        // turns. `p == 0` is exactly assume-straight.
+        let turn = perception.opponent_turn_prob.clamp(0.0, 1.0);
+        let weights = [1.0 - turn, turn * 0.5, turn * 0.5];
+        let mut scores = base;
+        for our in [Action::Hold, Action::Left, Action::Right] {
+            let mut expected = 0.0;
+            for (branch, foe_action) in [Action::Hold, Action::Left, Action::Right]
+                .iter()
+                .enumerate()
+            {
+                let projected = project_duel(
+                    world,
+                    forecast,
+                    perception.rider,
+                    foe_index,
+                    our,
+                    *foe_action,
+                );
+                expected += weights[branch]
+                    * duel_leaf(
+                        &projected,
+                        perception.rider,
+                        foe_index,
+                        base[our.index()],
+                        gain,
+                        knobs,
+                    );
+            }
+            scores[our.index()] = expected;
+        }
+        scores
+    }
+
+    fn mode(&self, perception: &Perception) -> Mode {
+        if perception.threat > DUEL_THREAT {
+            Mode::Attack
+        } else {
+            default_mode(perception)
+        }
+    }
+}
+
+/// Closing geometry: in range and at least one of us faces the other.
+pub(crate) fn converging(
+    me_pos: Vec2,
+    me_dir: Vec2,
+    foe_pos: Vec2,
+    foe_dir: Vec2,
+    knobs: &BotKnobs,
+) -> bool {
+    let to_foe = foe_pos - me_pos;
+    let dist = to_foe.length();
+    if dist < 1.0 {
+        return true;
+    }
+    let range = DUEL_RANGE + knobs.lookahead_ticks as f32 * 8.0;
+    if dist > range {
+        return false;
+    }
+    let axis = to_foe / dist;
+    me_dir.dot(axis) > 0.0 || foe_dir.dot(-axis) > 0.0
+}
+
+/// Both riders committed at each other's noses.
+pub(crate) fn head_on(me_pos: Vec2, me_dir: Vec2, foe_pos: Vec2, foe_dir: Vec2) -> bool {
+    let to_foe = foe_pos - me_pos;
+    let dist = to_foe.length();
+    if dist < 1.0 {
+        return true;
+    }
+    let axis = to_foe / dist;
+    me_dir.dot(foe_dir) < -0.5 && me_dir.dot(axis) > 0.5 && foe_dir.dot(-axis) > 0.5
+}
+
+/// Reward for sitting on the enemy's forward ray, just ahead and close
+/// across it: the cut-across-the-nose shape. Zero behind the enemy or wide
+/// of the nose.
+fn cut_reward(my_pos: Vec2, foe_pos: Vec2, foe_dir: Vec2, knobs: &BotKnobs) -> f32 {
+    let rel = my_pos - foe_pos;
+    let ahead = rel.dot(foe_dir);
+    if ahead < -20.0 {
+        return 0.0;
+    }
+    let lateral = (rel - foe_dir * ahead).length();
+    if lateral > CUT_WIDTH {
+        return 0.0;
+    }
+    let window = if ahead <= CUT_AHEAD {
+        1.0
+    } else {
+        (1.0 - (ahead - CUT_AHEAD) / CUT_AHEAD).clamp(0.0, 1.0)
+    };
+    CUT_GAIN * knobs.aggression * (1.0 - lateral / CUT_WIDTH) * window
+}
+
+/// One physics step with our action for us and the given enemy reply
+/// (everyone else holds). Reads rider state only; the projected grid stays
+/// unresolved and is never consulted.
+fn project_duel(
+    world: &WorldSnapshot,
+    forecast: &dyn Forecaster,
+    me_index: usize,
+    foe_index: usize,
+    our: Action,
+    foe: Action,
+) -> WorldSnapshot {
+    let mut actions = vec![Action::Hold; world.riders.len()];
+    if let Some(slot) = actions.get_mut(me_index) {
+        *slot = our;
+    }
+    if let Some(slot) = actions.get_mut(foe_index) {
+        *slot = foe;
+    }
+    forecast.project(world, &actions)
+}
+
+/// Leaf value: survival baseline plus the cut, or the death guardrail.
+/// `me.rubber` is deliberately ignored — rubber courage, death stops a duel.
+fn duel_leaf(
+    projected: &WorldSnapshot,
+    me_index: usize,
+    foe_index: usize,
+    base: f32,
+    gain: f32,
+    knobs: &BotKnobs,
+) -> f32 {
+    let (Some(me), Some(foe)) = (
+        projected.riders.get(me_index),
+        projected.riders.get(foe_index),
+    ) else {
+        return base + DUEL_DEATH;
+    };
+    if !me.alive {
+        return base + DUEL_DEATH;
+    }
+    if !foe.alive {
+        // The cut already landed: bank the kill.
+        return base + CUT_GAIN * knobs.aggression * gain;
+    }
+    base + gain * cut_reward(me.pos, foe.pos, foe.dir, knobs)
+}
+
 /// One physics step with `action` for `rider` (everyone else holds).
 /// Returns the projected position and aliveness; `None` when the rider index
 /// is out of range.
@@ -354,7 +561,10 @@ fn lookahead_safety(
     LOOKAHEAD_SAFE
 }
 
-fn nearest_enemy(world: &WorldSnapshot, rider: usize) -> Option<(usize, &RiderSnapshot)> {
+pub(crate) fn nearest_enemy(
+    world: &WorldSnapshot,
+    rider: usize,
+) -> Option<(usize, &RiderSnapshot)> {
     let me = world.riders.get(rider)?;
     world
         .riders
@@ -476,7 +686,6 @@ mod tests {
             greed: 0.9,
             aggression: 0.5,
             caution: 0.1,
-            sensor_rays: 7,
             bfs_budget: 1024,
             strategy_mix: 0.5,
         }
@@ -489,6 +698,7 @@ mod tests {
             exits: 4,
             threat: 0.0,
             memory_trend: 0.0,
+            opponent_turn_prob: 0.0,
             tick: 42,
             rider: 0,
         }
@@ -578,5 +788,146 @@ mod tests {
             strategy_for(Personality::Territorialist).name(),
             "territorialist"
         );
+    }
+
+    #[test]
+    fn strategy_for_maps_duelist() {
+        assert_eq!(strategy_for(Personality::Duelist).name(), "duelist");
+    }
+
+    fn rider_facing(id: u64, pos: Vec2, dir: Vec2) -> RiderSnapshot {
+        RiderSnapshot {
+            id,
+            pos,
+            dir,
+            trail: vec![pos - dir * 10.0, pos],
+            alive: true,
+            rubber: 0.0,
+            speed_mult: 1.0,
+            target_speed_mult: 1.0,
+        }
+    }
+
+    /// Head-on world: us at (-100, 0) heading +X, enemy at (100, 0) heading
+    /// -X. Converging with the head-on bonus armed.
+    fn head_on_world() -> WorldSnapshot {
+        WorldSnapshot::new(
+            Arc::new(Vec::new()),
+            vec![
+                rider_facing(1, Vec2::new(-100.0, 0.0), Vec2::X),
+                rider_facing(2, Vec2::new(100.0, 0.0), Vec2::NEG_X),
+            ],
+            9,
+        )
+    }
+
+    #[test]
+    fn duelist_head_on_prefers_cut_over_hold() {
+        // Hold stays wide of the nose (no cut); Left lands on the enemy's
+        // forward ray (full cut); Right stays wide too. The turn cost in the
+        // survival base is dwarfed by the cut bonus.
+        let forecast = TeleportForecaster {
+            targets: [
+                Vec2::new(-100.0, -150.0),
+                Vec2::new(60.0, 0.0),
+                Vec2::new(-100.0, 150.0),
+            ],
+        };
+        let world = head_on_world();
+        let perception = perception();
+        let knobs = knobs();
+        let scores = Duelist.score(&perception, &world, &forecast, &knobs);
+        assert!(
+            scores[Action::Left.index()] > scores[Action::Hold.index()] + 0.2,
+            "nose cut should beat holding wide: {scores:?}"
+        );
+        assert_eq!(
+            decide(&Duelist, &perception, &world, &forecast, &knobs),
+            Action::Left
+        );
+    }
+
+    /// Moves both riders per the two actions: ours teleport, the enemy steers
+    /// to a different nose offset per reply.
+    struct DuelForecaster {
+        our_targets: [Vec2; 3],
+        foe_targets: [Vec2; 3],
+    }
+
+    impl Forecaster for DuelForecaster {
+        fn project(&self, world: &WorldSnapshot, actions: &[Action]) -> WorldSnapshot {
+            let mut projected = world.clone();
+            let our = actions.first().copied().unwrap_or(Action::Hold);
+            let foe = actions.get(1).copied().unwrap_or(Action::Hold);
+            if let Some(rider) = projected.riders.first_mut() {
+                rider.pos = self.our_targets[our.index()];
+            }
+            if let Some(rider) = projected.riders.get_mut(1) {
+                rider.pos = self.foe_targets[foe.index()];
+            }
+            projected
+        }
+    }
+
+    #[test]
+    fn duelist_turn_rate_zero_assumes_straight() {
+        // We sit on the nose when the enemy holds straight; enemy turns flee
+        // far away. With turn-rate 0 the turn branches must carry zero weight,
+        // so shuffling them cannot move the scores.
+        let world = head_on_world();
+        let knobs = knobs();
+        let near = Vec2::new(100.0, 0.0);
+        let ours = [Vec2::new(60.0, 10.0); 3];
+        let first = DuelForecaster {
+            our_targets: ours,
+            foe_targets: [near, Vec2::new(400.0, 400.0), Vec2::new(-400.0, 400.0)],
+        };
+        let second = DuelForecaster {
+            our_targets: ours,
+            foe_targets: [near, Vec2::new(400.0, -400.0), Vec2::new(-400.0, -400.0)],
+        };
+        let mut perception = perception();
+        perception.opponent_turn_prob = 0.0;
+        let straight_a = Duelist.score(&perception, &world, &first, &knobs);
+        let straight_b = Duelist.score(&perception, &world, &second, &knobs);
+        assert_eq!(straight_a, straight_b);
+        // ...while a turn-heavy prior does listen to those branches.
+        perception.opponent_turn_prob = 1.0;
+        let turning = Duelist.score(&perception, &world, &second, &knobs);
+        assert_ne!(straight_a, turning);
+    }
+
+    #[test]
+    fn duelist_projected_death_never_picked() {
+        struct Killer;
+        impl Forecaster for Killer {
+            fn project(&self, world: &WorldSnapshot, _: &[Action]) -> WorldSnapshot {
+                let mut projected = world.clone();
+                if let Some(rider) = projected.riders.first_mut() {
+                    rider.alive = false;
+                }
+                projected
+            }
+        }
+        let world = head_on_world();
+        let perception = perception();
+        let knobs = knobs();
+        let base = Survivalist.score(&perception, &world, &Killer, &knobs);
+        let scores = Duelist.score(&perception, &world, &Killer, &knobs);
+        for action in [Action::Hold, Action::Left, Action::Right] {
+            assert!(
+                scores[action.index()] < base[action.index()] - 0.9,
+                "dead duels must be penalized: {scores:?} vs base {base:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn duelist_mode_is_attack_when_converging() {
+        let mut perception = perception();
+        perception.threat = 0.5;
+        assert_eq!(Duelist.mode(&perception), Mode::Attack);
+        perception.threat = 0.0;
+        assert_eq!(Duelist.mode(&perception), Mode::Explore);
     }
 }

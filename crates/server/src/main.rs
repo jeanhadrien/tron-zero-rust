@@ -68,6 +68,8 @@ fn main() {
     app.init_resource::<systems::PendingRespawns>();
     // Staggered bot decisions (one epoch per reaction period).
     app.init_resource::<bot::SchedulerConfig>();
+    // Bot debug gate: read once; the writer + spawn check this resource / env.
+    app.insert_resource(bot::BotDebugConfig::from_env());
     app.add_systems(
         PreUpdate,
         systems::collect_respawn_requests.after(lightyear::prelude::MessageSystems::Receive),
