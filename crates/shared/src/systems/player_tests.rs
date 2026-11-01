@@ -1,5 +1,6 @@
 use super::*;
 use crate::physics::ray_hit;
+use bevy_ecs::resource::IsResource;
 use lightyear::prelude::{HistoryState, Tick};
 
 fn setup() -> (World, Schedule) {
@@ -27,6 +28,22 @@ fn cycle(world: &mut World, position: Vec2, direction: Vec2) -> Entity {
 
 fn near(a: f32, b: f32) {
     assert!((a - b).abs() < 0.01, "{a} != {b}");
+}
+
+/// Gameplay entities only: Bevy 0.19 stores resources as entities too.
+fn sim_entities(world: &mut World) -> usize {
+    world
+        .query_filtered::<(), Without<IsResource>>()
+        .iter(world)
+        .count()
+}
+
+/// Point-wise `near` for polylines: trail trimming accumulates float error.
+fn near_points(actual: &[Vec2], expected: &[Vec2]) {
+    assert_eq!(actual.len(), expected.len(), "{actual:?} != {expected:?}");
+    for (a, e) in actual.iter().zip(expected) {
+        assert!(a.distance(*e) < 0.01, "{actual:?} != {expected:?}");
+    }
 }
 
 #[test]
@@ -260,9 +277,9 @@ fn high_speed_cannot_tunnel_through_wall_or_trail() {
 fn straight_and_cornered_trails_consume_oldest_end_gradually() {
     let mut straight = Trail::new(Vec2::ZERO);
     straight.advance(Vec2::X * 100.0, 40.0);
-    assert_eq!(straight.0, vec![Vec2::X * 60.0, Vec2::X * 100.0]);
+    near_points(&straight.0, &[Vec2::X * 60.0, Vec2::X * 100.0]);
     straight.advance(Vec2::X * 103.0, 40.0);
-    assert_eq!(straight.0[0], Vec2::X * 63.0);
+    near_points(&straight.0[..1], &[Vec2::X * 63.0]);
     near(straight.length(), 40.0);
     let mut corners = Trail(vec![
         Vec2::ZERO,
@@ -272,20 +289,17 @@ fn straight_and_cornered_trails_consume_oldest_end_gradually() {
         Vec2::new(20.0, 20.0),
     ]);
     corners.advance(Vec2::new(20.0, 25.0), 20.0);
-    assert_eq!(
-        corners.0,
-        vec![
+    near_points(
+        &corners.0,
+        &[
             Vec2::new(15.0, 10.0),
             Vec2::new(20.0, 10.0),
             Vec2::new(20.0, 25.0),
-        ]
+        ],
     );
     near(corners.length(), 20.0);
     corners.advance(Vec2::new(20.0, 60.0), 20.0);
-    assert_eq!(
-        corners.0,
-        vec![Vec2::new(20.0, 40.0), Vec2::new(20.0, 60.0)]
-    );
+    near_points(&corners.0, &[Vec2::new(20.0, 40.0), Vec2::new(20.0, 60.0)]);
 }
 
 #[test]
@@ -348,7 +362,7 @@ fn client_advances_only_predicted_player_and_has_no_trail_child_entities() {
         Vec2::new(100.0, 100.0)
     );
     assert_eq!(world.get::<Direction>(remote).unwrap().0, Vec2::Y);
-    assert_eq!(world.entities().len(), 3);
+    assert_eq!(sim_entities(&mut world), 3);
 }
 
 #[test]
@@ -394,7 +408,7 @@ fn restoring_trail_snapshot_replays_turn_without_duplicate_geometry() {
         .insert((trail, position, direction));
     schedule.run(&mut world);
     assert_eq!(*world.get::<Trail>(entity).unwrap(), result);
-    assert_eq!(world.entities().len(), 2);
+    assert_eq!(sim_entities(&mut world), 2);
 }
 
 #[test]

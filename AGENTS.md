@@ -66,11 +66,19 @@ The base game is available at https://github.com/ArmagetronAd/armagetronad
 
 ## Project Development
 
-Do not build the project yourself. Test your code using : 
+You may build, run and test the project. Reach for the cheapest tool that
+answers the question:
 
 - cargo check — fast compilation check without producing binaries (syntax + type checking)
 - cargo clippy — linting (catches errors + idiomatic issues)
 - cargo fmt — formatting
+- cargo test — `-p tron-zero-shared` for the sim core (fast), `--workspace` for everything
+- cargo run — headless binaries and tools only (server, harnesses). Run
+  long-lived processes in the background and stop them when done. Don't launch
+  the windowed client unless asked: you can't play it at game speed.
+
+The user may have `cargo watch` running (`dev-watch.bat`); a "Blocking waiting
+for file lock" message means you are sharing `target/` with it.
 
 ## Generic Rust Development
 
