@@ -1,4 +1,5 @@
 # Ride straight into the east wall: Zeno slowdown, rubber drain, death.
+arena = [2400, 2400]
 until = 300
 
 [[rider]]

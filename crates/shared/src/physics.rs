@@ -45,8 +45,48 @@ pub fn ray_hit(origin: Vec2, direction: Vec2, a: Vec2, b: Vec2) -> Option<f32> {
     }
 }
 
-/// Nearest obstacle along a ray, honouring the self-trail exclusions the sim
-/// uses at turn junctions so a rider is never blocked by its own active edge.
+/// Every obstacle the ray touches (with its distance), honouring the
+/// self-trail exclusions the sim uses at turn junctions so a rider is never
+/// blocked by its own active edge.
+fn contacts(
+    obstacles: &[Segment],
+    owner: Option<u64>,
+    origin: Vec2,
+    direction: Vec2,
+    side: bool,
+) -> impl Iterator<Item = (f32, &Segment)> {
+    obstacles.iter().filter_map(move |segment| {
+        let own = owner.is_some() && segment.owner == owner;
+        if own && segment.from_head == 0 && (side || direction.dot(segment.b - segment.a) >= 0.0) {
+            return None;
+        }
+        // The newest corner is a departure junction, not a sliding wall.
+        if own && side && segment.from_head == 1 {
+            return None;
+        }
+        let hit = ray_hit(origin, direction, segment.a, segment.b)?;
+        if own
+            && segment.from_head == 1
+            && hit <= EPSILON
+            && (direction.perp_dot(segment.b - segment.a).abs() > EPSILON
+                || direction.dot(segment.b - segment.a) >= 0.0)
+        {
+            return None;
+        }
+        // Boundary walls wind counter-clockwise. At exact contact an
+        // inward/tangential heading escapes; outward headings still drain.
+        if segment.owner.is_none()
+            && !side
+            && hit <= EPSILON
+            && (segment.b - segment.a).perp_dot(direction) >= 0.0
+        {
+            return None;
+        }
+        Some((hit, segment))
+    })
+}
+
+/// Distance to the nearest obstacle along a ray.
 pub fn nearest(
     obstacles: &[Segment],
     owner: Option<u64>,
@@ -54,41 +94,27 @@ pub fn nearest(
     direction: Vec2,
     side: bool,
 ) -> f32 {
-    obstacles
-        .iter()
-        .filter_map(|segment| {
-            let own = owner.is_some() && segment.owner == owner;
-            if own
-                && segment.from_head == 0
-                && (side || direction.dot(segment.b - segment.a) >= 0.0)
-            {
-                return None;
-            }
-            // The newest corner is a departure junction, not a sliding wall.
-            if own && side && segment.from_head == 1 {
-                return None;
-            }
-            let hit = ray_hit(origin, direction, segment.a, segment.b)?;
-            if own
-                && segment.from_head == 1
-                && hit <= EPSILON
-                && (direction.perp_dot(segment.b - segment.a).abs() > EPSILON
-                    || direction.dot(segment.b - segment.a) >= 0.0)
-            {
-                return None;
-            }
-            // Boundary walls wind counter-clockwise. At exact contact an
-            // inward/tangential heading escapes; outward headings still drain.
-            if segment.owner.is_none()
-                && !side
-                && hit <= EPSILON
-                && (segment.b - segment.a).perp_dot(direction) >= 0.0
-            {
-                return None;
-            }
-            Some(hit)
-        })
+    contacts(obstacles, owner, origin, direction, side)
+        .map(|(hit, _)| hit)
         .fold(f32::INFINITY, f32::min)
+}
+
+/// Grind strength in `0..=1` for a side ray: 1 touching an obstacle, falling
+/// linearly to 0 at `SLIDE_DISTANCE`. Arena walls count as farther away
+/// (`ARENA_WALL_GRIND`) so the boundary is a weaker accelerator than trails.
+fn grind_proximity(
+    obstacles: &[Segment],
+    owner: Option<u64>,
+    origin: Vec2,
+    direction: Vec2,
+) -> f32 {
+    let distance = contacts(obstacles, owner, origin, direction, true)
+        .map(|(hit, segment)| match segment.owner {
+            Some(_) => hit,
+            None => hit / ARENA_WALL_GRIND,
+        })
+        .fold(f32::INFINITY, f32::min);
+    (1.0 - distance / SLIDE_DISTANCE).max(0.0)
 }
 
 /// The mutable kinematic state of one rider entering a tick.
@@ -145,20 +171,20 @@ pub fn step_rider(
     let origin = position;
     let heading = direction;
     let front = nearest(obstacles, owner, origin, heading, false);
-    let left = nearest(obstacles, owner, origin, rotate_left(heading), true);
-    let right = nearest(obstacles, owner, origin, rotate_right(heading), true);
-    let normal_step = BASE_SPEED * target_speed * TICK_SECS;
+    let cruise = target_speed;
+    let normal_step = BASE_SPEED * cruise * TICK_SECS;
     let colliding = front < SLOW_DOWN_DISTANCE;
     let step = if colliding {
         let ratio = (front / SLOW_DOWN_DISTANCE).powi(2);
-        rubber -= DELTA_STUFF * 0.03 * (1.0 + target_speed).powi(3);
+        let load = 1.0 + cruise;
+        rubber -= RUBBER_DRAIN * load * load * load;
         // Zeno decay may never exceed cruise speed: at the zone edge it would
         // otherwise lurch the rider forward (~12 u in one tick at base speed).
         (front * ratio)
             .min(normal_step)
             .min((front - EPSILON).max(0.0))
     } else {
-        rubber = (rubber + 0.006 * TICK_MS * DELTA_STUFF).min(BASE_RUBBER);
+        rubber = (rubber + RUBBER_REGEN).min(BASE_RUBBER);
         // Swept sensing: even arbitrarily high slide speeds cannot tunnel.
         normal_step.min((front - EPSILON).max(0.0))
     };
@@ -176,12 +202,20 @@ pub fn step_rider(
             died: true,
         };
     }
-    let sliding = left < SLOW_DOWN_DISTANCE || right < SLOW_DOWN_DISTANCE;
-    if sliding {
-        target_speed *= 1.003_f32.powf(DELTA_STUFF / 16.666);
-    } else if !colliding && target_speed > 1.0 {
-        target_speed = (target_speed - 0.0003 * DELTA_STUFF).max(1.0);
-    }
+    // Inertia: cruise speed chases a grind-dependent goal at bounded rates.
+    // Everything here is + - * / only, so it is bit-identical across platforms.
+    let grind = grind_proximity(obstacles, owner, origin, rotate_left(heading)).max(
+        grind_proximity(obstacles, owner, origin, rotate_right(heading)),
+    );
+    let sliding = grind > 0.0;
+    let goal = 1.0 + (MAX_SPEED_MULT - 1.0) * grind;
+    target_speed = if colliding {
+        (cruise - CRASH_BRAKE).max(1.0)
+    } else if cruise < goal {
+        (cruise + SLIDE_ACCEL).min(goal)
+    } else {
+        (cruise - COAST_DECEL).max(goal)
+    };
     let speed = step / (BASE_SPEED * TICK_SECS);
     let position = position + heading * step;
     trail.advance(position, TRAIL_MAX_LENGTH);

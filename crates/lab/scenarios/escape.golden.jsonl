@@ -2,8 +2,8 @@
 {"tick":60,"rider":"a","event":"sample","at":[1080.0,0.0],"heading":"+x","speed":1.0,"target":1.0,"rubber":120.0,"sliding":false,"colliding":false,"trail":180.0}
 {"tick":97,"rider":"a","event":"enter_rubber_zone","at":[1194.0,0.0],"rubber":117.12}
 {"tick":110,"rider":"a","event":"turn","at":[1197.862,0.0],"heading":"+y"}
-{"tick":110,"rider":"a","event":"leave_rubber_zone","at":[1197.862,3.0],"rubber":83.16}
-{"tick":110,"rider":"a","event":"slide_start","at":[1197.862,3.0],"target":1.002}
-{"tick":120,"rider":"a","event":"sample","at":[1197.862,30.293],"heading":"+y","speed":1.02,"target":1.022,"rubber":88.56,"sliding":true,"colliding":false,"trail":328.155}
-{"tick":180,"rider":"a","event":"sample","at":[1197.862,226.438],"heading":"+y","speed":1.16,"target":1.163,"rubber":120.0,"sliding":true,"colliding":false,"trail":524.3}
-{"tick":240,"rider":"a","event":"sample","at":[1197.862,449.682],"heading":"+y","speed":1.321,"target":1.324,"rubber":120.0,"sliding":true,"colliding":false,"trail":747.544}
+{"tick":110,"rider":"a","event":"leave_rubber_zone","at":[1197.862,3.0],"rubber":82.71}
+{"tick":110,"rider":"a","event":"slide_start","at":[1197.862,3.0],"target":1.004}
+{"tick":120,"rider":"a","event":"sample","at":[1197.862,30.563],"heading":"+y","speed":1.038,"target":1.042,"rubber":84.06,"sliding":true,"colliding":false,"trail":328.425}
+{"tick":180,"rider":"a","event":"sample","at":[1197.862,240.188],"heading":"+y","speed":1.288,"target":1.292,"rubber":93.06,"sliding":true,"colliding":false,"trail":538.05}
+{"tick":240,"rider":"a","event":"sample","at":[1197.862,494.814],"heading":"+y","speed":1.538,"target":1.542,"rubber":102.06,"sliding":true,"colliding":false,"trail":792.676}

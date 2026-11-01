@@ -1,4 +1,5 @@
 # Three left turns close a 60-unit square back into the rider's own trail.
+arena = [2400, 2400]
 until = 300
 
 [[rider]]
