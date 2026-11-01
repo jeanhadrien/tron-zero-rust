@@ -1,0 +1,5 @@
+# Windows dev builds: rust-lld (shipped with the toolchain) links much faster
+# than MSVC link.exe, which dominates incremental rebuild time. Other targets
+# (the Linux server build) are unaffected.
+[target.x86_64-pc-windows-msvc]
+linker = "rust-lld.exe"

@@ -15,3 +15,12 @@ serde = { version = "1", features = ["derive"] }
 postcard = "1.1"
 tracing = "0.1"
 rand = "0.10"
+
+# Dev builds: light optimisation for our crates keeps incremental rebuilds
+# fast; dependencies (Bevy, Lightyear) are built once at full optimisation so
+# the game, server, lab and tests run at a realistic speed.
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
