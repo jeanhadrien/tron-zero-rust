@@ -6,6 +6,9 @@ use lightyear::prelude::server::*;
 use lightyear::prelude::*;
 use shared::protocol::{RespawnChannel, RespawnOutcome, RespawnReply, RespawnRequest};
 
+use crate::admission::{AwaitingHello, MAX_UNADMITTED_LINKS};
+use crate::session::SessionLease;
+
 #[derive(Component)]
 #[require(shared::LifeGeneration)]
 pub struct Human;
@@ -54,18 +57,28 @@ pub fn spawn_server_arena_and_start(port: Res<crate::announce::UdpPort>, mut com
     commands.trigger(Start { entity: server });
 }
 
-/// When a new client's link-of entity becomes connected, set up replication
-/// and session state on the link. The rider is NOT spawned here: it appears
-/// once the client's hello is accepted (`admission::handle_hello`).
+/// When a new client's link-of entity becomes connected, set up its session
+/// state. Nothing is replicated to it and no rider is spawned yet: both happen
+/// once the client's hello is accepted (`admission::handle_hello`), because a
+/// raw UDP "connection" exists as soon as any packet arrives from an address.
+/// Past [`MAX_UNADMITTED_LINKS`] links waiting for a hello, new ones are closed.
 ///
 /// Observes `ClientOf` (inserted last in the connection bundle) so that
 /// `Connected`, `RemoteId`, etc. are guaranteed present by the time we run.
-pub fn on_client_connected(trigger: On<Add, ClientOf>, mut commands: Commands) {
+pub fn on_client_connected(
+    trigger: On<Add, ClientOf>,
+    awaiting: Query<(), With<AwaitingHello>>,
+    mut commands: Commands,
+) {
+    let mut lease = SessionLease::default();
+    if awaiting.iter().count() >= MAX_UNADMITTED_LINKS {
+        warn!(link = ?trigger.entity, "Too many links awaiting a hello; closing the new one");
+        lease.close();
+    }
     commands.entity(trigger.entity).insert((
-        ReplicationSender,
-        crate::session::SessionLease::default(),
+        lease,
         crate::turns::TurnQueue::default(),
-        crate::admission::AwaitingHello::default(),
+        AwaitingHello::default(),
     ));
 }
 

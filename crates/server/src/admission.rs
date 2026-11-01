@@ -23,8 +23,16 @@ impl Default for MaxPlayers {
     }
 }
 
+/// Most links that may be waiting for a hello at once. A link only costs a
+/// few components until it is admitted (it is not replicated to), so this
+/// bounds what stray or spoofed packets can make the server hold; further
+/// would-be links are closed on arrival.
+pub const MAX_UNADMITTED_LINKS: usize = 32;
+
 /// On a client link until its hello is accepted. Bounds how long a silent
-/// (or old-protocol) peer may hold a link without ever getting a rider.
+/// (or old-protocol) peer may hold a link without ever getting a rider. A
+/// refused link keeps it while it lingers (see `SessionLease`), so it keeps
+/// counting against [`MAX_UNADMITTED_LINKS`].
 #[derive(Component, Default)]
 pub struct AwaitingHello {
     waited_secs: f64,
@@ -68,8 +76,9 @@ fn unique_name(base: &str, taken: &[String]) -> String {
         .expect("an unbounded range always yields a free name")
 }
 
-/// Answer each link's first hello: spawn the rider and confirm the final name,
-/// or reject with a reason and close the link. Links that never say hello are
+/// Answer each link's first hello: spawn the rider, start replicating to the
+/// link and confirm the final name, or reject with a reason and close the link
+/// once the refusal has had time to arrive. Links that never say hello are
 /// closed after the session timeout.
 #[allow(clippy::type_complexity)]
 pub fn handle_hello(
@@ -93,6 +102,9 @@ pub fn handle_hello(
     let mut human_count = humans.iter().count();
     let mut taken: Vec<String> = names.iter().map(|name| name.0.clone()).collect();
     for (link, remote, mut waiting, mut lease, mut receiver, mut sender) in &mut pending {
+        if lease.is_closing() {
+            continue;
+        }
         waiting.waited_secs += time.delta_secs_f64();
         let Some(hello) = receiver.receive().next() else {
             if waiting.waited_secs >= SESSION_TIMEOUT_SECS {
@@ -104,8 +116,13 @@ pub fn handle_hello(
         match admit(&hello, *max, human_count, &taken) {
             Ok(name) => {
                 info!(?link, %name, "Client admitted");
+                // Only an admitted link is replicated to; before this, nothing
+                // but the handshake flows to it.
+                commands
+                    .entity(link)
+                    .remove::<AwaitingHello>()
+                    .insert(ReplicationSender);
                 spawn_human(&mut commands, link, remote.0, name.clone());
-                commands.entity(link).remove::<AwaitingHello>();
                 human_count += 1;
                 taken.push(name.clone());
                 sender.send::<SessionChannel>(HelloReply::Accepted { name });
@@ -113,10 +130,8 @@ pub fn handle_hello(
             Err(reason) => {
                 warn!(?link, protocol = hello.protocol, %reason, "Client rejected");
                 sender.send::<SessionChannel>(HelloReply::Rejected(reason));
-                // close_sessions runs after the transport send, so the
-                // rejection is flushed before the link goes away.
-                lease.close();
-                commands.entity(link).remove::<AwaitingHello>();
+                // Keep the link open so a lost rejection is retransmitted.
+                lease.close_after_rejection();
             }
         }
     }
