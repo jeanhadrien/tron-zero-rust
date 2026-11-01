@@ -367,10 +367,8 @@ mod tests {
             .resource_mut::<PendingInput>()
             .0
             .push_back(PendingPress {
-                input: shared::PlayerInput::TurnLeft,
-                seq: None,
-                generation: None,
-                client_tick: 0,
+                direction: shared::protocol::TurnDirection::Left,
+                generation: 0,
             });
         world.resource_mut::<RespawnUi>().pending_generation = Some(3);
         world.run_system_once(finish_disconnect).unwrap();

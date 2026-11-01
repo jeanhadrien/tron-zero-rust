@@ -8,19 +8,16 @@
 //! where ActionState is set every new tick. Rollback replays historical input
 //! without consuming the live queue.
 //!
-//! ONE-SHOT TURN CONTRACT (phantom-turn fix): the native `ActionState` path above
-//! is prediction only. In parallel, `buffer_keyboard_input` sends each physical
-//! press as a sequenced `TurnCommand` over the ordered-reliable `TurnChannel`.
-//! The server executes each `seq` at most once, in order, on the next available
-//! fixed tick(s) after receipt (bounded late execution — never strict
-//! intended-tick rejection, which is unworkable with zero input lead), and
-//! overwrites `ActionState` from its queue every tick, so Lightyear's
-//! `get_predict` repeat-last fallback is irrelevant on the server. Missing
-//! input executes nothing. Send order equals prediction pop order (single FIFO).
-//! Rollback story: the server never rolls back so its queue needs no rollback
-//! handling; client replay uses the existing native `InputBuffer` history, fed
-//! the same ordered press sequence, while duplicate packets never double-fire
-//! (server dedups by `(generation, seq)`).
+//! ONE-SHOT TURN CONTRACT: the native `ActionState` path above drives
+//! prediction (and rollback replay). The turn itself reaches the server as a
+//! sequenced `TurnCommand` over the ordered-reliable `TurnChannel`, sent from
+//! the same place the press is popped into `ActionState`: `read_keyboard`.
+//! Its `tick` is therefore exactly the tick the prediction applies the turn at
+//! (`LocalTimeline` + input delay, the formula Lightyear's own input buffering
+//! uses), on the timeline that runs ahead of the server. The server executes
+//! the command on that tick when it arrives in time (see
+//! `tron_zero_server::turns`), so a delivered turn matches the prediction and
+//! causes no correction. Rollback never pops the queue or sends a command.
 
 use std::collections::VecDeque;
 
@@ -42,34 +39,18 @@ use shared::protocol::{
 };
 use shared::{IsAlive, LifeGeneration};
 
-/// One queued physical press: the prediction input plus the identity of the
-/// parallel `TurnCommand` sent for it. `seq` is `None` only when the rider has
-/// no life to tag — prediction only, no command sent.
+/// One queued physical press, tagged with the life it was pressed in.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PendingPress {
-    pub input: PlayerInput,
-    pub seq: Option<u64>,
-    pub generation: Option<u128>,
-    pub client_tick: u32,
-}
-
-impl PendingPress {
-    fn prediction_only(input: PlayerInput) -> Self {
-        Self {
-            input,
-            seq: None,
-            generation: None,
-            client_tick: 0,
-        }
-    }
+    pub direction: TurnDirection,
+    pub generation: u128,
 }
 
 #[derive(Resource, Default)]
 pub struct PendingInput(pub VecDeque<PendingPress>);
 
-/// Per-link monotonic turn sequence. Reset exactly when `InputLifecycle`
-/// clears the queue (death / life-change / disconnect / menu-capture), so send
-/// order always matches prediction pop order from a clean slate.
+/// Next `TurnCommand::seq`. Monotonic for the whole connection: queue clears
+/// (menu, death) must not rewind it, or the server would see duplicates.
 #[derive(Resource, Default)]
 pub struct TurnSeq(pub u64);
 
@@ -86,15 +67,9 @@ pub struct InputLifecycle {
 }
 
 impl InputLifecycle {
-    fn observe(
-        &mut self,
-        state: Option<(Entity, bool, Option<u128>)>,
-        pending: &mut PendingInput,
-        turn_seq: &mut TurnSeq,
-    ) {
+    fn observe(&mut self, state: Option<(Entity, bool, Option<u128>)>, pending: &mut PendingInput) {
         if self.observed != state || state.is_none_or(|(_, alive, _)| !alive) {
             pending.0.clear();
-            turn_seq.0 = 0;
         }
         self.observed = state;
     }
@@ -117,12 +92,10 @@ pub fn buffer_keyboard_input(
     mut key_events: MessageReader<KeyboardInput>,
     mut pending: ResMut<PendingInput>,
     mut lifecycle: ResMut<InputLifecycle>,
-    mut turn_seq: ResMut<TurnSeq>,
     mut respawn: ResMut<RespawnUi>,
     mut bindings: ResMut<TurnBindings>,
     mut rebind: ResMut<RebindState>,
     menu: Res<MenuState>,
-    timeline: Option<Res<LocalTimeline>>,
     clients: Query<
         (Entity, Has<Rollback>),
         (With<Client>, With<Connected>, With<IsSynced<InputTimeline>>),
@@ -137,7 +110,6 @@ pub fn buffer_keyboard_input(
         InputReady,
     >,
     mut senders: Query<&mut MessageSender<RespawnRequest>>,
-    mut turn_senders: Query<&mut MessageSender<TurnCommand>>,
 ) {
     let client = clients.iter().next();
     // Rollback consumes historical ActionState, never the physical queue.
@@ -151,7 +123,6 @@ pub fn buffer_keyboard_input(
         lifecycle.observe(
             player.map(|(entity, alive, life, _)| (entity, alive.0, life.map(|l| l.0))),
             &mut pending,
-            &mut turn_seq,
         );
         let current_life = player.and_then(|(entity, _, life, _)| life.map(|l| (entity, l.0)));
         if respawn.life != current_life {
@@ -188,18 +159,15 @@ pub fn buffer_keyboard_input(
             break;
         }
         pending.0.clear();
-        turn_seq.0 = 0;
         key_events.clear();
         return;
     }
     if menu.captures_input() {
         pending.0.clear();
-        turn_seq.0 = 0;
         key_events.clear();
         return;
     }
     let can_turn = lifecycle.observed.is_some_and(|(_, alive, _)| alive);
-    let client_tick = timeline.map(|t| t.tick().0).unwrap_or(0);
     for event in key_events.read() {
         if !event.state.is_pressed() || event.repeat {
             continue;
@@ -208,26 +176,21 @@ pub fn buffer_keyboard_input(
             continue;
         };
         let key = event.key_code;
-        if bindings.is_left(key) && can_turn {
-            push_turn(
-                &mut pending,
-                &mut turn_seq,
-                life,
-                client_tick,
-                TurnDirection::Left,
-                client,
-                &mut turn_senders,
-            );
-        } else if bindings.is_right(key) && can_turn {
-            push_turn(
-                &mut pending,
-                &mut turn_seq,
-                life,
-                client_tick,
-                TurnDirection::Right,
-                client,
-                &mut turn_senders,
-            );
+        let direction = if bindings.is_left(key) {
+            Some(TurnDirection::Left)
+        } else if bindings.is_right(key) {
+            Some(TurnDirection::Right)
+        } else {
+            None
+        };
+        if let Some(direction) = direction {
+            // A rider without a life tag cannot turn authoritatively.
+            if can_turn && let Some(life) = life {
+                pending.0.push_back(PendingPress {
+                    direction,
+                    generation: life.0,
+                });
+            }
         } else if matches!(key, KeyCode::Space | KeyCode::Enter | KeyCode::NumpadEnter)
             && !rollback
             && !alive.0
@@ -239,56 +202,6 @@ pub fn buffer_keyboard_input(
             respawn.pending_generation = Some(life.0);
             respawn.outcome = None;
         }
-    }
-}
-
-/// Queue one physical press for prediction and, in parallel, send the matching
-/// sequenced `TurnCommand`. Single FIFO: the `seq` assignment order is the pop
-/// order `read_keyboard` will use, so prediction and authority agree.
-#[allow(clippy::too_many_arguments)]
-fn push_turn(
-    pending: &mut PendingInput,
-    turn_seq: &mut TurnSeq,
-    life: Option<&LifeGeneration>,
-    client_tick: u32,
-    direction: TurnDirection,
-    client: Option<(Entity, bool)>,
-    turn_senders: &mut Query<&mut MessageSender<TurnCommand>>,
-) {
-    let input = match direction {
-        TurnDirection::Left => PlayerInput::TurnLeft,
-        TurnDirection::Right => PlayerInput::TurnRight,
-    };
-    let generation = life.map(|l| l.0);
-    let Some(generation) = generation else {
-        // No life to tag: prediction only, no authoritative command.
-        pending.0.push_back(PendingPress::prediction_only(input));
-        return;
-    };
-    let seq = turn_seq.0;
-    turn_seq.0 = turn_seq.0.wrapping_add(1);
-    pending.0.push_back(PendingPress {
-        input,
-        seq: Some(seq),
-        generation: Some(generation),
-        client_tick,
-    });
-    if let Some((client_entity, _)) = client
-        && let Ok(mut sender) = turn_senders.get_mut(client_entity)
-    {
-        sender.send::<TurnChannel>(TurnCommand {
-            seq,
-            direction,
-            generation,
-            client_tick,
-        });
-        debug!(
-            seq,
-            ?direction,
-            generation,
-            client_tick,
-            "Turn command sent"
-        );
     }
 }
 
@@ -338,7 +251,12 @@ fn apply_turn_ack(acks: &mut TurnAckState, ack: TurnAck) {
     }
 }
 
-#[allow(clippy::type_complexity)]
+/// Pop at most one queued press into this tick's `ActionState` (prediction)
+/// and send the matching `TurnCommand` stamped with this very tick.
+///
+/// Skipped during rollback (the `Without<Rollback>` filter), so replays reuse
+/// Lightyear's recorded input history and never send or consume anything.
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 pub fn read_keyboard(
     client: Single<
         (Entity, &InputTimeline),
@@ -349,6 +267,7 @@ pub fn read_keyboard(
             Without<Rollback>,
         ),
     >,
+    timeline: Option<Res<LocalTimeline>>,
     mut pending: ResMut<PendingInput>,
     mut lifecycle: ResMut<InputLifecycle>,
     mut turn_seq: ResMut<TurnSeq>,
@@ -366,10 +285,11 @@ pub fn read_keyboard(
             With<NativeBuffer<PlayerInput>>,
         ),
     >,
+    mut turn_senders: Query<&mut MessageSender<TurnCommand>>,
 ) {
     // Match Lightyear's buffering prerequisites: otherwise a press can be
     // consumed without ever entering the network input history.
-    let (client_entity, _) = client.into_inner();
+    let (client_entity, input_timeline) = client.into_inner();
     let Some((entity, mut action, alive, life, _)) =
         players.iter_mut().find(|(_, _, _, _, controlled_by)| {
             controlled_by.is_none_or(|controlled_by| controlled_by.owner == client_entity)
@@ -377,38 +297,40 @@ pub fn read_keyboard(
     else {
         return;
     };
-    lifecycle.observe(
-        Some((entity, alive.0, life.map(|l| l.0))),
-        &mut pending,
-        &mut turn_seq,
-    );
+    lifecycle.observe(Some((entity, alive.0, life.map(|l| l.0))), &mut pending);
     if menu.captures_input() {
         pending.0.clear();
-        turn_seq.0 = 0;
     }
     // Always set the value for this tick so lightyear can buffer it and
     // apply_turn reads the correct input. None means "no turn this tick",
     // matching lightyear's continuous-input contract.
-    let input = if alive.0 {
-        match pending.0.pop_front() {
-            Some(press) => {
-                // A press tagged for a prior life must never leak into the new
-                // life, even if the lifecycle clear somehow missed it.
-                if press
-                    .generation
-                    .is_some_and(|g| Some(g) != life.map(|l| l.0))
-                {
-                    PlayerInput::None
-                } else {
-                    press.input
-                }
-            }
-            None => PlayerInput::None,
-        }
-    } else {
-        PlayerInput::None
+    let press = alive
+        .0
+        .then(|| pending.0.pop_front())
+        .flatten()
+        // A press tagged for a prior life must never leak into the new life,
+        // even if the lifecycle clear somehow missed it.
+        .filter(|press| Some(press.generation) == life.map(|l| l.0));
+    let Some(press) = press else {
+        action.0 = PlayerInput::None;
+        return;
     };
-    action.0 = life.map_or(input, |life| input.for_life(life.0));
+    action.0 = press.direction.to_input(press.generation);
+    let seq = turn_seq.0;
+    turn_seq.0 += 1;
+    // Same tick (and delay) Lightyear's input buffering stamps this action with.
+    let tick = timeline
+        .map(|t| (t.tick() + input_timeline.input_delay() as i32).0)
+        .unwrap_or(0);
+    if let Ok(mut sender) = turn_senders.get_mut(client_entity) {
+        sender.send::<TurnChannel>(TurnCommand {
+            seq,
+            direction: press.direction,
+            generation: press.generation,
+            tick,
+        });
+        debug!(seq, ?press.direction, tick, "Turn command sent");
+    }
 }
 
 #[cfg(test)]
@@ -444,16 +366,28 @@ mod tests {
             .spawn((
                 ActionState::<PlayerInput>::default(),
                 IsAlive(true),
+                LifeGeneration(1),
                 InputMarker::<PlayerInput>::default(),
                 NativeBuffer::<PlayerInput>::default(),
             ))
             .id();
-        world.resource_mut::<InputLifecycle>().observed = Some((player, true, None));
+        world.resource_mut::<InputLifecycle>().observed = Some((player, true, Some(1)));
         (world, client, player)
     }
 
     fn queued(input: PlayerInput) -> PendingPress {
-        PendingPress::prediction_only(input)
+        queued_for(input, 1)
+    }
+
+    fn queued_for(input: PlayerInput, generation: u128) -> PendingPress {
+        let direction = match input {
+            PlayerInput::TurnLeft => TurnDirection::Left,
+            _ => TurnDirection::Right,
+        };
+        PendingPress {
+            direction,
+            generation,
+        }
     }
 
     #[test]
@@ -467,10 +401,10 @@ mod tests {
             KeyCode::KeyK,
         ];
         let expected = [
-            PlayerInput::TurnLeft,
-            PlayerInput::TurnLeft,
-            PlayerInput::TurnRight,
-            PlayerInput::TurnRight,
+            PlayerInput::TurnLeftFor(1),
+            PlayerInput::TurnLeftFor(1),
+            PlayerInput::TurnRightFor(1),
+            PlayerInput::TurnRightFor(1),
         ];
         for key in keys.into_iter().cycle().take(32) {
             world.write_message(KeyboardInput {
@@ -524,7 +458,7 @@ mod tests {
         assert!(world.resource::<PendingInput>().0.is_empty());
         assert_eq!(
             world.get::<ActionState<PlayerInput>>(player).unwrap().0,
-            PlayerInput::TurnLeft
+            PlayerInput::TurnLeftFor(1)
         );
     }
 
@@ -546,7 +480,7 @@ mod tests {
         world.run_system_once(read_keyboard).unwrap();
         assert_eq!(
             world.get::<ActionState<PlayerInput>>(player).unwrap().0,
-            PlayerInput::TurnRight
+            PlayerInput::TurnRightFor(1)
         );
     }
 
@@ -601,7 +535,7 @@ mod tests {
         world
             .resource_mut::<PendingInput>()
             .0
-            .push_back(queued(PlayerInput::TurnRight));
+            .push_back(queued_for(PlayerInput::TurnRight, 2));
         world.run_system_once(read_keyboard).unwrap();
         assert_eq!(
             world.get::<ActionState<PlayerInput>>(player).unwrap().0,
@@ -706,9 +640,9 @@ mod tests {
                 .resource::<PendingInput>()
                 .0
                 .iter()
-                .map(|p| p.input)
+                .map(|p| p.direction)
                 .collect::<Vec<_>>(),
-            vec![PlayerInput::TurnRight, PlayerInput::TurnLeft]
+            vec![TurnDirection::Right, TurnDirection::Left]
         );
         assert!(world.run_system_once(read_keyboard).is_err());
         assert_eq!(world.resource::<PendingInput>().0.len(), 2);
@@ -852,86 +786,100 @@ mod tests {
     }
 
     #[test]
-    fn turn_presses_assign_link_seq_in_send_order() {
+    fn presses_pop_in_order_one_per_tick_and_seq_counts_pops() {
         let (mut world, client, player) = setup();
         world.init_resource::<Messages<KeyboardInput>>();
         world
             .entity_mut(client)
             .insert(MessageSender::<TurnCommand>::default());
         world.entity_mut(player).insert(LifeGeneration(9));
+        world.resource_mut::<InputLifecycle>().observed = Some((player, true, Some(9)));
         for key in [KeyCode::KeyQ, KeyCode::KeyQ, KeyCode::KeyK] {
             press(&mut world, key);
         }
         world.run_system_once(buffer_keyboard_input).unwrap();
-        let queued: Vec<_> = world.resource::<PendingInput>().0.iter().collect();
-        assert_eq!(queued.len(), 3);
-        // Identical consecutive turns keep their own seq: Left, Left, Right.
-        assert_eq!(
-            queued.iter().map(|p| p.input).collect::<Vec<_>>(),
-            vec![
-                PlayerInput::TurnLeft,
-                PlayerInput::TurnLeft,
-                PlayerInput::TurnRight
-            ]
-        );
-        assert_eq!(
-            queued.iter().map(|p| p.seq).collect::<Vec<_>>(),
-            vec![Some(0), Some(1), Some(2)]
-        );
-        assert!(queued.iter().all(|p| p.generation == Some(9)));
-        assert_eq!(world.resource::<TurnSeq>().0, 3);
-        // Prediction pops in the same order the commands were sent.
-        for expected in [PlayerInput::TurnLeftFor(9), PlayerInput::TurnLeftFor(9)] {
+        // Queueing alone sends nothing and assigns no seq: that happens on pop,
+        // at the tick the prediction applies the turn.
+        assert_eq!(world.resource::<PendingInput>().0.len(), 3);
+        assert_eq!(world.resource::<TurnSeq>().0, 0);
+        // Identical consecutive turns stay distinct: Left, Left, Right.
+        for (i, expected) in [
+            PlayerInput::TurnLeftFor(9),
+            PlayerInput::TurnLeftFor(9),
+            PlayerInput::TurnRightFor(9),
+        ]
+        .into_iter()
+        .enumerate()
+        {
             world.run_system_once(read_keyboard).unwrap();
             assert_eq!(
                 world.get::<ActionState<PlayerInput>>(player).unwrap().0,
                 expected
             );
+            assert_eq!(world.resource::<TurnSeq>().0, i as u64 + 1);
         }
+        world.run_system_once(read_keyboard).unwrap();
+        assert_eq!(
+            world.get::<ActionState<PlayerInput>>(player).unwrap().0,
+            PlayerInput::None
+        );
+        assert_eq!(world.resource::<TurnSeq>().0, 3);
     }
 
     #[test]
-    fn life_change_resets_seq_and_drops_stale_press() {
+    fn menu_clear_drops_presses_but_never_rewinds_seq() {
         let (mut world, _, player) = setup();
-        world.init_resource::<Messages<KeyboardInput>>();
-        world.entity_mut(player).insert(LifeGeneration(7));
-        world.resource_mut::<TurnSeq>().0 = 2;
+        world.resource_mut::<TurnSeq>().0 = 5;
+        world
+            .resource_mut::<PendingInput>()
+            .0
+            .push_back(queued(PlayerInput::TurnLeft));
+        world.resource_mut::<MenuState>().open = true;
+        world.run_system_once(read_keyboard).unwrap();
+        assert!(world.resource::<PendingInput>().0.is_empty());
+        assert_eq!(world.resource::<TurnSeq>().0, 5);
+        world.resource_mut::<MenuState>().open = false;
+        world
+            .resource_mut::<PendingInput>()
+            .0
+            .push_back(queued(PlayerInput::TurnRight));
+        world.run_system_once(read_keyboard).unwrap();
+        assert_eq!(
+            world.get::<ActionState<PlayerInput>>(player).unwrap().0,
+            PlayerInput::TurnRightFor(1)
+        );
+        assert_eq!(world.resource::<TurnSeq>().0, 6);
+    }
+
+    #[test]
+    fn life_change_drops_stale_press_without_consuming_seq() {
+        let (mut world, _, player) = setup();
         // A press tagged for the old life sits in the queue...
         world
             .resource_mut::<PendingInput>()
             .0
-            .push_back(PendingPress {
-                input: PlayerInput::TurnLeft,
-                seq: Some(1),
-                generation: Some(7),
-                client_tick: 0,
-            });
+            .push_back(queued_for(PlayerInput::TurnLeft, 7));
         // ...then the rider respawns into a new life.
         world.entity_mut(player).insert(LifeGeneration(8));
         world.run_system_once(read_keyboard).unwrap();
-        // Lifecycle clear drops the queue, resets seq, and writes nothing.
         assert!(world.resource::<PendingInput>().0.is_empty());
         assert_eq!(world.resource::<TurnSeq>().0, 0);
         assert_eq!(
             world.get::<ActionState<PlayerInput>>(player).unwrap().0,
             PlayerInput::None
         );
-        // Even without the lifecycle clear, a stale press never leaks tags.
+        // Even without the lifecycle clear, a stale press never leaks.
         world
             .resource_mut::<PendingInput>()
             .0
-            .push_back(PendingPress {
-                input: PlayerInput::TurnRight,
-                seq: Some(0),
-                generation: Some(7),
-                client_tick: 0,
-            });
+            .push_back(queued_for(PlayerInput::TurnRight, 7));
         world.resource_mut::<InputLifecycle>().observed = Some((player, true, Some(8)));
         world.run_system_once(read_keyboard).unwrap();
         assert_eq!(
             world.get::<ActionState<PlayerInput>>(player).unwrap().0,
             PlayerInput::None
         );
+        assert_eq!(world.resource::<TurnSeq>().0, 0);
     }
 
     #[test]

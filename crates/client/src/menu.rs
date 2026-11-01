@@ -8,7 +8,6 @@ use bevy_egui::{EguiContexts, egui};
 use crate::browser::{BrowserState, FetchStatus, ManagerConfig, connect_supported};
 use crate::connection::{ConnectionPhase, Session};
 use crate::input::PendingInput;
-use crate::input::TurnSeq;
 use crate::settings::{MAX_KEYS_PER_SIDE, RebindState, TurnBindings, TurnSide, key_label};
 use crate::theme;
 
@@ -65,7 +64,6 @@ pub fn menu_controls(
     session: Res<Session>,
     mut rebind: ResMut<RebindState>,
     mut pending: ResMut<PendingInput>,
-    mut turn_seq: ResMut<TurnSeq>,
 ) {
     // Escape takes precedence over other same-frame actions.
     if keys.just_pressed(KeyCode::Escape) {
@@ -84,7 +82,6 @@ pub fn menu_controls(
     }
     if menu.captures_input() {
         pending.0.clear();
-        turn_seq.0 = 0;
     }
 }
 
@@ -454,14 +451,11 @@ mod tests {
         world.init_resource::<ButtonInput<KeyCode>>();
         world.insert_resource(PendingInput(
             [crate::input::keyboard::PendingPress {
-                input: shared::PlayerInput::TurnLeft,
-                seq: None,
-                generation: None,
-                client_tick: 0,
+                direction: shared::protocol::TurnDirection::Left,
+                generation: 0,
             }]
             .into(),
         ));
-        world.init_resource::<TurnSeq>();
         world
     }
 

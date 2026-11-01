@@ -1,17 +1,8 @@
-//! Tron Zero — headless game server.
-//!
-//! Runs the authoritative simulation, replicates state to clients,
-//! and processes client inputs via lightyear.
-
-mod announce;
-mod bot;
-mod session;
-mod systems;
+//! Tron Zero — headless game server entry point.
 
 use bevy::prelude::*;
-use core::time::Duration;
-use lightyear::prelude::server::*;
 use std::sync::{Arc, Mutex, atomic::AtomicU32};
+use tron_zero_server::{add_core, announce, bot, systems};
 
 fn main() {
     let announce_cfg = announce::AnnounceConfig::from_env();
@@ -44,75 +35,29 @@ fn main() {
     // Headless: no window, event-driven I/O loop.
     app.add_plugins(MinimalPlugins);
     app.add_plugins(bevy::log::LogPlugin::default());
-    // Required by lightyear replication internals.
-    app.add_plugins(bevy::state::app::StatesPlugin);
+    add_core(&mut app, announce_cfg.port);
 
-    // --- Lightyear ---
-    app.add_plugins(ServerPlugins {
-        tick_duration: Duration::from_secs_f64(1.0 / shared::TICK_HZ),
-    });
-
-    // Register components + input type so protocol checksums match.
-    shared::protocol::register_protocol(&mut app);
-
-    // UDP bind port comes from env (PORT); startup bind reads it.
-    app.insert_resource(announce::UdpPort(announce_cfg.port));
     // Player count published for the announcer heartbeat.
     app.insert_resource(announce::PlayerCountProbe(player_count));
     app.add_systems(Update, announce::publish_player_count);
 
-    // New client observer — runs after RawConnectionPlugin sets up Connected + ClientOf.
-    app.add_observer(systems::on_client_connected);
-    // Disconnect observer — cleans up zombie player entities.
-    app.add_observer(systems::on_client_disconnected);
-    app.init_resource::<systems::PendingRespawns>();
-    // Staggered bot decisions (one epoch per reaction period).
+    // Bots: staggered decisions (one epoch per reaction period). The brain
+    // writes input after respawns and before the shared simulation; spawning
+    // follows it. The debug gate is read once from the environment.
     app.init_resource::<bot::SchedulerConfig>();
-    // Bot debug gate: read once; the writer + spawn check this resource / env.
     app.insert_resource(bot::BotDebugConfig::from_env());
-    app.add_systems(
-        PreUpdate,
-        systems::collect_respawn_requests.after(lightyear::prelude::MessageSystems::Receive),
-    );
-    app.add_systems(
-        PreUpdate,
-        systems::collect_turn_commands.after(lightyear::prelude::MessageSystems::Receive),
-    );
-    app.add_systems(
-        PreUpdate,
-        session::receive_session_requests.after(lightyear::prelude::MessageSystems::Receive),
-    );
-    app.add_systems(
-        PostUpdate,
-        session::close_sessions.after(lightyear::prelude::LinkSystems::Send),
-    );
-
-    // Simulation systems in FixedUpdate.
-    //
-    // `apply_turn_commands` runs after lightyear's `UpdateActionState`
-    // (FixedPreUpdate) and before `simulate_players`, overwriting the native
-    // `get_predict` fallback for human riders so missing input means no turn.
-    // `clear_turn_queues_on_life_change` runs right after respawns (same tick
-    // visibility for generation bumps) and after `simulate_players` deaths are
-    // observed at the top of the next tick.
-    app.insert_resource(shared::SimulationRole::Server);
     app.add_systems(
         FixedUpdate,
         (
-            systems::handle_respawns,
-            systems::clear_turn_queues_on_life_change,
-            bot::bot_brain_input,
-            systems::apply_turn_commands,
-            shared::simulate_players,
-            bot::bot_spawner,
-        )
-            .chain(),
+            bot::bot_brain_input
+                .after(systems::handle_respawns)
+                .before(shared::simulate_players),
+            bot::bot_spawner.after(shared::simulate_players),
+        ),
     );
-
-    // Spawn the arena once on startup (replicated to all clients).
     app.add_systems(
         Startup,
-        (systems::spawn_server_arena_and_start, bot::setup_bots).chain(),
+        bot::setup_bots.after(systems::spawn_server_arena_and_start),
     );
 
     app.run();

@@ -12,7 +12,7 @@ const FALLBACK_NAME: &str = "Player";
 
 /// Local-only label entity tracking its rider.
 #[derive(Component)]
-pub(crate) struct NameLabel {
+pub struct NameLabel {
     rider: Entity,
 }
 

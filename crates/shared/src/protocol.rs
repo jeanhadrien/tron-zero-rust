@@ -46,15 +46,6 @@ pub struct SessionReply {
 
 pub struct SessionChannel;
 
-/// One-shot turn delivery (phantom-turn fix).
-///
-/// DESIGN DECISION — bounded late execution, not strict intended-tick
-/// rejection: our client uses `no_input_delay`, so every turn arrives "late"
-/// relative to its prediction tick under any RTT. Rejecting late turns would
-/// drop every turn. Instead each physical press is a sequenced command the
-/// server executes at most once, in order, on the next available fixed tick(s)
-/// after receipt. Missing input executes nothing; duplicates execute nothing.
-/// The server never rewrites past ticks, so there is no server rollback.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TurnDirection {
     Left,
@@ -72,26 +63,42 @@ impl TurnDirection {
     }
 }
 
-/// Client → server turn command. Carries NO player/entity id; the server
-/// derives ownership from the link, like respawns.
+/// One-shot turn delivery: one physical key press = one sequenced command.
+///
+/// The client stamps `tick` with the tick its *prediction* applies the turn at
+/// (`LocalTimeline` + input delay, read in `FixedPreUpdate`). Lightyear drives
+/// that timeline from `InputTimeline`, which runs ~RTT/2 + jitter margin AHEAD
+/// of the server, so a healthy command arrives before `tick` and the server
+/// executes it on exactly that tick. A command that arrives late runs on the
+/// first free tick after receipt if it is within [`TURN_LATE_WINDOW_TICKS`] of
+/// its intended tick, otherwise it is rejected. Missing input executes
+/// nothing; the server never rewrites past ticks.
+///
+/// Carries NO player/entity id; the server derives ownership from the link,
+/// like respawns.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TurnCommand {
-    /// Per-client-link monotonic sequence, reset only on disconnect.
+    /// Monotonic per client; never reset within a connection.
     pub seq: u64,
     pub direction: TurnDirection,
     /// `LifeGeneration` of the rider at press time; mismatches are stale.
     pub generation: u128,
-    /// `LocalTimeline` tick at send (diagnostics only, never execution).
-    pub client_tick: u32,
+    /// Intended execution tick, as predicted by the client.
+    pub tick: u32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TurnRejectReason {
+    /// `seq` not above the highest already accepted for this life.
     Duplicate,
     StaleLife,
     NotAlive,
     QueueFull,
-    Expired,
+    /// Intended tick is more than [`TURN_MAX_LEAD_TICKS`] ahead of the server.
+    TooFarAhead,
+    /// Arrived (or waited) more than [`TURN_LATE_WINDOW_TICKS`] after its
+    /// intended tick.
+    TooLate,
     NotEligible,
 }
 
@@ -113,8 +120,13 @@ pub struct TurnChannel;
 /// Max buffered turns per player; beyond this new commands are rejected with
 /// `QueueFull` (accepted commands are never silently dropped).
 pub const TURN_QUEUE_CAP: usize = 32;
-/// Queued commands older than ~1s (120 ticks at 120 Hz) expire with `Expired`.
-pub const TURN_QUEUE_TTL_TICKS: u32 = 120;
+/// How far past its intended tick a turn may still execute (100 ms at 120 Hz).
+/// Late execution shifts the corner by `lateness * 3` units and costs the
+/// client a correction; beyond the window the turn is rejected instead.
+pub const TURN_LATE_WINDOW_TICKS: u32 = 12;
+/// How far ahead of the server's tick a command may be scheduled. Mirrors
+/// Lightyear's own `MAX_INPUT_LOOKAHEAD_TICKS` for native inputs.
+pub const TURN_MAX_LEAD_TICKS: i32 = 64;
 
 pub fn register_protocol(app: &mut App) {
     app.add_channel::<SessionChannel>(ChannelSettings {
