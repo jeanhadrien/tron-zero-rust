@@ -134,9 +134,13 @@ reliable channel.
   reliable resend a round trip and a half later, and a late command is never
   stuck behind an earlier lost one. A command is dropped from the outbox when
   acknowledged, 48 ticks (400 ms) after its stamp (the server would reject it
-  `TooLate` anyway), or when 16 newer ones push it out. Cost: a 30-byte
-  command is carried by about RTT x 120 batches, i.e. a few hundred bytes/s
-  per recent press.
+  `TooLate` anyway), or when 16 newer ones push it out. Cost: an undecided
+  30-byte command is sent every tick, about 3.6 KB/s while outstanding, i.e.
+  roughly 0.5 KB per press at 150 ms RTT (until its ack returns); nothing is
+  sent while the outbox is empty. Pruning removes a prefix as long as stamps
+  rise with seq; if the timeline jumps backward in a resync, a later seq can
+  carry an older stamp and be pruned first, which the server sees as a skipped
+  gap (still exactly-once and in order, that one command is just lost).
 - **Timeline.** The client's `LocalTimeline` is driven by `InputTimeline`,
   which targets `server + RTT/2 + 4*jitter + 1 tick (client margin) + 1 tick
   (server input pipeline) + sync error margin`. It is the same tick count the

@@ -865,8 +865,9 @@ mod tests {
             PlayerInput::None
         );
         assert_eq!(world.resource::<TurnSeq>().0, 3);
-        // Each pop became a command waiting in the outbox, in order.
-        let sent = world.resource_mut::<TurnOutbox>().batch(1_000).unwrap();
+        // Each pop became a command waiting in the outbox, in order (this
+        // world has no timeline, so they are all stamped tick 0).
+        let sent = world.resource_mut::<TurnOutbox>().batch(0).unwrap();
         assert_eq!(
             sent.commands.iter().map(|c| c.seq).collect::<Vec<_>>(),
             vec![0, 1, 2]
