@@ -1,0 +1,10 @@
+# Full-boost rider into the east wall: rubber must last about the turn late
+# window (12 ticks) at the speed cap, not less.
+arena = [2400, 2400]
+until = 120
+
+[[rider]]
+name = "a"
+at = [900, 0]
+heading = "+x"
+speed = 2.0

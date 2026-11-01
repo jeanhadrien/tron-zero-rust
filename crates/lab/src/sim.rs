@@ -48,7 +48,7 @@ pub enum EventKind {
         at: [f64; 2],
         rubber: f64,
     },
-    /// A side sensor came within `SLOW_DOWN_DISTANCE`: target speed grows.
+    /// A side sensor came within `SLIDE_DISTANCE`: target speed grows.
     SlideStart {
         at: [f64; 2],
         target: f64,

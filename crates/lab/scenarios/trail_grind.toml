@@ -1,0 +1,14 @@
+# Grind an opponent trail from 12 u: trails pay out over the full
+# SLIDE_DISTANCE, unlike boundary walls. "wall" rides alongside at base speed, so "a" is passed along its trail head.
+arena = [6000, 6000]
+until = 480
+
+[[rider]]
+name = "wall"
+at = [-2500, 12]
+heading = "+x"
+
+[[rider]]
+name = "a"
+at = [-2500, 0]
+heading = "+x"

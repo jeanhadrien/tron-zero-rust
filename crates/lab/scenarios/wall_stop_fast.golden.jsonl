@@ -1,0 +1,4 @@
+{"tick":0,"rider":"a","event":"sample","at":[900.0,0.0],"heading":"+x","speed":2.0,"target":2.0,"rubber":120.0,"sliding":false,"colliding":false,"trail":0.0}
+{"tick":51,"rider":"a","event":"enter_rubber_zone","at":[1195.425,0.0],"rubber":112.203}
+{"tick":60,"rider":"a","event":"sample","at":[1197.599,0.0],"heading":"+x","speed":0.037,"target":1.562,"rubber":57.0,"sliding":false,"colliding":true,"trail":297.599}
+{"tick":70,"rider":"a","event":"death","at":[1198.229,0.0],"cause":"wall"}

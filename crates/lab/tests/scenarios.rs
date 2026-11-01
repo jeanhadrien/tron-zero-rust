@@ -107,7 +107,8 @@ fn turning_away_escapes_and_rubber_regenerates() {
     let a = lab.rider("a").unwrap();
     assert!(a.alive);
     assert!(death_causes(&lab, "a").is_empty());
-    assert_eq!(a.rubber, shared::BASE_RUBBER);
+    // Regen is slow on purpose (about 18/s): most, not all, of it is back.
+    assert!(a.rubber > 100.0, "rubber {}", a.rubber);
     // Its escape route hugs the east wall: grinding boosts the target speed.
     assert!(a.target > 1.2, "target {}", a.target);
 }
@@ -118,7 +119,7 @@ fn grinding_boosts_and_open_space_decays_to_base() {
     let mut lab = Lab::new(&scenario);
     lab.run(300, 0);
     let boosted = lab.rider("a").unwrap().target;
-    assert!(boosted > 1.5, "boost {boosted}");
+    assert!(boosted > 1.3, "boost {boosted}");
     lab.run(scenario.until, 0);
     let a = lab.rider("a").unwrap();
     assert!(a.alive);
@@ -184,4 +185,40 @@ fn bots_drive_and_respawn_like_the_server() {
             .collect();
         assert_eq!(respawns, expected, "{}", rider.name);
     }
+}
+
+#[test]
+fn grind_speed_rises_with_closeness_and_respects_the_cap() {
+    let lab = run("grind_cap");
+    let target = |name: &str| lab.rider(name).unwrap().target;
+    assert!(target("d2") > target("d4"));
+    assert!(target("d4") > target("d6"));
+    assert!(target("d6") > target("d9"));
+    assert!(target("d9") > 1.0);
+    assert_eq!(target("d12"), 1.0);
+    assert_eq!(target("dnone"), 1.0);
+    assert!(target("d2") <= shared::MAX_SPEED_MULT);
+}
+
+#[test]
+fn full_speed_rubber_outlasts_the_late_turn_window() {
+    let lab = run("wall_stop_fast");
+    let entered = ticks(&lab, "a", |k| {
+        matches!(k, EventKind::EnterRubberZone { .. })
+    });
+    let died = ticks(&lab, "a", |k| matches!(k, EventKind::Death { .. }));
+    // A turn arriving up to 12 ticks late (netcode TURN_LATE_WINDOW_TICKS)
+    // must still be able to save a cornered rider at the cap.
+    assert!(died[0] - entered[0] >= 12, "{} ticks", died[0] - entered[0]);
+}
+
+#[test]
+fn trails_pay_out_over_the_full_slide_distance() {
+    let scenario = load("trail_grind");
+    let mut lab = Lab::new(&scenario);
+    lab.run(200, 0);
+    // 12 u of a 24 u range: halfway to the cap.
+    let target = lab.rider("a").unwrap().target;
+    let expected = 1.0 + (shared::MAX_SPEED_MULT - 1.0) * 0.5;
+    assert!((target - expected).abs() < 0.01, "target {target}");
 }

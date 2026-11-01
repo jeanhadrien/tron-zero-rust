@@ -1,0 +1,43 @@
+# Five-second grinds under a parallel arena-class wall at several distances
+# (2, 4, 6, 9, 12 u, and a control with no wall). Boundary walls count as
+# ARENA_WALL_GRIND-times farther, so the grind range here is ~10 u. Terminal
+# target speed should rise with closeness and never pass MAX_SPEED_MULT.
+arena = [8000, 8000]
+until = 900
+walls = [
+  [-3500, -1498, 3500, -1498],
+  [-3500, -996, 3500, -996],
+  [-3500, -494, 3500, -494],
+  [-3500, 9, 3500, 9],
+  [-3500, 512, 3500, 512],
+]
+
+[[rider]]
+name = "d2"
+at = [-3000, -1500]
+heading = "+x"
+
+[[rider]]
+name = "d4"
+at = [-3000, -1000]
+heading = "+x"
+
+[[rider]]
+name = "d6"
+at = [-3000, -500]
+heading = "+x"
+
+[[rider]]
+name = "d9"
+at = [-3000, 0]
+heading = "+x"
+
+[[rider]]
+name = "d12"
+at = [-3000, 500]
+heading = "+x"
+
+[[rider]]
+name = "dnone"
+at = [-3000, 1000]
+heading = "+x"

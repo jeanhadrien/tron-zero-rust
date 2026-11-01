@@ -67,8 +67,9 @@ impl SpeedMult {
     }
 }
 
-/// Target speed multiplier the actual `SpeedMult` drifts toward (inertia).
-/// Boosted while sliding; decays toward 1.0 in open space.
+/// Inertial cruise speed multiplier: ramps toward a goal set by grind
+/// proximity (capped at `MAX_SPEED_MULT`), fades toward 1.0 in open space.
+/// `SpeedMult` is the realized speed after the wall slowdown.
 #[derive(Component, Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Reflect)]
 pub struct TargetSpeedMult(pub f32);
 
@@ -96,7 +97,7 @@ impl Default for Rubber {
     }
 }
 
-/// True while a side sensor ray is within `SLOW_DOWN_DISTANCE` of an obstacle
+/// True while a side sensor ray is within `SLIDE_DISTANCE` of an obstacle
 /// (sliding/grinding). Triggers acceleration.
 #[derive(Component, Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Reflect)]
 pub struct IsSliding(pub bool);

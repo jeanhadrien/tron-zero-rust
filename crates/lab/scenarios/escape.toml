@@ -1,5 +1,6 @@
 # Enter the rubber zone, turn away before rubber runs out, regenerate.
 # The escape turn runs along the east wall, so it also grinds.
+arena = [2400, 2400]
 until = 300
 
 [[rider]]
