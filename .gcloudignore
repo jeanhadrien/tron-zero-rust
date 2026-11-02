@@ -1,0 +1,11 @@
+.git/
+.gitignore
+.claude/
+.codegraph/
+.opencode/
+target/
+**/target/
+**/node_modules/
+server-manager/
+docs/
+*.bat

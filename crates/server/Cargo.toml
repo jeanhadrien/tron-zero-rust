@@ -6,7 +6,7 @@ edition = "2024"
 [dependencies]
 shared = { path = "../shared", package = "tron-zero-shared" }
 bots = { path = "../bots", package = "tron-zero-bots" }
-bevy.workspace = true
+bevy = { version = "0.19", default-features = false, features = ["bevy_log", "bevy_state"] }
 lightyear = { workspace = true, features = ["udp", "raw_connection", "input_native"] }
 rand.workspace = true
 tracing.workspace = true
