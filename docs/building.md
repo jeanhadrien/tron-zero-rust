@@ -75,21 +75,28 @@ cargo build --release -p tron-zero-client
 
 Output: `target/release/tron-zero-client.exe`. Distribute the `.exe` alongside any required runtime DLLs (none expected for a static release build; verify with a clean-machine test).
 
-## Client — WASM (web, not yet wired)
+## Client — WASM (web, spike)
 
-Per PLAN.md the client also targets `wasm32-unknown-unknown`. Bootstrap does not set this up. To enable:
+The client compiles and starts in the browser (menu, settings, server browser
+list; WebGL2). Connecting is not wired yet: the browser transport is
+Lightyear's WebTransport client (`WebTransportClientIo`), which needs the
+server-side WebTransport listener and its certificate digest
+(`?TRON_CERT_DIGEST=` query parameter).
 
 ```
 rustup target add wasm32-unknown-unknown
-cargo build -p tron-zero-client --target wasm32-unknown-unknown
+cargo install wasm-bindgen-cli --version <wasm-bindgen version in Cargo.lock> --locked
+npm i -g binaryen            # wasm-opt
+./web/build.ps1              # -> web/dist (serve it with any static server)
 ```
 
-Expect bevy/wgpu WASM feature-gating work beyond adding the target — follow up before relying on this path.
-
-The server browser's room fetch already works on web: it uses `ehttp`,
-which performs a plain browser fetch on wasm. Room listing therefore works
-in the browser, but every Connect button is disabled there — play needs the
-native UDP transport until the WebTransport migration in PLAN.md lands.
+`[profile.wasm-release]` is fat LTO (about 25 min, ~12 GB RAM, plus ~10 min of
+wasm-opt); for iteration use `-SkipOpt` or a plain
+`cargo build --target wasm32-unknown-unknown`. `--cfg=web_sys_unstable_apis`
+and the getrandom `wasm_js` cfg live in `.cargo/config.toml`. Browsers have no
+environment variables: `platform::env_var` reads URL query parameters of the
+same name (`?MANAGER_URL=...`), preferences use `localStorage`, and the Quit
+button is hidden.
 
 ## Release notes
 
