@@ -43,8 +43,13 @@ fn main() {
 
     let mut app = App::new();
 
-    // Headless: no window, event-driven I/O loop.
-    app.add_plugins(MinimalPlugins);
+    // Headless: no window. Pace the main loop at the simulation rate; the
+    // default runner spins flat out and burns a whole core doing nothing.
+    app.add_plugins(
+        MinimalPlugins.set(bevy::app::ScheduleRunnerPlugin::run_loop(
+            std::time::Duration::from_secs_f64(1.0 / shared::TICK_HZ),
+        )),
+    );
     app.add_plugins(bevy::log::LogPlugin::default());
     app.insert_resource(admission::MaxPlayers(announce_cfg.max_players));
     add_core(&mut app, announce_cfg.port);
