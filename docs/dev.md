@@ -2,7 +2,7 @@
 
 Status: updated 2026-11-02.
 
-Day-to-day development on Windows. Builds run natively on Windows for fast iteration and a visible game window.
+Day-to-day development on Windows. Builds run natively on Windows for fast iteration and a visible game window. Which commands to start for which setup (web client, prod lobby, GCP): `docs/run.md`.
 
 ## Prerequisites (one-time)
 

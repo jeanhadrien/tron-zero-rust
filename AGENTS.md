@@ -58,6 +58,7 @@ Implemented contract and measurements: `docs/netcode-design.md`. Open items: `NE
 - `docs/core-gameplay-mechanics.md` — gameplay rules, respect at all times.
 - `docs/netcode-design.md` — implemented netcode contract and measurements.
 - `NETWORK.md` — open netcode/ops backlog.
+- `docs/run.md` — which commands to start for each way of running the game (local, web, prod lobby, GCP, release); start here.
 - `docs/dev.md` — dev loop, env vars, lab, smoke checks. `docs/building.md` — prod builds, ports and env. `docs/release.md` — releases and hosting for friends.
 - `server-manager/README.md` — lobby API and Cloud Run deployment.
 - `docs/web.md` — browser client and WebTransport decisions; `web/README.md` — build, serve, deploy.
