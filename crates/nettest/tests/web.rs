@@ -71,3 +71,67 @@ fn udp_and_webtransport_clients_share_one_game() {
     );
     assert!(net.clients[web].rider_alive() && net.clients[udp].rider_alive());
 }
+
+/// Die, respawn, turn: three times over WebTransport. Every turn of every
+/// life must be applied (never `StaleLife` / `NotAlive`) and the client must
+/// see each new life.
+#[test]
+fn webtransport_client_survives_repeated_death_and_respawn() {
+    use bevy::input::keyboard::KeyCode;
+    use tron_zero_nettest::client::LEFT;
+
+    let _guard = serial();
+    let mut net = Net::new_with_web(Impairment::NONE);
+    let web = net.add_web_client("Web");
+    assert!(
+        net.run_until(WAIT, |net| net.clients[web].is_playing()
+            && net.clients[web].rider_alive()),
+        "web client did not reach Playing"
+    );
+    let id = net.clients[web].player_id().expect("rider exists");
+    net.run_server_ticks(60);
+
+    for cycle in 0..3 {
+        // A turn in the current life is applied.
+        let before = deliveries(&net.server, None).len();
+        net.clients[web].press(LEFT);
+        net.run_server_ticks(40);
+        let log = deliveries(&net.server, None);
+        assert_eq!(log.len(), before + 1, "cycle {cycle}: turn reached server");
+        assert!(
+            matches!(log.last().unwrap().fate, Fate::Applied { .. }),
+            "cycle {cycle}: turn before death: {:?}",
+            log.last()
+        );
+
+        // Death is seen by the client.
+        let old = net.clients[web].rider_generation().expect("life");
+        net.server.kill_rider(&id);
+        assert!(
+            net.run_until(WAIT, |net| !net.clients[web].rider_alive()),
+            "cycle {cycle}: client never saw the death"
+        );
+
+        // Respawn with Space (retry while dead, like a human would).
+        assert!(
+            net.run_until(WAIT, |net| {
+                let client = &mut net.clients[web];
+                if !client.rider_alive() {
+                    client.press(KeyCode::Space);
+                }
+                client.rider_alive() && client.rider_generation() != Some(old)
+            }),
+            "cycle {cycle}: client never saw the new life (alive {}, gen {:?})",
+            net.clients[web].rider_alive(),
+            net.clients[web].rider_generation()
+        );
+        net.run_server_ticks(5);
+    }
+
+    let log = deliveries(&net.server, None);
+    let rejected: Vec<_> = log
+        .iter()
+        .filter(|d| matches!(d.fate, Fate::Rejected(_)))
+        .collect();
+    assert!(rejected.is_empty(), "rejected turns: {rejected:?}");
+}
