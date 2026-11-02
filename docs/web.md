@@ -57,9 +57,12 @@ the release profile, no logging below `info` on web.
 - **Background tabs.** `requestAnimationFrame` stops in a hidden tab, so the
   client stops ticking. QUIC keep-alives (1 s, 10 s idle timeout set by the
   server) run in the browser's network process, so the transport survives,
-  but the game session lease expires without our app-level heartbeat;
-  coming back to the tab means rejoining. That is accepted:
-  a backgrounded lightcycle is dead anyway.
+  but the game session lease expires without our app-level heartbeat.
+  Observed with a throttled tab (1-3 fps): Lightyear aborts rollbacks longer
+  than 100 ticks, so prediction goes stale and respawns never reconcile on the
+  client. Whether the client recovers once the tab renders again is
+  **unverified**; reloading the page is the reliable way back. Accepted for
+  now: a backgrounded lightcycle is dead anyway.
 - **Keyboard.** The canvas takes focus and the page prevents default on
   arrows/space so the page doesn't scroll.
 - **Mixed content.** The page is HTTPS, the manager is HTTPS, WebTransport is

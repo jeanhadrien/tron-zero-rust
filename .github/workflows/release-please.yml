@@ -22,4 +22,10 @@ jobs:
   deploy:
     needs: release-please
     if: ${{ needs.release-please.outputs.releases_created == 'true' }}
+    # A called workflow can't exceed its caller's token: the web job deploys
+    # to GitHub Pages and needs pages + OIDC on top of release uploads.
+    permissions:
+      contents: write
+      pages: write
+      id-token: write
     uses: ./.github/workflows/deploy.yml
