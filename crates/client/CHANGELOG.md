@@ -1,5 +1,34 @@
 # Changelog
 
+## [0.4.0](https://github.com/jeanhadrien/tron-zero-rust/compare/client-v0.3.0...client-v0.4.0) (2026-11-02)
+
+
+### Features
+
+* **bot:** opponent memory, brain updates and BotDebug overlay (WIP) ([70f6f97](https://github.com/jeanhadrien/tron-zero-rust/commit/70f6f973aa2cf277ab645f35b9dcbe9302c4c739))
+* **client:** browse and join WebTransport rooms from the browser ([b1cb419](https://github.com/jeanhadrien/tron-zero-rust/commit/b1cb419bc98bb894ab54c9429ce3a956f6385da6))
+* **client:** compile and start in the browser (wasm32, WebGL2, WebTransport client) ([de893ad](https://github.com/jeanhadrien/tron-zero-rust/commit/de893ad569c83054044dd05aef2d7bddaccf01b8))
+* **labels:** local-only rider name labels via replicated DisplayName ([7380a79](https://github.com/jeanhadrien/tron-zero-rust/commit/7380a794dece5019f0faa893870b903a5bc0ae4f))
+* **netcode:** redundant turn delivery, coalesced acks, per-link budgets, no lost presses on predicted death ([aa4d6bf](https://github.com/jeanhadrien/tron-zero-rust/commit/aa4d6bf8aeb710a0fbb7340223b861e350f5f1ef))
+* **net:** execute turns at their intended tick, bounded late window ([ffe5792](https://github.com/jeanhadrien/tron-zero-rust/commit/ffe57922aef3cea27d8863d4d601ba03f3b0a480))
+* **net:** sequenced one-shot turn commands with server acks ([d428553](https://github.com/jeanhadrien/tron-zero-rust/commit/d428553b829bfea355cd5163d124ac87f611990c))
+* **server:** accept WebTransport sessions beside UDP on one server entity ([8f43c04](https://github.com/jeanhadrien/tron-zero-rust/commit/8f43c0465c9e03501b634d6377b8cb823360b6e2))
+* **session:** hello handshake with player name, protocol version and capacity ([68fdc14](https://github.com/jeanhadrien/tron-zero-rust/commit/68fdc14f73be59e2a4a7b540c9cc8359dec04806))
+
+
+### Bug Fixes
+
+* **announce:** token auth, humans-only playerCount, loopback guard, SIGTERM unregister ([9bcef9e](https://github.com/jeanhadrien/tron-zero-rust/commit/9bcef9e8173c6ba58cac8a33f578e338d1b9877f))
+* **client,shared:** autoconnect/quit races, name sanitizing, protocol fingerprint, prefs and sim fixes ([9daed42](https://github.com/jeanhadrien/tron-zero-rust/commit/9daed42d918f8168381c7593dec735abab165b66))
+* **client:** keyboard test stamps no timeline tick; correct redundancy bandwidth in docs ([5e9f6cd](https://github.com/jeanhadrien/tron-zero-rust/commit/5e9f6cd74061ab1de017b2df2f5797e04f239334))
+* **client:** turn outbox follows Lightyear timeline resyncs ([9c1cba2](https://github.com/jeanhadrien/tron-zero-rust/commit/9c1cba2e09793cb05fe8bff3d466fa9c42e0da62))
+* **server,client:** advertise web only when open, gate query overrides, doc fixes ([4606842](https://github.com/jeanhadrien/tron-zero-rust/commit/4606842c0af29b95dd1303cf6261aa0bc1e8ec4a))
+
+
+### Performance Improvements
+
+* **client:** trim bevy and bevy_egui features to 2D rendering ([784da67](https://github.com/jeanhadrien/tron-zero-rust/commit/784da67a3d1353288576719420d007eed2be27a2))
+
 ## [0.3.0](https://github.com/jeanhadrien/tron-zero-rust/compare/client-v0.2.0...client-v0.3.0) (2026-10-02)
 
 
