@@ -50,6 +50,6 @@ machine, so it must be reachable from the internet:
 
 CGNAT check: compare your router's WAN IP with a public "what is my IP"
 lookup. If they differ, your ISP shares the address and home port-forwarding
-cannot work — the fallback is a small GCE VM (static IP, `udp:5000` firewall
+cannot work — the fallback is the GCE VM in `deploy/gce/` (see its scripts; `udp:5000` and `udp:5001` firewall
 rule, same env vars). On one network (LAN party), skip all of this and use
 your LAN IP as `ADVERTISED_HOST`.

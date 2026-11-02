@@ -12,7 +12,7 @@ manually (Space/Enter).
 ## Tech stack
 
 - **Engine/ECS:** Bevy 0.19 (`bevy_ecs`; full `bevy` on the client, `MinimalPlugins` on the server). Math via `glam::Vec2` (`f32` only in sim).
-- **Networking:** Lightyear 0.28 — server-authoritative, tick-based, client prediction + rollback, state replication. Transport is **raw UDP, unauthenticated and unencrypted** (default `0.0.0.0:5000`, env `PORT`); WebTransport and Lightyear netcode connect tokens are planned, not wired.
+- **Networking:** Lightyear 0.28 — server-authoritative, tick-based, client prediction + rollback, state replication. One server entity carries two transports: **raw UDP** for the desktop client (default `0.0.0.0:5000`, env `PORT`; unauthenticated, unencrypted) and **WebTransport** for browsers (UDP `WEB_PORT`, default 5001; self-signed ECDSA cert pinned by the `certHash` the server announces). Lightyear netcode connect tokens for the UDP path are planned, not wired.
 - **Client UI:** `bevy_egui` (menu, settings, server browser via `ehttp`, HUD, death overlay). Rendering is Bevy 2D.
 - **Lobby:** the server announces itself over HTTP to `server-manager/` (Bun + Express, in this repo): register, heartbeat, unregister, with a per-room bearer token.
 - **Other:** `serde` + `postcard` (wire), `tracing` (never `println!` in `crates/` non-test code), `rand` (bot spawns and the client's network simulator only, never in the sim).
@@ -24,7 +24,7 @@ manually (Space/Enter).
 - **`shared/` (lib)** — the simulation core and wire protocol. Pure Bevy ECS: no rendering, no wall clock. Both sides run `simulate_players` at **120 Hz** (`TICK_HZ`). `physics.rs` (`step_rider`, pure), `constants.rs` (gameplay numbers), `systems/` (turn → sense → move → rubber; order is load-bearing), `trail/`, `spawn.rs`, `protocol.rs` (components, messages, channels, `PROTOCOL_ID`, turn constants), `components/`.
 - **`bots/` (lib)** — bot brain over a `WorldSnapshot` (sensing, memory, forecast, territory, strategies, Elo knobs). Deterministic: no `rand`, no wall clock. Shared by the server and the lab.
 - **`server/` (lib + bin)** — headless authoritative server. `add_core` (lib.rs) wires Lightyear and the chain `handle_respawns → apply_turn_commands → simulate_players`; `main.rs` adds bots, logging and the announcer. Modules: `admission` (hello handshake, capacity), `session` (heartbeat/leave/lease), `turns` (sequenced turn commands, acks), `budget` (per-link abuse limits), `systems` (connect/disconnect, arena, respawn queue), `announce` (manager HTTP), `bot/` (ECS glue).
-- **`client/` (lib + bin)** — native desktop client (WASM not wired). `connection` (lifecycle, readiness, autoconnect, quit), `input/` (keyboard queue, `TurnOutbox` redundant delivery), `menu`/`settings`/`browser`/`config` (UI, key bindings, room list, persisted preferences), `sim` (latency simulator), `render/` (arena, trails, riders, camera, HUD, death, bot debug).
+- **`client/` (lib + bin)** — desktop client (UDP) and browser client (wasm32, WebTransport; `platform.rs` holds the target splits, build with `web/build.ps1` or `web/build.sh`, design in `docs/web.md`). `connection` (lifecycle, readiness, autoconnect, quit), `input/` (keyboard queue, `TurnOutbox` redundant delivery), `menu`/`settings`/`browser`/`config` (UI, key bindings, room list, persisted preferences), `sim` (latency simulator), `render/` (arena, trails, riders, camera, HUD, death, bot debug).
 - **`lab/` (lib + bin)** — headless deterministic scenario runner over the real `simulate_players`. TOML scenarios in `crates/lab/scenarios/` (goldens `*.golden.jsonl`); JSONL trace + PNG output. **This is how an agent "plays" the game**: edit a scenario, re-run from tick 0, read trace and PNG. See `docs/dev.md` § Lab.
 - **`nettest/` (lib + tests)** — real server and client(s) in one process over loopback UDP with a link conditioner; scripted key presses, trace assertions (`tests/turns.rs`, `session.rs`) and arrival measurements (`measure.rs`, `--ignored`). Uses wall-clock time, so a failure should be re-run alone before it is believed.
 - **`server-manager/` (Bun/TypeScript)** — in-memory lobby service. API, env vars and deployment in its README; `bun run typecheck`.
@@ -59,7 +59,9 @@ Implemented contract and measurements: `docs/netcode-design.md`. Open items: `NE
 - `docs/netcode-design.md` — implemented netcode contract and measurements.
 - `NETWORK.md` — open netcode/ops backlog.
 - `docs/dev.md` — dev loop, env vars, lab, smoke checks. `docs/building.md` — prod builds, ports and env. `docs/release.md` — releases and hosting for friends.
-- `server-manager/README.md` — lobby API.
+- `server-manager/README.md` — lobby API and Cloud Run deployment.
+- `docs/web.md` — browser client and WebTransport decisions; `web/README.md` — build, serve, deploy.
+- `deploy/gce/` — game server VM (Container-Optimized OS) on GCP; image via `cloudbuild.server.yaml`.
 - `PLAN.md` — original rewrite plan; **current code wins** (see its top note). `EXPLORATION.md` (Armagetron ideas), `BOT-AI-*.md` (bot research) — not committed work. `STYLE.md` — enforced style (fmt + clippy `-D warnings`).
 
 # Agent (you)
