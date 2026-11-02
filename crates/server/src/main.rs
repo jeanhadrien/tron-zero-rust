@@ -4,6 +4,14 @@ use bevy::prelude::*;
 use std::sync::Arc;
 use tron_zero_server::{add_core, add_web, admission, announce, bot, systems, web};
 
+/// Pause between main-loop iterations. Packets are read (and replies sent)
+/// only once per iteration, so this bounds the polling latency added to every
+/// message: 1 ms is 0.12 of a tick, in exchange for an idle cost of about 1-2%
+/// of a core, where the flat-out loop burned 100%+ (measured in
+/// `docs/netcode-design.md`). Waiting a full tick (8.3 ms) saves nothing
+/// measurable and adds up to a tick of latency each way.
+const LOOP_WAIT: std::time::Duration = std::time::Duration::from_millis(1);
+
 fn main() {
     let mut announce_cfg = announce::AnnounceConfig::from_env();
     // Browser players: a WebTransport listener beside the UDP one. A config
@@ -48,13 +56,9 @@ fn main() {
 
     let mut app = App::new();
 
-    // Headless: no window. Pace the main loop at the simulation rate; the
-    // default runner spins flat out and burns a whole core doing nothing.
-    app.add_plugins(
-        MinimalPlugins.set(bevy::app::ScheduleRunnerPlugin::run_loop(
-            std::time::Duration::from_secs_f64(1.0 / shared::TICK_HZ),
-        )),
-    );
+    // Headless: no window. Pace the main loop (`LOOP_WAIT`); the default
+    // runner spins flat out and burns a whole core doing nothing.
+    app.add_plugins(MinimalPlugins.set(bevy::app::ScheduleRunnerPlugin::run_loop(LOOP_WAIT)));
     app.add_plugins(bevy::log::LogPlugin::default());
     app.insert_resource(admission::MaxPlayers(announce_cfg.max_players));
     add_core(&mut app, announce_cfg.port);

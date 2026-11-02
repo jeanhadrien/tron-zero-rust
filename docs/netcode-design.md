@@ -284,6 +284,25 @@ late, 2 beyond the window and rejected (a second run: max +19, 1 rejected);
 rollbacks. The headline: a lost packet used to delay every later turn by about
 one resend round (13-23 ticks at 150 ms RTT); it now costs nothing visible.
 
+Server loop wait (`LOOP_WAIT` in `server/src/main.rs`; the table above is the
+harness updating the server every ~1 ms, which equals the shipped 1 ms wait).
+`NETTEST_SERVER_WAIT_US` emulates other waits in `measure.rs`; idle CPU is the
+release server binary with bots and no players on a Windows dev box (20 s
+sample; the VM's flat-out loop was 160%):
+
+| Wait | Idle CPU (% of a core) | 0 ms RTT arrival margin min / p50 | 250 ms RTT min / p50 |
+|------|------------------------|-----------------------------------|----------------------|
+| none (flat out) | 98 | same as 1 ms (the old harness) | same as 1 ms |
+| 1 ms (shipped) | 2.2 | -4 / -4 | -12 / -8 |
+| 2 ms | 2.7 | -4 / -4 | -11 / -8 |
+| 8.33 ms (1 tick) | 1.3 | -5 / -4 | -13 / -9 |
+
+The arrival margin barely moves (it counts server ticks, which catch up), but
+it does not capture the extra round-trip delay: a message waits up to one wait
+period before it is read and the reply up to one before it is sent, so a 1-tick
+wait costs up to ~8 ms of RTT while 1 ms costs up to ~2 ms. CPU differences
+between 1 ms and 8.33 ms are about 1% of a core, so 1 ms is the pick.
+
 One run per row (three for the 3% profile), unseeded conditioner, so lossy and
 jittery rows vary from run to run; the conditioner drops packets independently,
 so a long burst of consecutive loss is not covered (nor an outage longer than

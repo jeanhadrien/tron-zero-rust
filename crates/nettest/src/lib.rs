@@ -109,6 +109,21 @@ pub struct Net {
     web: Option<(u16, String)>,
     impairment: Impairment,
     last_step: Instant,
+    /// The production server loop sleeps between updates (`main.rs`), so it
+    /// polls inbound packets less often than the clients' 1 ms frames. Zero
+    /// (the default) updates the server every frame; `NETTEST_SERVER_WAIT_US`
+    /// emulates a loop with that wait.
+    server_wait: Duration,
+    last_server_update: Instant,
+}
+
+/// `NETTEST_SERVER_WAIT_US`: the server loop's wait between updates, in
+/// microseconds (default 0: update on every harness frame).
+fn server_wait_from_env() -> Duration {
+    std::env::var("NETTEST_SERVER_WAIT_US")
+        .ok()
+        .and_then(|raw| raw.trim().parse().ok())
+        .map_or(Duration::ZERO, Duration::from_micros)
 }
 
 impl Net {
@@ -122,6 +137,8 @@ impl Net {
             web: None,
             impairment,
             last_step: Instant::now(),
+            server_wait: server_wait_from_env(),
+            last_server_update: Instant::now(),
         }
     }
 
@@ -139,6 +156,8 @@ impl Net {
             web: Some((web_port, cert_hash)),
             impairment,
             last_step: Instant::now(),
+            server_wait: server_wait_from_env(),
+            last_server_update: Instant::now(),
         }
     }
 
@@ -187,7 +206,10 @@ impl Net {
             std::thread::yield_now();
         }
         self.last_step = Instant::now();
-        self.server.app.update();
+        if self.last_server_update.elapsed() >= self.server_wait {
+            self.last_server_update = Instant::now();
+            self.server.app.update();
+        }
         for client in &mut self.clients {
             client.update();
         }
