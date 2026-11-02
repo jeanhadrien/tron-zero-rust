@@ -106,7 +106,8 @@ fn webtransport_client_survives_repeated_death_and_respawn() {
 
         // Death is seen by the client.
         let old = net.clients[web].rider_generation().expect("life");
-        net.server.kill_rider(&id);
+        // A real crash (wall), not a flag flip: death handling clears the trail.
+        net.server.place_rider(&id, Vec2::new(900.0, 0.0), Vec2::X);
         assert!(
             net.run_until(WAIT, |net| !net.clients[web].rider_alive()),
             "cycle {cycle}: client never saw the death"
