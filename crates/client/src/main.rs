@@ -18,6 +18,7 @@ fn main() {
     // Closing the window goes through the same clean quit as the menu button,
     // so the server gets the leave before the process exits.
     app.add_plugins(DefaultPlugins.set(WindowPlugin {
+        primary_window: Some(primary_window()),
         close_when_requested: false,
         ..default()
     }));
@@ -112,6 +113,24 @@ fn main() {
     );
 
     app.run();
+}
+
+/// The browser build draws into the page's `#bevy` canvas, sized to its parent,
+/// and swallows arrow/space defaults (page scroll) so they reach the game.
+fn primary_window() -> Window {
+    #[cfg(target_family = "wasm")]
+    {
+        Window {
+            canvas: Some("#bevy".into()),
+            fit_canvas_to_parent: true,
+            prevent_default_event_handling: true,
+            ..default()
+        }
+    }
+    #[cfg(not(target_family = "wasm"))]
+    {
+        Window::default()
+    }
 }
 
 /// Window close button: leave the server cleanly, then exit.

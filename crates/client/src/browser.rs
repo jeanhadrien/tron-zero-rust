@@ -203,7 +203,10 @@ impl ManagerConfig {
     // in at release-build time by CI (`TRONZERO_MANAGER_URL`), then localhost
     // for bare dev builds.
     pub fn from_env_and_saved(saved: Option<String>) -> Self {
-        Self::new(default_base_url(std::env::var("MANAGER_URL").ok(), saved))
+        Self::new(default_base_url(
+            crate::platform::env_var("MANAGER_URL"),
+            saved,
+        ))
     }
 
     pub fn rooms_url(&self) -> String {

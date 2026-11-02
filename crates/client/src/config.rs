@@ -13,6 +13,7 @@ use shared::protocol::sanitize_name;
 
 use crate::settings::{Binding, PlayerName, TurnBindings};
 
+#[cfg(not(target_family = "wasm"))]
 const CONFIG_FILE_ENV: &str = "TRON_CONFIG_FILE";
 const APP_DIR: &str = "tron-zero";
 const FILE_NAME: &str = "client.json";
@@ -55,7 +56,15 @@ impl SavedConfig {
     }
 }
 
+/// Where the config lives, if the platform has a place for it. In the browser
+/// the "path" is only the `localStorage` key.
+#[cfg(target_family = "wasm")]
+pub fn config_path() -> Option<PathBuf> {
+    Some(PathBuf::from(APP_DIR).join(FILE_NAME))
+}
+
 /// Where the config file lives, if the platform has a config dir.
+#[cfg(not(target_family = "wasm"))]
 pub fn config_path() -> Option<PathBuf> {
     if let Some(path) = std::env::var_os(CONFIG_FILE_ENV).filter(|p| !p.is_empty()) {
         return Some(path.into());
@@ -63,7 +72,28 @@ pub fn config_path() -> Option<PathBuf> {
     dirs::config_dir().map(|dir| dir.join(APP_DIR).join(FILE_NAME))
 }
 
+/// Read the config from `localStorage`; missing or corrupt yields defaults.
+#[cfg(target_family = "wasm")]
+pub fn load_from(path: &Path) -> SavedConfig {
+    let Some(text) = crate::platform::local_storage::read(&path.to_string_lossy()) else {
+        return SavedConfig::default();
+    };
+    serde_json::from_str(&text).unwrap_or_else(|err| {
+        warn!(%err, "Saved config is corrupt; using defaults");
+        SavedConfig::default()
+    })
+}
+
+/// Write the config to `localStorage`.
+#[cfg(target_family = "wasm")]
+pub fn save_to(path: &Path, config: &SavedConfig) -> std::io::Result<()> {
+    let text = serde_json::to_string_pretty(config).map_err(std::io::Error::other)?;
+    crate::platform::local_storage::write(&path.to_string_lossy(), &text)
+        .map_err(std::io::Error::other)
+}
+
 /// Read the config; a missing, unreadable or corrupt file yields defaults.
+#[cfg(not(target_family = "wasm"))]
 pub fn load_from(path: &Path) -> SavedConfig {
     match std::fs::read_to_string(path) {
         Ok(text) => serde_json::from_str(&text).unwrap_or_else(|err| {
@@ -82,6 +112,7 @@ pub fn load_from(path: &Path) -> SavedConfig {
 /// destination and renamed over it, so a crash or a full disk mid-write leaves
 /// the previous config intact instead of a truncated one. Errors are returned
 /// for the caller to log.
+#[cfg(not(target_family = "wasm"))]
 pub fn save_to(path: &Path, config: &SavedConfig) -> std::io::Result<()> {
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;

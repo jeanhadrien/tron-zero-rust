@@ -8166,12 +8166,15 @@ dependencies = [
  "bevy_egui",
  "dirs",
  "ehttp",
+ "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "lightyear",
  "lightyear_transport",
  "rand 0.10.2",
  "serde",
  "serde_json",
  "tron-zero-shared",
+ "web-sys",
 ]
 
 [[package]]

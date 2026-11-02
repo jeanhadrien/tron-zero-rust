@@ -177,7 +177,7 @@ fn main_screen(
     if theme::action_button(ui, "Browse Servers").clicked() {
         action.set_once(UiAction::GotoRooms);
     }
-    if theme::action_button(ui, "Quit game").clicked() {
+    if crate::platform::CAN_QUIT && theme::action_button(ui, "Quit game").clicked() {
         action.set_once(UiAction::Quit);
     }
 }

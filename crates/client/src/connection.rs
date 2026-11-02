@@ -1,6 +1,6 @@
 //! Connection lifecycle independent of menu presentation and server discovery.
 
-use std::net::{Ipv4Addr, SocketAddr};
+use std::net::SocketAddr;
 
 use bevy::prelude::*;
 use lightyear::prelude::client::{Connect, Disconnect, InputDelayConfig, RawClient};
@@ -76,17 +76,41 @@ impl Default for Session {
     }
 }
 
+/// The link's IO component: raw UDP natively, WebTransport in the browser.
+#[cfg(not(target_family = "wasm"))]
+fn transport_io() -> impl Bundle {
+    (
+        UdpIo::default(),
+        LocalAddr(SocketAddr::from((std::net::Ipv4Addr::UNSPECIFIED, 0))),
+    )
+}
+
+/// The browser trusts the server's self-signed certificate by its SHA-256
+/// digest (hex), taken from the `TRON_CERT_DIGEST` query parameter.
+#[cfg(target_family = "wasm")]
+fn transport_io() -> impl Bundle {
+    (
+        lightyear::webtransport::client::WebTransportClientIo {
+            certificate_digest: crate::platform::env_var("TRON_CERT_DIGEST").unwrap_or_default(),
+        },
+        // RawClient reads LocalAddr when the link comes up; WebTransport only
+        // sets it later, so a placeholder must exist from the start.
+        LocalAddr(SocketAddr::from((std::net::Ipv4Addr::UNSPECIFIED, 0))),
+    )
+}
+
 impl Session {
     /// Start connecting to `address` over UDP, joining as `name` (the server
     /// has the final say on it). Does nothing while a session exists or a quit
     /// is pending.
     pub fn connect(&mut self, address: SocketAddr, name: &str, now: f64, commands: &mut Commands) {
-        let io = (
-            UdpIo::default(),
-            LocalAddr(SocketAddr::from((Ipv4Addr::UNSPECIFIED, 0))),
-            PeerAddr(address),
+        self.connect_with(
+            address,
+            (transport_io(), PeerAddr(address)),
+            name,
+            now,
+            commands,
         );
-        self.connect_with(address, io, name, now, commands);
     }
 
     /// [`Session::connect`] over another transport: `io` is the link's IO
@@ -364,7 +388,7 @@ const AUTOCONNECT_RETRY_SECS: f64 = 1.5;
 impl AutoConnect {
     /// Read `TRON_AUTOCONNECT`; an unparsable value is logged and ignored.
     pub fn from_env() -> Option<Self> {
-        let raw = std::env::var("TRON_AUTOCONNECT").ok()?;
+        let raw = crate::platform::env_var("TRON_AUTOCONNECT")?;
         match raw.trim().parse::<SocketAddr>() {
             Ok(addr) => {
                 info!(%addr, "TRON_AUTOCONNECT set: joining automatically");
