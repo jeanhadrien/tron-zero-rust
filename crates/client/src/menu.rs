@@ -5,7 +5,7 @@ use std::net::{Ipv4Addr, SocketAddr};
 use bevy::prelude::*;
 use bevy_egui::{EguiContexts, egui};
 
-use crate::browser::{BrowserState, FetchStatus, ManagerConfig, connect_supported};
+use crate::browser::{BrowserRow, BrowserState, FetchStatus, ManagerConfig, connect_supported};
 use crate::connection::{AutoConnect, ConnectionPhase, IDLE_STATUS, Session};
 use crate::input::PendingInput;
 use crate::settings::{
@@ -110,11 +110,247 @@ impl UiAction {
     fn is_none(&self) -> bool {
         matches!(self, UiAction::None)
     }
+
+    /// Records `next` unless a widget already claimed this frame's action.
+    fn set_once(&mut self, next: UiAction) {
+        if self.is_none() {
+            *self = next;
+        }
+    }
 }
 
 // Theme lives in `crate::theme` so menu, HUD, and death prompt share one
 // palette: near-black navy panel over a dimmed fullscreen backdrop, cyan
 // headings, teal full-width action buttons.
+
+fn heading(ui: &mut egui::Ui, text: &str, size: f32) {
+    ui.label(
+        egui::RichText::new(text)
+            .size(size)
+            .strong()
+            .color(theme::CYAN),
+    );
+}
+
+fn body_label(ui: &mut egui::Ui, text: impl Into<String>, size: f32) {
+    ui.label(egui::RichText::new(text).size(size).color(theme::BODY));
+}
+
+fn main_screen(
+    ui: &mut egui::Ui,
+    phase: ConnectionPhase,
+    status: &str,
+    name_edit: &mut String,
+    action: &mut UiAction,
+) {
+    heading(ui, "TRON ZERO", 34.0);
+    ui.label(egui::RichText::new("LOCALHOST\n127.0.0.1:5000").size(20.0));
+    body_label(ui, status, 16.0);
+    ui.separator();
+    ui.horizontal(|ui| {
+        body_label(ui, "Name", 16.0);
+        ui.add_enabled(
+            phase == ConnectionPhase::Offline,
+            egui::TextEdit::singleline(name_edit)
+                .char_limit(MAX_NAME_CHARS)
+                .hint_text(shared::protocol::DEFAULT_NAME)
+                .desired_width(f32::INFINITY),
+        );
+    });
+    let primary = ui.add_enabled_ui(phase != ConnectionPhase::Disconnecting, |ui| {
+        theme::action_button(ui, primary_caption(phase))
+    });
+    if primary.inner.clicked() {
+        action.set_once(match phase {
+            ConnectionPhase::Offline => UiAction::Connect,
+            ConnectionPhase::Connecting | ConnectionPhase::Synchronizing => UiAction::CancelConnect,
+            ConnectionPhase::Playing => UiAction::Resume,
+            ConnectionPhase::Disconnecting => UiAction::None,
+        });
+    }
+    if phase == ConnectionPhase::Playing && theme::action_button(ui, "Disconnect").clicked() {
+        action.set_once(UiAction::Disconnect);
+    }
+    if theme::action_button(ui, "Settings").clicked() {
+        action.set_once(UiAction::GotoSettings);
+    }
+    if theme::action_button(ui, "Browse Servers").clicked() {
+        action.set_once(UiAction::GotoRooms);
+    }
+    if theme::action_button(ui, "Quit game").clicked() {
+        action.set_once(UiAction::Quit);
+    }
+}
+
+fn settings_screen(
+    ui: &mut egui::Ui,
+    bindings: &TurnBindings,
+    rebind: &RebindState,
+    action: &mut UiAction,
+) {
+    heading(ui, "SETTINGS", 26.0);
+    ui.separator();
+    for (side, title) in [(TurnSide::Left, "Left"), (TurnSide::Right, "Right")] {
+        ui.label(
+            egui::RichText::new(title)
+                .size(16.0)
+                .strong()
+                .color(theme::BODY),
+        );
+        ui.horizontal_wrapped(|ui| {
+            for (index, binding) in bindings.keys(side).iter().enumerate() {
+                let label = if rebind.capturing == Some((side, index)) {
+                    "press key...".to_owned()
+                } else {
+                    key_label(binding).to_owned()
+                };
+                let key_button = egui::RichText::new(label)
+                    .family(egui::FontFamily::Monospace)
+                    .size(18.0);
+                if ui.button(key_button).clicked() {
+                    action.set_once(UiAction::StartCapture(side, index));
+                }
+                if ui.small_button("x").clicked() {
+                    action.set_once(UiAction::RemoveKey(side, index));
+                }
+            }
+        });
+        let len = bindings.keys(side).len();
+        if rebind.capturing == Some((side, len)) {
+            ui.label(egui::RichText::new(format!("Press a key for {title}...")).color(theme::BODY));
+        } else if ui
+            .add_enabled(len < MAX_KEYS_PER_SIDE, egui::Button::new("Add key"))
+            .clicked()
+        {
+            action.set_once(UiAction::StartCapture(side, len));
+        }
+    }
+    if let Some(error) = &rebind.error {
+        ui.colored_label(egui::Color32::RED, error.as_str());
+    }
+    ui.separator();
+    if theme::action_button(ui, "Reset defaults").clicked() {
+        action.set_once(UiAction::ResetBindings);
+    }
+    if theme::action_button(ui, "Back").clicked() {
+        action.set_once(UiAction::Back);
+    }
+}
+
+fn rooms_screen(
+    ui: &mut egui::Ui,
+    browser: &BrowserState,
+    config: &ManagerConfig,
+    phase: ConnectionPhase,
+    now: f64,
+    action: &mut UiAction,
+) {
+    heading(ui, "SERVERS", 26.0);
+    body_label(ui, config.base_url.as_str(), 14.0);
+    match browser.status {
+        FetchStatus::Loading => body_label(ui, "Loading rooms...", 14.0),
+        FetchStatus::Loaded => {
+            let count = browser.rows.len();
+            let noun = if count == 1 { "room" } else { "rooms" };
+            let line = match browser.last_updated {
+                Some(updated) => format!(
+                    "{count} {noun} - updated {:.0}s ago",
+                    (now - updated).max(0.0)
+                ),
+                None => format!("{count} {noun}"),
+            };
+            body_label(ui, line, 14.0);
+        }
+        FetchStatus::Failed => {
+            ui.colored_label(
+                egui::Color32::RED,
+                browser.error.as_deref().unwrap_or("Room fetch failed."),
+            );
+        }
+    }
+    if ui
+        .add_enabled(
+            browser.status != FetchStatus::Loading,
+            egui::Button::new("Refresh"),
+        )
+        .clicked()
+    {
+        action.set_once(UiAction::Refresh);
+    }
+    if !connect_supported() {
+        body_label(
+            ui,
+            "Listing only: connecting needs a native build (WebTransport pending).",
+            13.0,
+        );
+    }
+    egui::ScrollArea::vertical()
+        .max_height(320.0)
+        .show(ui, |ui| {
+            if browser.status == FetchStatus::Loaded && browser.rows.iter().all(|row| row.is_local)
+            {
+                // Local-only rows mean either an empty manager or one holding
+                // just our own server (deduped above): say which, so
+                // registration reads as success.
+                let empty = if browser.manager_total == 0 {
+                    "No rooms found. Start a server or check the manager URL."
+                } else {
+                    "Your server is registered - connect via Localhost below."
+                };
+                body_label(ui, empty, 14.0);
+            }
+            for row in &browser.rows {
+                room_card(ui, row, phase, action);
+            }
+        });
+    if theme::action_button(ui, "Back").clicked() {
+        action.set_once(UiAction::Back);
+    }
+}
+
+fn room_card(ui: &mut egui::Ui, row: &BrowserRow, phase: ConnectionPhase, action: &mut UiAction) {
+    theme::card_frame().show(ui, |ui| {
+        // Pinned local row reads as the preselected default; connecting still
+        // takes one explicit click.
+        let name_color = if row.is_local {
+            theme::CYAN
+        } else {
+            theme::BODY
+        };
+        ui.label(
+            egui::RichText::new(row.room.display_name.as_str())
+                .size(18.0)
+                .strong()
+                .color(name_color),
+        );
+        let bots = match row.room.bot_count {
+            0 => String::new(),
+            n => format!(" (+{n} bots)"),
+        };
+        body_label(
+            ui,
+            format!(
+                "{}/{} players{} - {}:{}",
+                row.room.player_count, row.room.max_players, bots, row.room.host, row.room.port
+            ),
+            14.0,
+        );
+        if let Some(error) = &row.resolve_error {
+            ui.colored_label(egui::Color32::RED, error.as_str());
+        }
+        let full = row.room.is_full();
+        let can_connect =
+            row.addr.is_some() && phase == ConnectionPhase::Offline && connect_supported() && !full;
+        let caption = if full { "Full" } else { "Connect" };
+        if ui
+            .add_enabled(can_connect, egui::Button::new(caption))
+            .clicked()
+            && let Some(addr) = row.addr
+        {
+            action.set_once(UiAction::ConnectRoom(addr));
+        }
+    });
+}
 
 // Bevy injects each resource as its own parameter; the count is structural.
 #[allow(clippy::too_many_arguments)]
@@ -141,6 +377,7 @@ pub fn menu_ui(
     let screen = menu.screen;
     let phase = session.phase;
     let status = session.status.clone();
+    let now = time.elapsed_secs_f64();
     let mut action = UiAction::None;
     // Edited on a copy so the resource is only marked changed (and saved)
     // when the text really differs.
@@ -162,256 +399,11 @@ pub fn menu_ui(
                 theme::theme_panel(ui);
                 ui.vertical_centered(|ui| match screen {
                     MenuScreen::Main => {
-                        ui.label(
-                            egui::RichText::new("TRON ZERO")
-                                .size(34.0)
-                                .strong()
-                                .color(theme::CYAN),
-                        );
-                        ui.label(egui::RichText::new("LOCALHOST\n127.0.0.1:5000").size(20.0));
-                        ui.label(
-                            egui::RichText::new(status.as_str())
-                                .size(16.0)
-                                .color(theme::BODY),
-                        );
-                        ui.separator();
-                        ui.horizontal(|ui| {
-                            ui.label(egui::RichText::new("Name").size(16.0).color(theme::BODY));
-                            ui.add_enabled(
-                                phase == ConnectionPhase::Offline,
-                                egui::TextEdit::singleline(&mut name_edit)
-                                    .char_limit(MAX_NAME_CHARS)
-                                    .hint_text(shared::protocol::DEFAULT_NAME)
-                                    .desired_width(f32::INFINITY),
-                            );
-                        });
-                        let caption = primary_caption(phase);
-                        let primary = ui
-                            .add_enabled_ui(phase != ConnectionPhase::Disconnecting, |ui| {
-                                theme::action_button(ui, caption)
-                            });
-                        if primary.inner.clicked() && action.is_none() {
-                            action = match phase {
-                                ConnectionPhase::Offline => UiAction::Connect,
-                                ConnectionPhase::Connecting | ConnectionPhase::Synchronizing => {
-                                    UiAction::CancelConnect
-                                }
-                                ConnectionPhase::Playing => UiAction::Resume,
-                                ConnectionPhase::Disconnecting => UiAction::None,
-                            };
-                        }
-                        if phase == ConnectionPhase::Playing
-                            && theme::action_button(ui, "Disconnect").clicked()
-                            && action.is_none()
-                        {
-                            action = UiAction::Disconnect;
-                        }
-                        if theme::action_button(ui, "Settings").clicked() && action.is_none() {
-                            action = UiAction::GotoSettings;
-                        }
-                        if theme::action_button(ui, "Browse Servers").clicked()
-                            && action.is_none()
-                        {
-                            action = UiAction::GotoRooms;
-                        }
-                        if theme::action_button(ui, "Quit game").clicked() && action.is_none() {
-                            action = UiAction::Quit;
-                        }
+                        main_screen(ui, phase, &status, &mut name_edit, &mut action)
                     }
-                    MenuScreen::Settings => {
-                        ui.label(
-                            egui::RichText::new("SETTINGS")
-                                .size(26.0)
-                                .strong()
-                                .color(theme::CYAN),
-                        );
-                        ui.separator();
-                        for (side, title) in [(TurnSide::Left, "Left"), (TurnSide::Right, "Right")]
-                        {
-                            ui.label(
-                                egui::RichText::new(title)
-                                    .size(16.0)
-                                    .strong()
-                                    .color(theme::BODY),
-                            );
-                            ui.horizontal_wrapped(|ui| {
-                                for (index, binding) in bindings.keys(side).iter().enumerate() {
-                                    let label = if rebind.capturing == Some((side, index)) {
-                                        "press key...".to_owned()
-                                    } else {
-                                        key_label(binding).to_owned()
-                                    };
-                                    if ui
-                                        .button(
-                                            egui::RichText::new(label)
-                                                .family(egui::FontFamily::Monospace)
-                                                .size(18.0),
-                                        )
-                                        .clicked()
-                                        && action.is_none()
-                                    {
-                                        action = UiAction::StartCapture(side, index);
-                                    }
-                                    if ui.small_button("x").clicked() && action.is_none() {
-                                        action = UiAction::RemoveKey(side, index);
-                                    }
-                                }
-                            });
-                            let len = bindings.keys(side).len();
-                            if rebind.capturing == Some((side, len)) {
-                                ui.label(
-                                    egui::RichText::new(format!("Press a key for {title}..."))
-                                        .color(theme::BODY),
-                                );
-                            } else if ui
-                                .add_enabled(len < MAX_KEYS_PER_SIDE, egui::Button::new("Add key"))
-                                .clicked()
-                                && action.is_none()
-                            {
-                                action = UiAction::StartCapture(side, len);
-                            }
-                        }
-                        if let Some(error) = &rebind.error {
-                            ui.colored_label(egui::Color32::RED, error.as_str());
-                        }
-                        ui.separator();
-                        if theme::action_button(ui, "Reset defaults").clicked() && action.is_none()
-                        {
-                            action = UiAction::ResetBindings;
-                        }
-                        if theme::action_button(ui, "Back").clicked() && action.is_none() {
-                            action = UiAction::Back;
-                        }
-                    }
+                    MenuScreen::Settings => settings_screen(ui, &bindings, &rebind, &mut action),
                     MenuScreen::Rooms => {
-                        ui.label(
-                            egui::RichText::new("SERVERS")
-                                .size(26.0)
-                                .strong()
-                                .color(theme::CYAN),
-                        );
-                        ui.label(
-                            egui::RichText::new(config.base_url.as_str())
-                                .size(14.0)
-                                .color(theme::BODY),
-                        );
-                        match browser.status {
-                            FetchStatus::Loading => {
-                                ui.label(
-                                    egui::RichText::new("Loading rooms...")
-                                        .size(14.0)
-                                        .color(theme::BODY),
-                                );
-                            }
-                            FetchStatus::Loaded => {
-                                let count = browser.rows.len();
-                                let noun = if count == 1 { "room" } else { "rooms" };
-                                let line = match browser.last_updated {
-                                    Some(updated) => format!(
-                                        "{count} {noun} - updated {:.0}s ago",
-                                        (time.elapsed_secs_f64() - updated).max(0.0)
-                                    ),
-                                    None => format!("{count} {noun}"),
-                                };
-                                ui.label(
-                                    egui::RichText::new(line).size(14.0).color(theme::BODY),
-                                );
-                            }
-                            FetchStatus::Failed => {
-                                ui.colored_label(
-                                    egui::Color32::RED,
-                                    browser.error.as_deref().unwrap_or("Room fetch failed."),
-                                );
-                            }
-                        }
-                        if ui
-                            .add_enabled(
-                                browser.status != FetchStatus::Loading,
-                                egui::Button::new("Refresh"),
-                            )
-                            .clicked()
-                            && action.is_none()
-                        {
-                            action = UiAction::Refresh;
-                        }
-                        if !connect_supported() {
-                            ui.label(
-                                egui::RichText::new(
-                                    "Listing only: connecting needs a native build (WebTransport pending).",
-                                )
-                                .size(13.0)
-                                .color(theme::BODY),
-                            );
-                        }
-                        egui::ScrollArea::vertical().max_height(320.0).show(ui, |ui| {
-                            if browser.status == FetchStatus::Loaded
-                                && browser.rows.iter().all(|row| row.is_local)
-                            {
-                                // Local-only rows mean either an empty manager or
-                                // one holding just our own server (deduped above):
-                                // say which, so registration reads as success.
-                                let empty = if browser.manager_total == 0 {
-                                    "No rooms found. Start a server or check the manager URL."
-                                } else {
-                                    "Your server is registered - connect via Localhost below."
-                                };
-                                ui.label(
-                                    egui::RichText::new(empty)
-                                    .size(14.0)
-                                    .color(theme::BODY),
-                                );
-                            }
-                            for row in &browser.rows {
-                                theme::card_frame().show(ui, |ui| {
-                                    // Pinned local row reads as the preselected default;
-                                    // connecting still takes one explicit click.
-                                    let name_color =
-                                        if row.is_local { theme::CYAN } else { theme::BODY };
-                                    ui.label(
-                                        egui::RichText::new(row.room.display_name.as_str())
-                                            .size(18.0)
-                                            .strong()
-                                            .color(name_color),
-                                    );
-                                    let bots = match row.room.bot_count {
-                                        0 => String::new(),
-                                        n => format!(" (+{n} bots)"),
-                                    };
-                                    ui.label(
-                                        egui::RichText::new(format!(
-                                            "{}/{} players{} - {}:{}",
-                                            row.room.player_count,
-                                            row.room.max_players,
-                                            bots,
-                                            row.room.host,
-                                            row.room.port
-                                        ))
-                                        .size(14.0)
-                                        .color(theme::BODY),
-                                    );
-                                    if let Some(error) = &row.resolve_error {
-                                        ui.colored_label(egui::Color32::RED, error.as_str());
-                                    }
-                                    let full = row.room.is_full();
-                                    let can_connect = row.addr.is_some()
-                                        && phase == ConnectionPhase::Offline
-                                        && connect_supported()
-                                        && !full;
-                                    let caption = if full { "Full" } else { "Connect" };
-                                    if ui
-                                        .add_enabled(can_connect, egui::Button::new(caption))
-                                        .clicked()
-                                        && action.is_none()
-                                        && let Some(addr) = row.addr
-                                    {
-                                        action = UiAction::ConnectRoom(addr);
-                                    }
-                                });
-                            }
-                        });
-                        if theme::action_button(ui, "Back").clicked() && action.is_none() {
-                            action = UiAction::Back;
-                        }
+                        rooms_screen(ui, &browser, &config, phase, now, &mut action)
                     }
                 });
             });
@@ -433,7 +425,7 @@ pub fn menu_ui(
             session.connect(
                 SocketAddr::from((Ipv4Addr::LOCALHOST, 5000)),
                 &join_name,
-                time.elapsed_secs_f64(),
+                now,
                 &mut commands,
             );
         }
@@ -445,7 +437,7 @@ pub fn menu_ui(
             menu.block_this_frame = true;
             session.disconnect("Disconnected from server.");
         }
-        UiAction::Quit => session.request_quit(time.elapsed_secs_f64()),
+        UiAction::Quit => session.request_quit(now),
         UiAction::Resume => {
             menu.block_this_frame = true;
             menu.open = false;
@@ -460,7 +452,7 @@ pub fn menu_ui(
             if session.phase == ConnectionPhase::Offline {
                 menu.screen = MenuScreen::Main;
                 menu.block_this_frame = true;
-                session.connect(addr, &join_name, time.elapsed_secs_f64(), &mut commands);
+                session.connect(addr, &join_name, now, &mut commands);
             }
         }
         UiAction::Back => menu.screen = MenuScreen::Main,
