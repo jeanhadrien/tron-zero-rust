@@ -3,7 +3,8 @@
 # Pulls the server image from Artifact Registry and runs it under systemd.
 # Instance metadata (set by create-vm.sh) provides the image and room settings;
 # the advertised host is the VM's current external IP, read at every start, so
-# no reserved (billed) static IP is needed.
+# no reserved (billed) static IP is needed. COS runs cloud-init on every boot,
+# so a VM restart picks up changes to this file.
 
 write_files:
   - path: /etc/systemd/system/tron-zero.service
@@ -16,19 +17,30 @@ write_files:
 
       [Service]
       Environment=HOME=/home/tron
+      # COS's host firewall drops inbound traffic by default; host networking
+      # gets no Docker NAT rules, so open the game ports explicitly.
+      ExecStartPre=/bin/bash -c 'iptables -w -C INPUT -p udp -m multiport --dports 5000,5001 -j ACCEPT 2>/dev/null || iptables -w -A INPUT -p udp -m multiport --dports 5000,5001 -j ACCEPT'
       ExecStartPre=/usr/bin/docker-credential-gcr configure-docker --registries europe-west1-docker.pkg.dev
       ExecStartPre=-/usr/bin/docker rm -f tron-zero
       ExecStartPre=/bin/bash -c '/usr/bin/docker pull "$(curl -sf -H Metadata-Flavor:Google http://metadata.google.internal/computeMetadata/v1/instance/attributes/tron-image)"'
+      # A missing metadata value would make the server run unlisted (loopback
+      # host or default manager), so fail instead and let systemd retry.
       ExecStart=/bin/bash -c '\
         md() { curl -sf -H Metadata-Flavor:Google "http://metadata.google.internal/computeMetadata/v1/instance/$1"; }; \
+        ip="$(md network-interfaces/0/access-configs/0/external-ip)"; \
+        manager="$(md attributes/tron-manager-url)"; \
+        image="$(md attributes/tron-image)"; \
+        if [ -z "$ip" ] || [ -z "$manager" ] || [ -z "$image" ]; then echo "missing instance metadata" >&2; exit 1; fi; \
         exec /usr/bin/docker run --rm --name tron-zero --network host \
-          -e ADVERTISED_HOST="$(md network-interfaces/0/access-configs/0/external-ip)" \
+          -e ADVERTISED_HOST="$ip" \
           -e SERVER_NAME="$(md attributes/tron-server-name)" \
           -e MAX_PLAYERS="$(md attributes/tron-max-players)" \
-          -e MANAGER_URL="$(md attributes/tron-manager-url)" \
+          -e MANAGER_URL="$manager" \
           -e RUST_LOG=info \
-          "$(md attributes/tron-image)"'
-      ExecStop=/usr/bin/docker stop -t 5 tron-zero
+          "$image"'
+      # The server unregisters on SIGTERM (HTTP timeout 5 s); give it room.
+      ExecStop=/usr/bin/docker stop -t 15 tron-zero
+      TimeoutStopSec=25
       Restart=always
       RestartSec=5
 

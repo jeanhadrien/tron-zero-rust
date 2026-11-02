@@ -20,6 +20,11 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 
 METADATA="tron-image=${IMAGE},tron-server-name=${NAME_SHOWN},tron-max-players=10,tron-manager-url=${MANAGER_URL}"
 
+# Image registry (Docker, europe-west1); Cloud Build pushes the server image here.
+if ! gcloud artifacts repositories describe tron --location europe-west1 --project "$PROJECT" >/dev/null 2>&1; then
+  gcloud artifacts repositories create tron --repository-format docker --location europe-west1 --project "$PROJECT"
+fi
+
 # Game ports: raw UDP for desktop clients, WebTransport (QUIC, UDP) for browsers.
 if ! gcloud compute firewall-rules describe tron-zero-game --project "$PROJECT" >/dev/null 2>&1; then
   gcloud compute firewall-rules create tron-zero-game --project "$PROJECT" \
@@ -30,7 +35,7 @@ fi
 if gcloud compute instances describe "$VM" --zone "$ZONE" --project "$PROJECT" >/dev/null 2>&1; then
   gcloud compute instances add-metadata "$VM" --zone "$ZONE" --project "$PROJECT" \
     --metadata "$METADATA" --metadata-from-file user-data="$HERE/cloud-init.yaml"
-  echo "Metadata updated; restart the service or the VM to pick up the new image."
+  echo "Metadata updated. New image: sudo systemctl restart tron-zero (on the VM). Unit changes: restart the VM."
 else
   gcloud compute instances create "$VM" --zone "$ZONE" --project "$PROJECT" \
     --machine-type "$MACHINE" \
