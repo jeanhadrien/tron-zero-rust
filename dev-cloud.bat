@@ -2,7 +2,7 @@
 cd /d "%~dp0"
 where cargo >nul 2>nul || (echo cargo not on PATH. Open a new shell after rustup install. & pause & exit /b 1)
 
-set MANAGER_URL=https://server-manager-335435262909.europe-west1.run.app/
+set MANAGER_URL=https://server-manager.tronzero.dev/
 set ADVERTISED_HOST=127.0.0.1
 REM Deliberate: loopback host on a remote manager is refused by default.
 set ALLOW_LOOPBACK_ANNOUNCE=1

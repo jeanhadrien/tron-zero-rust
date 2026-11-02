@@ -35,7 +35,7 @@ Client (`tron-zero-client`): `MANAGER_URL` (runtime) / `TRONZERO_MANAGER_URL`
 
 Manager (`server-manager/`): `PORT` (3001; `MANAGER_PORT` fallback), `HOST`,
 `LOG_LEVEL`, `TRUST_PROXY`, `REGISTER_LIMIT_PER_MIN`; see its README. The
-Docker image has never been built here (`NETWORK.md`).
+It runs on Cloud Run at `https://server-manager.tronzero.dev`.
 
 ## Server — Linux (prod target)
 

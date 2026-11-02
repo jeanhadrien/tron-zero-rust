@@ -247,34 +247,17 @@ pub struct HeartbeatPayload {
     pub bot_count: u32,
 }
 
-// `token` is absent from legacy managers (no per-room auth).
-#[derive(Debug, Deserialize)]
-struct RegisterResponse {
-    id: String,
-    #[serde(default)]
-    token: Option<String>,
-}
-
-/// Our room as the manager knows it. `token == None` is legacy mode: the
-/// manager issued no secret, so no auth header is sent.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// Our room as the manager knows it: its id and the per-room secret that
+/// authorizes heartbeats and the unregister.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct Registration {
     pub id: String,
-    pub token: Option<String>,
-}
-
-impl From<RegisterResponse> for Registration {
-    fn from(res: RegisterResponse) -> Self {
-        Self {
-            id: res.id,
-            token: res.token.filter(|t| !t.is_empty()),
-        }
-    }
+    pub token: String,
 }
 
 impl Registration {
-    fn authorization(&self) -> Option<String> {
-        self.token.as_ref().map(|token| format!("Bearer {token}"))
+    fn authorization(&self) -> String {
+        format!("Bearer {}", self.token)
     }
 }
 
@@ -290,8 +273,12 @@ fn do_register(agent: &ureq::Agent, cfg: &AnnounceConfig) -> Option<Registration
         .post(&cfg.register_url())
         .send_json(cfg.register_payload())
     {
-        Ok(mut res) => match res.body_mut().read_json::<RegisterResponse>() {
-            Ok(body) => Some(body.into()),
+        Ok(mut res) => match res.body_mut().read_json::<Registration>() {
+            Ok(reg) if !reg.token.is_empty() => Some(reg),
+            Ok(_) => {
+                tracing::warn!("Manager register: no room token issued");
+                None
+            }
             Err(e) => {
                 tracing::warn!(error = %e, "Manager register: bad response body");
                 None
@@ -339,10 +326,9 @@ fn do_heartbeat(
         player_count: counts.humans.load(Ordering::Relaxed),
         bot_count: counts.bots.load(Ordering::Relaxed),
     };
-    let mut request = agent.post(&cfg.heartbeat_url(&reg.id));
-    if let Some(auth) = reg.authorization() {
-        request = request.header("Authorization", auth);
-    }
+    let request = agent
+        .post(&cfg.heartbeat_url(&reg.id))
+        .header("Authorization", reg.authorization());
     match request.send_json(&payload) {
         Ok(_) => HeartbeatOutcome::Ok,
         Err(ureq::Error::StatusCode(404)) => HeartbeatOutcome::NotFound,
@@ -363,10 +349,9 @@ fn do_heartbeat(
 
 /// Best-effort blocking unregister used on shutdown.
 fn unregister_blocking(cfg: &AnnounceConfig, reg: &Registration) {
-    let mut request = agent().delete(&cfg.unregister_url(&reg.id));
-    if let Some(auth) = reg.authorization() {
-        request = request.header("Authorization", auth);
-    }
+    let request = agent()
+        .delete(&cfg.unregister_url(&reg.id))
+        .header("Authorization", reg.authorization());
     match request.call() {
         Ok(_) => tracing::info!(room_id = %reg.id, "Unregistered from manager"),
         Err(e) => {
@@ -498,14 +483,7 @@ pub fn spawn_announcer(
                 tracing::warn!("Retrying register in 5s");
                 std::thread::sleep(RETRY_DELAY);
             };
-            match &reg.token {
-                Some(_) => tracing::info!(room_id = %reg.id, "Registered with manager"),
-                None => tracing::warn!(
-                    room_id = %reg.id,
-                    "Registered with a legacy manager (no room token issued): \
-                     heartbeats are unauthenticated; redeploy the manager to enable auth"
-                ),
-            }
+            tracing::info!(room_id = %reg.id, "Registered with manager");
 
             // Immediate heartbeat, then every 2s.
             loop {
@@ -715,26 +693,19 @@ mod tests {
     }
 
     fn registration(body: &str) -> Registration {
-        serde_json::from_str::<RegisterResponse>(body)
-            .unwrap()
-            .into()
+        serde_json::from_str::<Registration>(body).unwrap()
     }
 
     #[test]
     fn register_response_with_token_authorizes_as_bearer() {
         let reg = registration(r#"{"id":"abc","host":"h","port":1,"token":"s3cret"}"#);
         assert_eq!(reg.id, "abc");
-        assert_eq!(reg.authorization().as_deref(), Some("Bearer s3cret"));
+        assert_eq!(reg.authorization(), "Bearer s3cret");
     }
 
     #[test]
-    fn legacy_register_response_means_no_auth_header() {
-        let legacy = registration(r#"{"id":"abc","host":"h","port":1,"playerCount":0}"#);
-        assert_eq!(legacy.token, None);
-        assert_eq!(legacy.authorization(), None);
-        // An empty token is as good as none.
-        let empty = registration(r#"{"id":"abc","token":""}"#);
-        assert_eq!(empty.authorization(), None);
+    fn register_response_without_token_is_rejected() {
+        assert!(serde_json::from_str::<Registration>(r#"{"id":"abc","port":1}"#).is_err());
     }
 
     fn cfg_for(manager: &str, host: &str) -> AnnounceConfig {
@@ -813,7 +784,7 @@ mod tests {
         let cfg = cfg_for("http://localhost:3001", "127.0.0.1");
         let reg = Registration {
             id: "r1".into(),
-            token: Some("t".into()),
+            token: "t".into(),
         };
         assert!(handle.begin_register());
         assert!(handle.finish_register(&cfg, Some(&reg)));

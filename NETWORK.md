@@ -78,15 +78,9 @@ announcer/manager token flow.
   browser, HUD, death overlay, quit and autoconnect are covered by unit tests
   and nettest only. The manual checks in `docs/dev.md` still need a person at
   the window.
-- [ ] **Linux SIGTERM unregister untested.** The announcer unregisters on
-  SIGINT/SIGTERM via `ctrlc` (`termination` feature); it has only been
-  exercised on Windows. The manager's 40 s eviction is the backstop.
-- [ ] **Manager Docker image not built.** `server-manager/Dockerfile` has never
-  been built or run here.
-- [ ] **Redeploy the Cloud Run manager** (per-room tokens, 409 on endpoint
-  hijack, register rate limit). Update game servers first or together: old
-  announcers send no bearer token and get `401` on heartbeat from the new
-  manager. Servers on the new announcer work against both.
+- [x] **Linux SIGTERM unregister** verified on the GCE container
+  (`systemctl stop` logs "Unregistered from manager"; the room disappears).
+- [x] **Manager image built and deployed** to Cloud Run (2026-11-02).
 - [ ] Document the supported deployment topology (UDP firewall, diagnostics
   collection, operational limits) before public hosting; today only the
   friends-on-my-PC recipe exists (`docs/release.md`).
