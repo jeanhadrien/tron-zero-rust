@@ -5,6 +5,8 @@ export interface RoomEntry {
   host: string;
   port: number;
   secure?: boolean; // game server is reachable over TLS
+  webPort?: number; // WebTransport (QUIC) UDP port for browser clients; absent = native only
+  certHash?: string; // hex SHA-256 of a self-signed WebTransport cert; absent = CA-validated cert
   displayName: string;
   playerCount: number; // humans only, updated via heartbeat; maxPlayers caps humans
   botCount?: number; // additive and informational; absent for servers that do not report it
@@ -23,6 +25,8 @@ export interface RegisterPayload {
   host: string;
   port: number;
   secure?: boolean;
+  webPort?: number;
+  certHash?: string;
   displayName: string;
   maxPlayers: number;
 }

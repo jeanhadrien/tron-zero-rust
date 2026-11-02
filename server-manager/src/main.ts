@@ -35,6 +35,9 @@ app.get('/health', (_req, res) => {
   res.json({ ok: true, uptime: Math.floor((Date.now() - startedAt) / 1000) });
 });
 
+// SHA-256 as 64 hex digits, no separators (what browsers' serverCertificateHashes take).
+const CERT_HASH = /^[0-9a-fA-F]{64}$/;
+
 const isInt = (v: unknown, min: number, max: number): v is number =>
   typeof v === 'number' && Number.isInteger(v) && v >= min && v <= max;
 
@@ -49,12 +52,16 @@ function parseRegister(raw: unknown): RegisterPayload | string {
   if (typeof b.displayName !== 'string' || !b.displayName.trim()) return 'Invalid displayName';
   if (!isInt(b.maxPlayers, 1, MAX_PLAYERS_LIMIT)) return 'Invalid maxPlayers';
   if (b.secure != null && typeof b.secure !== 'boolean') return 'Invalid secure';
+  if (b.webPort != null && !isInt(b.webPort, 1, 65535)) return 'Invalid webPort';
+  if (b.certHash != null && (typeof b.certHash !== 'string' || !CERT_HASH.test(b.certHash))) return 'Invalid certHash';
   return {
     host: b.host,
     port: b.port,
     displayName: b.displayName.slice(0, MAX_NAME_LEN), // overlong names are truncated, not rejected
     maxPlayers: b.maxPlayers,
     ...(b.secure != null && { secure: b.secure }),
+    ...(b.webPort != null && { webPort: b.webPort }),
+    ...(typeof b.certHash === 'string' && { certHash: b.certHash.toLowerCase() }),
   };
 }
 

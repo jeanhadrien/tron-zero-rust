@@ -44,6 +44,8 @@ export function registerRoom(payload: RegisterPayload, id: string, token: string
     host: payload.host,
     port: payload.port,
     secure: payload.secure,
+    webPort: payload.webPort,
+    certHash: payload.certHash,
     displayName: payload.displayName,
     maxPlayers: payload.maxPlayers,
     playerCount: 0,
