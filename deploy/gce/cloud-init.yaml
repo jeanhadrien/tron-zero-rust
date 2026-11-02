@@ -1,0 +1,41 @@
+#cloud-config
+# Container-Optimized OS boot config for a Tron Zero game server VM.
+# Pulls the server image from Artifact Registry and runs it under systemd.
+# Instance metadata (set by create-vm.sh) provides the image and room settings;
+# the advertised host is the VM's current external IP, read at every start, so
+# no reserved (billed) static IP is needed.
+
+write_files:
+  - path: /etc/systemd/system/tron-zero.service
+    permissions: "0644"
+    content: |
+      [Unit]
+      Description=Tron Zero game server
+      Wants=network-online.target
+      After=network-online.target docker.service
+
+      [Service]
+      Environment=HOME=/home/tron
+      ExecStartPre=/usr/bin/docker-credential-gcr configure-docker --registries europe-west1-docker.pkg.dev
+      ExecStartPre=-/usr/bin/docker rm -f tron-zero
+      ExecStartPre=/bin/bash -c '/usr/bin/docker pull "$(curl -sf -H Metadata-Flavor:Google http://metadata.google.internal/computeMetadata/v1/instance/attributes/tron-image)"'
+      ExecStart=/bin/bash -c '\
+        md() { curl -sf -H Metadata-Flavor:Google "http://metadata.google.internal/computeMetadata/v1/instance/$1"; }; \
+        exec /usr/bin/docker run --rm --name tron-zero --network host \
+          -e ADVERTISED_HOST="$(md network-interfaces/0/access-configs/0/external-ip)" \
+          -e SERVER_NAME="$(md attributes/tron-server-name)" \
+          -e MAX_PLAYERS="$(md attributes/tron-max-players)" \
+          -e MANAGER_URL="$(md attributes/tron-manager-url)" \
+          -e RUST_LOG=info \
+          "$(md attributes/tron-image)"'
+      ExecStop=/usr/bin/docker stop -t 5 tron-zero
+      Restart=always
+      RestartSec=5
+
+      [Install]
+      WantedBy=multi-user.target
+
+runcmd:
+  - mkdir -p /home/tron
+  - systemctl daemon-reload
+  - systemctl enable --now tron-zero.service
