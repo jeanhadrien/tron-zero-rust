@@ -18,11 +18,11 @@ Server (`tron-zero-server`, all optional):
 | `MANAGER_URL` | `http://localhost:3001` | Lobby to register with. |
 | `ADVERTISED_HOST` | `127.0.0.1` | Public host clients should use. A loopback value with a non-local `MANAGER_URL` is refused (no announce, game still runs). |
 | `ADVERTISED_PORT` | `PORT` | Public port, if NAT maps it differently. |
-| `WEB_PORT` | `5001` | UDP port of the WebTransport listener for browser players (QUIC; open it in the firewall next to `PORT`). `0` disables it. |
+| `WEB_PORT` | `5001` | UDP port of the WebTransport listener for browser players (QUIC; open it in the firewall next to `PORT`). `0` disables it. Equal to `PORT` is refused at startup. The room is announced with `webPort`/`certHash` only once the listener is open. |
 | `ADVERTISED_WEB_PORT` | `WEB_PORT` | Public WebTransport port, if NAT maps it differently. Announced as `webPort`. |
 | `WEB_CERT` / `WEB_KEY` | unset | PEM certificate chain and key (e.g. Let's Encrypt) for the WebTransport listener. Unset: a self-signed 14-day ECDSA certificate is generated and its SHA-256 announced as `certHash`. |
-| `WEB_MAX_UPTIME_HOURS` | `312` | Self-signed only: exit cleanly (after unregistering) once this long has passed, so the container restart policy (`always`/`unless-stopped`, exit code 0) restarts it with a fresh certificate. |
-| `ADVERTISED_SECURE` | unset | `true` marks the room `secure` (reserved for WebTransport). |
+| `WEB_MAX_UPTIME_HOURS` | `288` | Self-signed only (certificates die after 14 days). Past this many hours the server exits cleanly (after unregistering) at the first moment no human is connected; at the hard limit (+24 h, at most 332 h) it exits regardless. A supervisor must restart it with a fresh certificate: systemd `Restart=always` around `docker run --rm` on GCE (a plain `docker run --rm` alone would not come back). Clamped to 1..=331 with a warning. |
+| `ADVERTISED_SECURE` | unset | `true` marks the room `secure` in the lobby. Informational: no client acts on it (browsers always use WebTransport over TLS). |
 | `ALLOW_LOOPBACK_ANNOUNCE` | unset | `1`/`true` (dev only) turns the loopback refusal into a warning. |
 | `TRON_BOT_DEBUG` | unset | Truthy: replicate bot decision snapshots for the client debug overlay (extra bandwidth; not for public servers). |
 | `RUST_LOG` | `info` | Standard Bevy/tracing filter. |
@@ -79,7 +79,7 @@ dependency caching, non-root user, `ca-certificates` for the HTTPS announcer,
 
 ```
 docker build -f Dockerfile.server -t tron-zero-server .
-docker run --rm -p 5000:5000/udp -e MANAGER_URL=... -e ADVERTISED_HOST=... tron-zero-server
+docker run --rm -p 5000:5000/udp -p 5001:5001/udp -e MANAGER_URL=... -e ADVERTISED_HOST=... tron-zero-server
 ```
 
 `cloudbuild.server.yaml` builds and pushes it to Artifact Registry
@@ -112,8 +112,11 @@ minutes, lots of RAM); for iteration pass `-CargoProfile release` /
 `CARGO_PROFILE=release`. `--cfg=web_sys_unstable_apis` and the getrandom
 `wasm_js` cfg live in `.cargo/config.toml`. Browsers have no environment
 variables: `platform::env_var` reads URL query parameters of the same name
-(`?MANAGER_URL=...`), preferences use `localStorage`, and the Quit button is
-hidden.
+(`?MANAGER_URL=...`) **only when the page is served from a local dev host**
+(`localhost`, `*.localhost`, `127.0.0.1`, `[::1]`); on the production origin
+they are ignored, so a crafted link cannot repoint the lobby or auto-join a
+foreign server. There, settings come from the build-time `TRONZERO_MANAGER_URL`
+and saved preferences (`localStorage`). The Quit button is hidden.
 
 Bevy features: the workspace dependency has `default-features = false` and each
 crate opts in. The client enables only 2D rendering (`2d_bevy_render`: camera,

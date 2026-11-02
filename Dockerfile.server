@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 # Headless Tron Zero game server. Build context = repo root:
 #   docker build -f Dockerfile.server -t tron-zero-server .
-# Speaks raw UDP (5000), plus 5001/udp reserved for WebTransport.
+# Speaks raw UDP (5000), plus 5001/udp for WebTransport (browser players).
 
 ARG RUST_VERSION=1.96
 

@@ -6,20 +6,25 @@ use tron_zero_server::{add_core, add_web, admission, announce, bot, systems, web
 
 fn main() {
     let mut announce_cfg = announce::AnnounceConfig::from_env();
-    // Browser players: a WebTransport listener beside the UDP one. A failure
-    // here (bad WEB_CERT/WEB_KEY) disables only the web side.
-    let web_endpoint =
-        web::WebConfig::from_env().and_then(|cfg| match web::WebEndpoint::new(&cfg) {
-            Ok(endpoint) => {
-                announce_cfg.web_port = Some(cfg.advertised_port);
-                announce_cfg.cert_hash = endpoint.cert_hash.clone();
-                Some(endpoint)
-            }
-            Err(e) => {
-                tracing::error!("WebTransport disabled: {e}");
-                None
-            }
-        });
+    // Browser players: a WebTransport listener beside the UDP one. A config
+    // that cannot work (e.g. WEB_PORT == PORT) stops the server; a failure to
+    // load WEB_CERT/WEB_KEY disables only the web side. The room is announced
+    // to browsers only once the listener is actually open (see `web`).
+    let web_config = web::WebConfig::from_env().unwrap_or_else(|e| {
+        eprintln!("Invalid configuration: {e}");
+        std::process::exit(2);
+    });
+    let web_endpoint = web_config.and_then(|cfg| match web::WebEndpoint::new(&cfg) {
+        Ok(endpoint) => {
+            announce_cfg.web_port = Some(cfg.advertised_port);
+            announce_cfg.cert_hash = endpoint.cert_hash.clone();
+            Some(endpoint)
+        }
+        Err(e) => {
+            tracing::error!("WebTransport disabled: {e}");
+            None
+        }
+    });
     let counts = Arc::new(announce::LiveCounts::default());
     let announce_handle = Arc::new(announce::AnnounceHandle::default());
 
@@ -55,9 +60,10 @@ fn main() {
     add_core(&mut app, announce_cfg.port);
     if let Some(endpoint) = web_endpoint {
         // Self-signed certificates expire within 14 days: exit before that
-        // and let the restart policy bring the server back with a new one.
-        if let Some(uptime) = endpoint.restart_after {
-            app.insert_resource(web::RestartAfter(uptime));
+        // (when idle, else at the hard limit) and let the service supervisor
+        // bring the server back with a new one.
+        if let Some(policy) = endpoint.restart {
+            app.insert_resource(policy);
             app.add_systems(Update, web::exit_after_uptime);
         }
         add_web(&mut app, endpoint);

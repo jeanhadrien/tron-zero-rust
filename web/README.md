@@ -22,7 +22,7 @@ Then (the scripts do the same thing; both refuse a mismatched CLI version):
 Output is `web/dist` (`index.html`, `tron-zero-client.js`,
 `tron-zero-client_bg.wasm`). Set `TRONZERO_MANAGER_URL` to bake the lobby URL
 into the build; without it the page falls back to `http://localhost:3001`
-(override at runtime with `?MANAGER_URL=...`).
+(override with `?MANAGER_URL=...` on a local dev host only).
 
 Fat LTO makes the `wasm-release` profile slow (tens of minutes, lots of RAM).
 For iteration: `CARGO_PROFILE=release ./web/build.sh` (or
@@ -40,7 +40,10 @@ python -m http.server 8080 --directory web/dist
 ```
 
 Open `http://localhost:8080/?MANAGER_URL=http://localhost:3001`. Query
-parameters stand in for environment variables in the browser:
+parameters stand in for environment variables in the browser, **but only when
+the page is served from `localhost`, `*.localhost`, `127.0.0.1` or `[::1]`**.
+On any other origin (production included) they are ignored, so a crafted link
+cannot repoint the lobby or auto-join a foreign server:
 
 | Parameter | Meaning |
 |-----------|---------|

@@ -56,6 +56,9 @@ jobs:
   client-web:
     name: Build web client and deploy to GitHub Pages (play.tronzero.dev)
     runs-on: ubuntu-latest
+    # Fat-LTO wasm build is slow (tens of minutes); cap it so a hung runner
+    # cannot hold the `pages` concurrency group for GitHub's 6 h default.
+    timeout-minutes: 90
     permissions:
       contents: read
       pages: write

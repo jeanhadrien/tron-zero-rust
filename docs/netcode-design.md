@@ -76,8 +76,11 @@ loss and ordering semantics are those of UDP, so the protocol is unchanged.
 Certificates: browsers accept `serverCertificateHashes` only for ECDSA P-256
 certificates valid for at most 14 days. Without `WEB_CERT`/`WEB_KEY` the server
 mints one at startup (valid 14 days, backdated one hour), publishes its SHA-256 as `certHash`
-(lowercase hex, no colons) to the lobby, and exits cleanly after
-`WEB_MAX_UPTIME_HOURS` (default 312 = 13 days) so a restart policy rotates it.
+(lowercase hex, no colons) to the lobby, and exits cleanly to be restarted by
+its supervisor: after `WEB_MAX_UPTIME_HOURS` (default 288 = 12 days) at the
+first moment no human is connected, or at the hard limit (soft + 24 h, at most
+332 h; the certificate dies at 335 h) regardless. The room is announced with
+`webPort`/`certHash` only while the listener is actually open.
 With a CA certificate (`WEB_CERT`/`WEB_KEY` PEM) no hash is published or needed.
 Session timing: QUIC keep-alive 1 s, idle timeout 10 s (the smaller of both
 peers' values applies); the game-level session lease is independent.
