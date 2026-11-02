@@ -52,3 +52,62 @@ jobs:
           $zip = "tron-zero-$TAG-windows-x86_64.zip"
           Compress-Archive -Path target/release/tron-zero-client.exe -DestinationPath $zip
           gh release upload "$TAG" "$zip" --clobber
+
+  client-web:
+    name: Build web client and deploy to GitHub Pages (play.tronzero.dev)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+    environment:
+      name: github-pages
+      url: https://play.tronzero.dev
+    env:
+      TRONZERO_MANAGER_URL: ${{ vars.MANAGER_URL != '' && vars.MANAGER_URL || 'https://server-manager.tronzero.dev' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve client release tag
+        run: |
+          git fetch --tags --force
+          tag="$(git tag --list 'client-v*' --sort=-v:refname | head -n1)"
+          if [ -z "$tag" ]; then echo "No client-v* tag found" >&2; exit 1; fi
+          git checkout "$tag"
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Restore cargo cache
+        uses: Swatinem/rust-cache@v2
+
+      # The CLI must match the wasm-bindgen crate in Cargo.lock exactly.
+      - name: Resolve wasm-bindgen version
+        id: bindgen
+        run: |
+          version="$(grep -A1 '^name = "wasm-bindgen"$' Cargo.lock | sed -n 's/^version = "\(.*\)"/\1/p' | head -n1)"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Install wasm-bindgen-cli
+        uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-bindgen-cli@${{ steps.bindgen.outputs.version }}
+
+      - name: Build web client
+        run: ./web/build.sh
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: web/dist
+
+      - name: Deploy to GitHub Pages
+        uses: actions/deploy-pages@v4

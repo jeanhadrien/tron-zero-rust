@@ -1,12 +1,10 @@
 //! egui overlay menu; opening it captures controls but never pauses the server.
 
-use std::net::{Ipv4Addr, SocketAddr};
-
 use bevy::prelude::*;
 use bevy_egui::{EguiContexts, egui};
 
-use crate::browser::{BrowserRow, BrowserState, FetchStatus, ManagerConfig, connect_supported};
-use crate::connection::{AutoConnect, ConnectionPhase, IDLE_STATUS, Session};
+use crate::browser::{self, BrowserRow, BrowserState, FetchStatus, ManagerConfig};
+use crate::connection::{AutoConnect, ConnectionPhase, Endpoint, IDLE_STATUS, Session};
 use crate::input::PendingInput;
 use crate::settings::{
     MAX_KEYS_PER_SIDE, PlayerName, RebindState, TurnBindings, TurnSide, key_label,
@@ -100,7 +98,7 @@ enum UiAction {
     GotoRooms,
     Back,
     Refresh,
-    ConnectRoom(SocketAddr),
+    ConnectRoom(Endpoint),
     StartCapture(TurnSide, usize),
     RemoveKey(TurnSide, usize),
     ResetBindings,
@@ -144,7 +142,10 @@ fn main_screen(
     action: &mut UiAction,
 ) {
     heading(ui, "TRON ZERO", 34.0);
-    ui.label(egui::RichText::new("LOCALHOST\n127.0.0.1:5000").size(20.0));
+    ui.label(
+        egui::RichText::new(format!("LOCALHOST\n127.0.0.1:{}", browser::LOCAL_PLAY_PORT))
+            .size(20.0),
+    );
     body_label(ui, status, 16.0);
     ui.separator();
     ui.horizontal(|ui| {
@@ -277,13 +278,6 @@ fn rooms_screen(
     {
         action.set_once(UiAction::Refresh);
     }
-    if !connect_supported() {
-        body_label(
-            ui,
-            "Listing only: connecting needs a native build (WebTransport pending).",
-            13.0,
-        );
-    }
     egui::ScrollArea::vertical()
         .max_height(320.0)
         .show(ui, |ui| {
@@ -331,23 +325,26 @@ fn room_card(ui: &mut egui::Ui, row: &BrowserRow, phase: ConnectionPhase, action
             ui,
             format!(
                 "{}/{} players{} - {}:{}",
-                row.room.player_count, row.room.max_players, bots, row.room.host, row.room.port
+                row.room.player_count,
+                row.room.max_players,
+                bots,
+                row.room.host,
+                row.play_port()
             ),
             14.0,
         );
-        if let Some(error) = &row.resolve_error {
-            ui.colored_label(egui::Color32::RED, error.as_str());
+        if let Some(problem) = &row.problem {
+            ui.colored_label(egui::Color32::RED, problem.as_str());
         }
         let full = row.room.is_full();
-        let can_connect =
-            row.addr.is_some() && phase == ConnectionPhase::Offline && connect_supported() && !full;
+        let can_connect = row.endpoint.is_some() && phase == ConnectionPhase::Offline && !full;
         let caption = if full { "Full" } else { "Connect" };
         if ui
             .add_enabled(can_connect, egui::Button::new(caption))
             .clicked()
-            && let Some(addr) = row.addr
+            && let Some(endpoint) = &row.endpoint
         {
-            action.set_once(UiAction::ConnectRoom(addr));
+            action.set_once(UiAction::ConnectRoom(endpoint.clone()));
         }
     });
 }
@@ -422,12 +419,11 @@ pub fn menu_ui(
         UiAction::None => {}
         UiAction::Connect => {
             menu.block_this_frame = true;
-            session.connect(
-                SocketAddr::from((Ipv4Addr::LOCALHOST, 5000)),
-                &join_name,
-                now,
-                &mut commands,
-            );
+            let local = browser::local_row();
+            match local.endpoint {
+                Some(endpoint) => session.connect(endpoint, &join_name, now, &mut commands),
+                None => session.status = local.problem.unwrap_or_default(),
+            }
         }
         UiAction::CancelConnect => {
             menu.block_this_frame = true;
@@ -448,11 +444,11 @@ pub fn menu_ui(
             browser.request_refresh(&config);
         }
         UiAction::Refresh => browser.request_refresh(&config),
-        UiAction::ConnectRoom(addr) => {
+        UiAction::ConnectRoom(endpoint) => {
             if session.phase == ConnectionPhase::Offline {
                 menu.screen = MenuScreen::Main;
                 menu.block_this_frame = true;
-                session.connect(addr, &join_name, now, &mut commands);
+                session.connect(endpoint, &join_name, now, &mut commands);
             }
         }
         UiAction::Back => menu.screen = MenuScreen::Main,

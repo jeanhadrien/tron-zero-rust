@@ -76,9 +76,27 @@ impl Default for Session {
     }
 }
 
+/// Where to dial a server: its address plus, for WebTransport, the SHA-256
+/// digest (lowercase hex) of the self-signed certificate the browser pins.
+/// Native UDP ignores the digest.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Endpoint {
+    pub addr: SocketAddr,
+    pub cert_digest: Option<String>,
+}
+
+impl From<SocketAddr> for Endpoint {
+    fn from(addr: SocketAddr) -> Self {
+        Self {
+            addr,
+            cert_digest: None,
+        }
+    }
+}
+
 /// The link's IO component: raw UDP natively, WebTransport in the browser.
 #[cfg(not(target_family = "wasm"))]
-fn transport_io() -> impl Bundle {
+fn transport_io(_cert_digest: Option<String>) -> impl Bundle {
     (
         UdpIo::default(),
         LocalAddr(SocketAddr::from((std::net::Ipv4Addr::UNSPECIFIED, 0))),
@@ -86,12 +104,12 @@ fn transport_io() -> impl Bundle {
 }
 
 /// The browser trusts the server's self-signed certificate by its SHA-256
-/// digest (hex), taken from the `TRON_CERT_DIGEST` query parameter.
+/// digest (hex); an empty digest falls back to CA validation.
 #[cfg(target_family = "wasm")]
-fn transport_io() -> impl Bundle {
+fn transport_io(cert_digest: Option<String>) -> impl Bundle {
     (
         lightyear::webtransport::client::WebTransportClientIo {
-            certificate_digest: crate::platform::env_var("TRON_CERT_DIGEST").unwrap_or_default(),
+            certificate_digest: cert_digest.unwrap_or_default(),
         },
         // RawClient reads LocalAddr when the link comes up; WebTransport only
         // sets it later, so a placeholder must exist from the start.
@@ -100,13 +118,24 @@ fn transport_io() -> impl Bundle {
 }
 
 impl Session {
-    /// Start connecting to `address` over UDP, joining as `name` (the server
-    /// has the final say on it). Does nothing while a session exists or a quit
-    /// is pending.
-    pub fn connect(&mut self, address: SocketAddr, name: &str, now: f64, commands: &mut Commands) {
+    /// Start connecting to `endpoint` (a bare `SocketAddr` works too) over the
+    /// build's transport: UDP natively, WebTransport in the browser. Joins as
+    /// `name` (the server has the final say on it). Does nothing while a
+    /// session exists or a quit is pending.
+    pub fn connect(
+        &mut self,
+        endpoint: impl Into<Endpoint>,
+        name: &str,
+        now: f64,
+        commands: &mut Commands,
+    ) {
+        let Endpoint {
+            addr: address,
+            cert_digest,
+        } = endpoint.into();
         self.connect_with(
             address,
-            (transport_io(), PeerAddr(address)),
+            (transport_io(cert_digest), PeerAddr(address)),
             name,
             now,
             commands,
@@ -376,7 +405,7 @@ pub fn unlink_session(mut session: ResMut<Session>, mut commands: Commands) {
 /// server from startup until it works or the player takes over.
 #[derive(Resource, Debug)]
 pub struct AutoConnect {
-    addr: SocketAddr,
+    endpoint: Endpoint,
     armed: bool,
     next_attempt: f64,
 }
@@ -392,8 +421,12 @@ impl AutoConnect {
         match raw.trim().parse::<SocketAddr>() {
             Ok(addr) => {
                 info!(%addr, "TRON_AUTOCONNECT set: joining automatically");
+                // Browsers pin the dev server's certificate by digest.
+                let cert_digest = crate::platform::env_var("TRON_CERT_DIGEST")
+                    .map(|digest| digest.trim().to_ascii_lowercase())
+                    .filter(|digest| !digest.is_empty());
                 Some(Self {
-                    addr,
+                    endpoint: Endpoint { addr, cert_digest },
                     armed: true,
                     next_attempt: 0.0,
                 })
@@ -433,7 +466,12 @@ pub fn auto_connect(
         auto.disarm();
     } else if session.phase == ConnectionPhase::Offline && now >= auto.next_attempt {
         auto.next_attempt = now + AUTOCONNECT_RETRY_SECS;
-        session.connect(auto.addr, &sanitize_name(&name.0), now, &mut commands);
+        session.connect(
+            auto.endpoint.clone(),
+            &sanitize_name(&name.0),
+            now,
+            &mut commands,
+        );
     }
 }
 
@@ -518,7 +556,7 @@ mod tests {
         world.insert_resource(PlayerName::default());
         world.insert_resource(session);
         world.insert_resource(AutoConnect {
-            addr: SocketAddr::from(([127, 0, 0, 1], 9)),
+            endpoint: SocketAddr::from(([127, 0, 0, 1], 9)).into(),
             armed: true,
             next_attempt: 0.0,
         });

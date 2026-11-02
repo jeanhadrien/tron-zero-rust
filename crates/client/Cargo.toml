@@ -5,11 +5,38 @@ edition = "2024"
 
 [dependencies]
 shared = { path = "../shared", package = "tron-zero-shared" }
-bevy = { workspace = true, features = ["serialize"] }
+# 2D rendering only (Camera2d, gizmos, Text2d); bevy_egui draws the UI. Spelled
+# out instead of the "2d" / "default_app" bundles to leave out what they add:
+# bevy_animation, hdr, png, post-processing, picking, scenes and
+# reflect_auto_register (which keeps every reflected type's code alive).
+bevy = { workspace = true, features = [
+    "std",
+    "serialize", # KeyCode in saved key bindings
+    "async_executor",
+    "bevy_log",
+    "bevy_state",
+    "bevy_asset",
+    "bevy_camera",
+    "bevy_color",
+    "bevy_image",
+    "bevy_mesh",
+    "bevy_shader",
+    "bevy_material",
+    "bevy_text",
+    "bevy_window",
+    "bevy_winit",
+    "bevy_sprite",
+    "bevy_render",
+    "bevy_core_pipeline",
+    "bevy_sprite_render",
+    "bevy_gizmos",
+    "bevy_gizmos_render",
+    "default_font",
+] }
 lightyear = { workspace = true, features = ["raw_connection", "input_native"] }
 # Only for `TransportSystems` (ordering the simulated uplink delay); same version as lightyear.
 lightyear_transport = "0.28"
-bevy_egui.workspace = true
+bevy_egui = { workspace = true, features = ["render", "default_fonts", "manage_clipboard"] }
 ehttp = "0.7"
 rand.workspace = true
 serde.workspace = true
@@ -18,6 +45,7 @@ serde_json = "1"
 # Native: raw UDP and a config file in the platform config dir.
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 lightyear = { workspace = true, features = ["udp"] }
+bevy = { workspace = true, features = ["multi_threaded", "x11", "wayland"] }
 dirs = "6"
 
 # Web: WebTransport instead of UDP, WebGL2 rendering, localStorage preferences.
