@@ -9,6 +9,7 @@ pub mod config;
 pub mod connection;
 pub mod input;
 pub mod menu;
+pub mod platform;
 pub mod render;
 pub mod settings;
 pub mod sim;

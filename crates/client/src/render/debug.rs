@@ -39,7 +39,7 @@ pub struct DebugOverlay {
 impl DebugOverlay {
     /// Read config from process environment.
     pub fn from_env() -> Self {
-        Self::from_map(&|key| std::env::var(key).ok())
+        Self::from_map(&crate::platform::env_var)
     }
 
     /// Test seam: read config from any key-value lookup.

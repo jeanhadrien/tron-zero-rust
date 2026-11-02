@@ -16,8 +16,9 @@
 //! quantisation on the uplink).
 
 use std::collections::VecDeque;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
+use bevy::platform::time::Instant;
 use bevy::prelude::*;
 use lightyear::link::SendPayload;
 use lightyear::prelude::client::Client;
@@ -37,7 +38,7 @@ pub struct NetSim {
 impl NetSim {
     /// Read the `TRON_SIM_*` variables; `None` when nothing is requested.
     pub fn from_env() -> Option<Self> {
-        Self::from_lookup(&|key| std::env::var(key).ok())
+        Self::from_lookup(&crate::platform::env_var)
     }
 
     /// Test seam: read the settings from any key-value lookup.

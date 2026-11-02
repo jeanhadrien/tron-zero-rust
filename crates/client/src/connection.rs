@@ -1,6 +1,6 @@
 //! Connection lifecycle independent of menu presentation and server discovery.
 
-use std::net::{Ipv4Addr, SocketAddr};
+use std::net::SocketAddr;
 
 use bevy::prelude::*;
 use lightyear::prelude::client::{Connect, Disconnect, InputDelayConfig, RawClient};
@@ -76,6 +76,24 @@ impl Default for Session {
     }
 }
 
+/// The link's IO component: raw UDP natively, WebTransport in the browser.
+#[cfg(not(target_family = "wasm"))]
+fn transport_io() -> impl Bundle {
+    (
+        UdpIo::default(),
+        LocalAddr(SocketAddr::from((std::net::Ipv4Addr::UNSPECIFIED, 0))),
+    )
+}
+
+/// The browser trusts the server's self-signed certificate by its SHA-256
+/// digest (hex), taken from the `TRON_CERT_DIGEST` query parameter.
+#[cfg(target_family = "wasm")]
+fn transport_io() -> impl Bundle {
+    lightyear::webtransport::client::WebTransportClientIo {
+        certificate_digest: crate::platform::env_var("TRON_CERT_DIGEST").unwrap_or_default(),
+    }
+}
+
 impl Session {
     /// Start connecting to `address`, joining as `name` (the server has the
     /// final say on it). Does nothing while a session exists or a quit is pending.
@@ -89,8 +107,7 @@ impl Session {
         let client = commands
             .spawn((
                 RawClient,
-                UdpIo::default(),
-                LocalAddr(SocketAddr::from((Ipv4Addr::UNSPECIFIED, 0))),
+                transport_io(),
                 PeerAddr(address),
                 PredictionManager::default(),
                 InputTimelineConfig::default().with_input_delay(InputDelayConfig::no_input_delay()),
@@ -347,7 +364,7 @@ const AUTOCONNECT_RETRY_SECS: f64 = 1.5;
 impl AutoConnect {
     /// Read `TRON_AUTOCONNECT`; an unparsable value is logged and ignored.
     pub fn from_env() -> Option<Self> {
-        let raw = std::env::var("TRON_AUTOCONNECT").ok()?;
+        let raw = crate::platform::env_var("TRON_AUTOCONNECT")?;
         match raw.trim().parse::<SocketAddr>() {
             Ok(addr) => {
                 info!(%addr, "TRON_AUTOCONNECT set: joining automatically");
