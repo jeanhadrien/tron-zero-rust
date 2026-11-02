@@ -1,4 +1,4 @@
-#requires -Version 7
+#requires -Version 5.1
 <#
 .SYNOPSIS
   Builds the browser client into web/dist (wasm + JS glue + index.html).

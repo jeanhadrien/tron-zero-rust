@@ -15,7 +15,7 @@ cargo install wasm-bindgen-cli --version <wasm-bindgen version in Cargo.lock> --
 Then (the scripts do the same thing; both refuse a mismatched CLI version):
 
 ```
-./web/build.ps1     # Windows (PowerShell 7)
+./web/build.ps1     # Windows (PowerShell 5.1 or 7)
 ./web/build.sh      # Linux / macOS / Git Bash; this is what CI runs
 ```
 
@@ -26,7 +26,7 @@ into the build; without it the page falls back to `http://localhost:3001`
 
 Fat LTO makes the `wasm-release` profile slow (tens of minutes, lots of RAM).
 For iteration: `CARGO_PROFILE=release ./web/build.sh` (or
-`-Profile release` with the PowerShell script).
+`-CargoProfile release` with the PowerShell script).
 
 `wasm-opt` is off by default (see `docs/building.md` for the measurement); opt in
 with `WASM_OPT=1` / `-WasmOpt` (needs binaryen).
