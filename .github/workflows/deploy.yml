@@ -105,7 +105,8 @@ jobs:
           tool: wasm-bindgen-cli@${{ steps.bindgen.outputs.version }}
 
       - name: Build web client
-        run: ./web/build.sh
+        # Through bash: the checked-out tag may predate build.sh being executable.
+        run: bash web/build.sh
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
