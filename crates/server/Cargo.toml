@@ -6,7 +6,7 @@ edition = "2024"
 [dependencies]
 shared = { path = "../shared", package = "tron-zero-shared" }
 bots = { path = "../bots", package = "tron-zero-bots" }
-bevy = { version = "0.19", default-features = false, features = ["bevy_log", "bevy_state"] }
+bevy = { workspace = true, features = ["bevy_log", "bevy_state"] }
 lightyear = { workspace = true, features = ["udp", "raw_connection", "input_native", "webtransport"] }
 # Direct deps only for the WebTransport listener (`web.rs`); versions match lightyear_webtransport.
 aeronet_io = "0.21"

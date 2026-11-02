@@ -3,12 +3,14 @@ members = ["crates/shared", "crates/bots", "crates/server", "crates/client", "cr
 resolver = "2"
 
 [workspace.dependencies]
-bevy = "0.19"
+# No default features: every crate opts in to what it uses (the default set pulls
+# in 3D, PBR, UI, audio, gamepad... which the game never touches).
+bevy = { version = "0.19", default-features = false }
 bevy_app = "0.19"
 bevy_ecs = "0.19"
 bevy_reflect = "0.19"
 lightyear = "0.28"
-bevy_egui = "0.41"
+bevy_egui = { version = "0.41", default-features = false }
 glam = "0.32"
 serde = { version = "1", features = ["derive"] }
 postcard = "1.1"

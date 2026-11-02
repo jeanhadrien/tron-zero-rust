@@ -70,7 +70,6 @@ fn main() {
         )
             .chain()
             .after(bevy::input::InputSystems)
-            .after(bevy::ui::UiSystems::Focus)
             .after(MessageSystems::Receive)
             .after(ReplicationSystems::Receive)
             .before(input::buffer_keyboard_input),
