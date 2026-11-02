@@ -7,6 +7,8 @@ edition = "2024"
 shared = { path = "../shared", package = "tron-zero-shared" }
 bots = { path = "../bots", package = "tron-zero-bots" }
 bevy = { version = "0.19", default-features = false, features = ["bevy_log", "bevy_state"] }
+# Direct dep only to refresh a late-admitted link's `ClientVisibility` (`admission.rs`); version matches lightyear_replication.
+bevy_replicon = "0.41"
 lightyear = { workspace = true, features = ["udp", "raw_connection", "input_native", "webtransport"] }
 # Direct deps only for the WebTransport listener (`web.rs`); versions match lightyear_webtransport.
 aeronet_io = "0.21"

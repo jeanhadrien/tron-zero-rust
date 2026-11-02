@@ -2,6 +2,7 @@
 //! spawned at all (protocol version, capacity, player name).
 
 use bevy::prelude::*;
+use bevy_replicon::server::visibility::client_visibility::ClientVisibility;
 use lightyear::prelude::*;
 use shared::protocol::{
     HelloReply, JoinRejection, MAX_NAME_CHARS, PROTOCOL_ID, SESSION_TIMEOUT_SECS, SessionChannel,
@@ -76,6 +77,27 @@ fn unique_name(base: &str, taken: &[String]) -> String {
         .expect("an unbounded range always yields a free name")
 }
 
+/// Recompute which existing entities an admitted link may see as `Predicted`,
+/// `Interpolated` and `Controlled`.
+///
+/// Lightyear derives those per-link visibility bits in two places: when an
+/// entity gets its `PredictionTarget`/`InterpolationTarget`/`ControlledBy`
+/// (only for links that already have a `ReplicationSender`), and once when a
+/// link's `ClientVisibility` is created (at connection, before any hello).
+/// A rider spawned while this link was still waiting for its hello was thus
+/// skipped by the first and predates the second, so the link would see that
+/// rider with default (everything visible) markers, i.e. as its own. Dropping
+/// and re-adding `ClientVisibility` re-runs lightyear's late-joiner pass over
+/// every existing rider. Nothing has been sent to the link yet, so no
+/// replication state is lost. Call after `ReplicationSender` is inserted and
+/// before this link's own rider is spawned (whose hooks then handle it).
+fn refresh_link_visibility(commands: &mut Commands, link: Entity) {
+    commands
+        .entity(link)
+        .remove::<ClientVisibility>()
+        .insert(ClientVisibility::default());
+}
+
 /// Answer each link's first hello: spawn the rider, start replicating to the
 /// link and confirm the final name, or reject with a reason and close the link
 /// once the refusal has had time to arrive. Links that never say hello are
@@ -122,6 +144,7 @@ pub fn handle_hello(
                     .entity(link)
                     .remove::<AwaitingHello>()
                     .insert(ReplicationSender);
+                refresh_link_visibility(&mut commands, link);
                 spawn_human(&mut commands, link, remote.0, name.clone());
                 human_count += 1;
                 taken.push(name.clone());

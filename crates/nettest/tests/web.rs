@@ -42,8 +42,8 @@ fn udp_and_webtransport_clients_share_one_game() {
     );
 
     // Each rider on its own lane, heading +x, so the staircase stays in the arena.
-    for (lane, name) in ["Udp", "Web"].into_iter().enumerate() {
-        let id = net.server.player_id_named(name).expect("rider exists");
+    for (lane, client) in [udp, web].into_iter().enumerate() {
+        let id = net.clients[client].player_id().expect("rider exists");
         let start = Vec2::new(-1000.0, -1000.0 + 700.0 * lane as f32);
         net.server.place_rider(&id, start, Vec2::X);
     }
@@ -60,7 +60,7 @@ fn udp_and_webtransport_clients_share_one_game() {
     );
     net.run_server_ticks(150);
 
-    let id = net.server.player_id_named("Web").expect("web rider");
+    let id = net.clients[web].player_id().expect("web rider");
     let (_, link) = net.server.rider(&id).expect("web rider");
     let log = deliveries(&net.server, Some(link));
     assert_eq!(log.len(), 6, "every turn reaches the server");

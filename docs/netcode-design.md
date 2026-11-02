@@ -40,6 +40,11 @@ misleading timeout). What the hello compares is `PROTOCOL_ID`: the hand-bumped
 `constants.rs` and the turn timing constants, so a physics retune changes the
 id by itself (a test fails if a constant is missing from `SIM_CONSTANTS`; a
 change to gameplay *logic* with unchanged constants still needs a manual bump).
+Admission also refreshes the link's `ClientVisibility` (`admission.rs`):
+Lightyear computes the Predicted/Interpolated/Controlled visibility of a rider
+only for links that already have a `ReplicationSender`, so a link still waiting
+for its hello when another rider spawned would otherwise see that rider as its
+own (`Predicted` + `Controlled`). Covered by `nettest/tests/ownership.rs`.
 The hello messages are registered first in `register_protocol` so a mismatched
 build can still decode the rejection. `DisplayName` stays `replicate_once`
 because the name is final when the rider spawns.

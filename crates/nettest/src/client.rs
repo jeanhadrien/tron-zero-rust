@@ -282,6 +282,28 @@ impl TestClient {
             .map_or(0, |m| m.rollbacks)
     }
 
+    /// How this client classifies each rider it knows, sorted by name.
+    pub fn rider_roles(&mut self) -> Vec<RiderRole> {
+        let world = self.app.world_mut();
+        let mut query = world.query_filtered::<(
+            &DisplayName,
+            Has<Predicted>,
+            Has<Controlled>,
+            Has<Interpolated>,
+        ), With<Player>>();
+        let mut roles: Vec<RiderRole> = query
+            .iter(world)
+            .map(|(name, predicted, controlled, interpolated)| RiderRole {
+                name: name.0.clone(),
+                predicted,
+                controlled,
+                interpolated,
+            })
+            .collect();
+        roles.sort_by(|a, b| a.name.cmp(&b.name));
+        roles
+    }
+
     /// Replicated id of the local rider, once it exists.
     pub fn player_id(&mut self) -> Option<String> {
         let world = self.app.world_mut();
@@ -451,4 +473,13 @@ pub fn turns_of(inputs: &BTreeMap<u32, PlayerInput>) -> Vec<(u32, PlayerInput)> 
         .filter(|(_, input)| **input != PlayerInput::None)
         .map(|(tick, input)| (*tick, *input))
         .collect()
+}
+
+/// Which of Lightyear's per-client markers a replicated rider carries on a client.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RiderRole {
+    pub name: String,
+    pub predicted: bool,
+    pub controlled: bool,
+    pub interpolated: bool,
 }
