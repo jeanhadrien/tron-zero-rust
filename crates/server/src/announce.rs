@@ -44,6 +44,12 @@ pub struct AnnounceConfig {
     /// `ALLOW_LOOPBACK_ANNOUNCE`: dev opt-in that downgrades the loopback
     /// refusal (see [`AnnounceConfig::announce_blocker`]) to a warning.
     pub allow_loopback_announce: bool,
+    /// UDP port of the WebTransport listener for browser players (`webPort`),
+    /// set by `main` once the listener's certificate is known. `None`: no web.
+    pub web_port: Option<u16>,
+    /// SHA-256 of the self-signed WebTransport certificate, lowercase hex
+    /// without colons (`certHash`). `None` with a CA-issued certificate.
+    pub cert_hash: Option<String>,
 }
 
 impl AnnounceConfig {
@@ -113,6 +119,8 @@ impl AnnounceConfig {
             max_players,
             advertised_secure,
             allow_loopback_announce,
+            web_port: None,
+            cert_hash: None,
         }
     }
 
@@ -162,6 +170,8 @@ impl AnnounceConfig {
             secure: self.advertised_secure.then_some(true),
             display_name: self.server_name.clone(),
             max_players: self.max_players,
+            web_port: self.web_port,
+            cert_hash: self.cert_hash.clone(),
         }
     }
 }
@@ -221,6 +231,11 @@ pub struct RegisterPayload {
     pub display_name: String,
     #[serde(rename = "maxPlayers")]
     pub max_players: u32,
+    /// Additive like `botCount`: managers that predate it ignore the field.
+    #[serde(rename = "webPort", skip_serializing_if = "Option::is_none")]
+    pub web_port: Option<u16>,
+    #[serde(rename = "certHash", skip_serializing_if = "Option::is_none")]
+    pub cert_hash: Option<String>,
 }
 
 // `botCount` is additive: managers that predate it ignore the field.
@@ -640,6 +655,8 @@ mod tests {
             max_players: 10,
             advertised_secure: false,
             allow_loopback_announce: false,
+            web_port: None,
+            cert_hash: None,
         };
         let value = serde_json::to_value(cfg.register_payload()).unwrap();
         let obj = value.as_object().unwrap();
@@ -658,10 +675,20 @@ mod tests {
         // secure=true serializes; never an explicit false.
         let secure_cfg = AnnounceConfig {
             advertised_secure: true,
-            ..cfg
+            ..cfg.clone()
         };
         let secure_value = serde_json::to_value(secure_cfg.register_payload()).unwrap();
         assert_eq!(secure_value["secure"], Value::Bool(true));
+
+        // The web fields appear only when the WebTransport listener is on.
+        let web_cfg = AnnounceConfig {
+            web_port: Some(5001),
+            cert_hash: Some("ab".repeat(32)),
+            ..cfg
+        };
+        let web_value = serde_json::to_value(web_cfg.register_payload()).unwrap();
+        assert_eq!(web_value["webPort"], Value::Number(5001.into()));
+        assert_eq!(web_value["certHash"], Value::String("ab".repeat(32)));
     }
 
     #[test]

@@ -105,6 +105,8 @@ pub struct Net {
     pub server: TestServer,
     pub clients: Vec<TestClient>,
     port: u16,
+    /// WebTransport port and certificate digest, when the server has one.
+    web: Option<(u16, String)>,
     impairment: Impairment,
     last_step: Instant,
 }
@@ -117,9 +119,39 @@ impl Net {
             server: TestServer::new(port, impairment),
             clients: Vec::new(),
             port,
+            web: None,
             impairment,
             last_step: Instant::now(),
         }
+    }
+
+    /// Like [`Net::new`], with a WebTransport listener beside the UDP one.
+    pub fn new_with_web(impairment: Impairment) -> Self {
+        let port = free_port();
+        let web_port = free_port();
+        let endpoint = tron_zero_server::web::WebEndpoint::self_signed(web_port)
+            .expect("self-signed certificate");
+        let cert_hash = endpoint.cert_hash.clone().expect("self-signed digest");
+        Self {
+            server: TestServer::with_web(port, endpoint, impairment),
+            clients: Vec::new(),
+            port,
+            web: Some((web_port, cert_hash)),
+            impairment,
+            last_step: Instant::now(),
+        }
+    }
+
+    /// Spawn a client that joins over WebTransport (needs [`Net::new_with_web`]).
+    pub fn add_web_client(&mut self, name: &'static str) -> usize {
+        let (web_port, cert_hash) = self
+            .web
+            .clone()
+            .expect("server has a WebTransport listener");
+        let mut client = TestClient::new(self.impairment);
+        client.connect_web_as(web_port, &cert_hash, name);
+        self.clients.push(client);
+        self.clients.len() - 1
     }
 
     /// Spawn a client app and start connecting; returns its index.

@@ -51,8 +51,13 @@ pub fn collect_respawn_requests(
     }
 }
 
-/// Spawn the arena entity with replication, then start the server listener.
-pub fn spawn_server_arena_and_start(port: Res<crate::announce::UdpPort>, mut commands: Commands) {
+/// Spawn the arena entity with replication, then start the server listener
+/// (and the WebTransport one, when configured).
+pub fn spawn_server_arena_and_start(
+    port: Res<crate::announce::UdpPort>,
+    web: Option<Res<crate::web::WebEndpoint>>,
+    mut commands: Commands,
+) {
     // Arena — replicated once to all clients.
     let size = shared::ArenaSize::default();
     commands.spawn((
@@ -74,6 +79,10 @@ pub fn spawn_server_arena_and_start(port: Res<crate::announce::UdpPort>, mut com
         ))
         .id();
     commands.trigger(Start { entity: server });
+    // Browser players join the same server entity over WebTransport.
+    if let Some(web) = web {
+        crate::web::open_listener(&mut commands, server, &web);
+    }
 }
 
 /// When a new client's link-of entity becomes connected, set up its session

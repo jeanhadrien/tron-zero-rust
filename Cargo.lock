@@ -8204,12 +8204,17 @@ dependencies = [
 name = "tron-zero-server"
 version = "0.2.0"
 dependencies = [
+ "aeronet_io",
+ "aeronet_webtransport",
  "bevy",
  "ctrlc",
  "lightyear",
+ "lightyear_aeronet",
  "rand 0.10.2",
  "serde",
  "serde_json",
+ "time",
+ "tokio",
  "tracing",
  "tron-zero-bots",
  "tron-zero-shared",

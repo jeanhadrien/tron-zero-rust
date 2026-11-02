@@ -11,6 +11,7 @@ pub mod budget;
 pub mod session;
 pub mod systems;
 pub mod turns;
+pub mod web;
 
 use bevy::prelude::*;
 use core::time::Duration;
@@ -20,6 +21,7 @@ use lightyear::prelude::server::*;
 /// Everything a server needs except bots, the manager announcer and logging:
 /// Lightyear, protocol, connection lifecycle, respawns, turns and simulation.
 /// Expects `MinimalPlugins` to be present; `port` is the UDP port to bind.
+/// Browser players need [`add_web`] on top.
 pub fn add_core(app: &mut App, port: u16) {
     // Required by lightyear replication internals.
     app.add_plugins(bevy::state::app::StatesPlugin);
@@ -73,4 +75,11 @@ pub fn add_core(app: &mut App, port: u16) {
 
     // Spawn the arena once on startup (replicated to all clients).
     app.add_systems(Startup, systems::spawn_server_arena_and_start);
+}
+
+/// Also accept WebTransport sessions (browser players) on `endpoint.port`.
+/// Call after [`add_core`]; the listener opens with the server at startup.
+pub fn add_web(app: &mut App, endpoint: web::WebEndpoint) {
+    web::add_observers(app);
+    app.insert_resource(endpoint);
 }

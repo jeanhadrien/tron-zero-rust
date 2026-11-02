@@ -156,6 +156,34 @@ impl TestClient {
             .expect("connect system runs");
     }
 
+    /// Like [`TestClient::connect_as`], but over WebTransport to
+    /// `127.0.0.1:web_port`, trusting the server certificate with `cert_hash`
+    /// (lowercase hex SHA-256, no colons: what a browser would be given).
+    pub fn connect_web_as(&mut self, web_port: u16, cert_hash: &str, name: &'static str) {
+        let address = std::net::SocketAddr::from(([127, 0, 0, 1], web_port));
+        let certificate_digest = cert_hash.to_owned();
+        self.app
+            .world_mut()
+            .run_system_once(
+                move |mut session: ResMut<Session>,
+                      time: Res<Time<Real>>,
+                      mut commands: Commands| {
+                    // `RawClient` becomes `Connected` when `Linked` is added and
+                    // reads `LocalAddr` at that moment; the WebTransport link
+                    // only learns its address afterwards, so seed a placeholder.
+                    let io = (
+                        client::WebTransportClientIo {
+                            certificate_digest: certificate_digest.clone(),
+                        },
+                        LocalAddr(std::net::SocketAddr::from(([0, 0, 0, 0], 0))),
+                        PeerAddr(address),
+                    );
+                    session.connect_with(address, io, name, time.elapsed_secs_f64(), &mut commands);
+                },
+            )
+            .expect("connect system runs");
+    }
+
     pub fn session(&self) -> &Session {
         self.app.world().resource::<Session>()
     }

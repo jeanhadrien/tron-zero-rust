@@ -37,9 +37,22 @@ pub struct TestServer {
 
 impl TestServer {
     pub fn new(port: u16, impairment: Impairment) -> Self {
+        Self::build(port, None, impairment)
+    }
+
+    /// A server that also accepts WebTransport sessions on `web_port`, with a
+    /// fresh self-signed certificate (its digest is `endpoint.cert_hash`).
+    pub fn with_web(port: u16, web: ts::web::WebEndpoint, impairment: Impairment) -> Self {
+        Self::build(port, Some(web), impairment)
+    }
+
+    fn build(port: u16, web: Option<ts::web::WebEndpoint>, impairment: Impairment) -> Self {
         let mut app = App::new();
         app.add_plugins(MinimalPlugins);
         ts::add_core(&mut app, port);
+        if let Some(web) = web {
+            ts::add_web(&mut app, web);
+        }
         app.init_resource::<TurnLog>();
         app.init_resource::<ServerTrace>();
         app.add_systems(FixedLast, record_server_tick);
@@ -106,6 +119,16 @@ impl TestServer {
         let mut names: Vec<String> = query.iter(world).map(|name| name.0.clone()).collect();
         names.sort();
         names
+    }
+
+    /// Player id of the human rider displayed as `name`.
+    pub fn player_id_named(&mut self, name: &str) -> Option<String> {
+        let world = self.app.world_mut();
+        let mut query = world.query_filtered::<(&PlayerId, &shared::DisplayName), With<Human>>();
+        query
+            .iter(world)
+            .find(|(_, display)| display.0 == name)
+            .map(|(id, _)| id.0.clone())
     }
 
     /// Rider entity and its owning link, by player id.
