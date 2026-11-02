@@ -4,22 +4,35 @@ use bevy::prelude::*;
 use std::sync::Arc;
 use tron_zero_server::{add_core, add_web, admission, announce, bot, systems, web};
 
+/// Pause between main-loop iterations. Packets are read (and replies sent)
+/// only once per iteration, so this bounds the polling latency added to every
+/// message: 1 ms is 0.12 of a tick, in exchange for an idle cost of about 1-2%
+/// of a core, where the flat-out loop burned 100%+ (measured in
+/// `docs/netcode-design.md`). Waiting a full tick (8.3 ms) saves nothing
+/// measurable and adds up to a tick of latency each way.
+const LOOP_WAIT: std::time::Duration = std::time::Duration::from_millis(1);
+
 fn main() {
     let mut announce_cfg = announce::AnnounceConfig::from_env();
-    // Browser players: a WebTransport listener beside the UDP one. A failure
-    // here (bad WEB_CERT/WEB_KEY) disables only the web side.
-    let web_endpoint =
-        web::WebConfig::from_env().and_then(|cfg| match web::WebEndpoint::new(&cfg) {
-            Ok(endpoint) => {
-                announce_cfg.web_port = Some(cfg.advertised_port);
-                announce_cfg.cert_hash = endpoint.cert_hash.clone();
-                Some(endpoint)
-            }
-            Err(e) => {
-                tracing::error!("WebTransport disabled: {e}");
-                None
-            }
-        });
+    // Browser players: a WebTransport listener beside the UDP one. A config
+    // that cannot work (e.g. WEB_PORT == PORT) stops the server; a failure to
+    // load WEB_CERT/WEB_KEY disables only the web side. The room is announced
+    // to browsers only once the listener is actually open (see `web`).
+    let web_config = web::WebConfig::from_env().unwrap_or_else(|e| {
+        eprintln!("Invalid configuration: {e}");
+        std::process::exit(2);
+    });
+    let web_endpoint = web_config.and_then(|cfg| match web::WebEndpoint::new(&cfg) {
+        Ok(endpoint) => {
+            announce_cfg.web_port = Some(cfg.advertised_port);
+            announce_cfg.cert_hash = endpoint.cert_hash.clone();
+            Some(endpoint)
+        }
+        Err(e) => {
+            tracing::error!("WebTransport disabled: {e}");
+            None
+        }
+    });
     let counts = Arc::new(announce::LiveCounts::default());
     let announce_handle = Arc::new(announce::AnnounceHandle::default());
 
@@ -43,21 +56,18 @@ fn main() {
 
     let mut app = App::new();
 
-    // Headless: no window. Pace the main loop at the simulation rate; the
-    // default runner spins flat out and burns a whole core doing nothing.
-    app.add_plugins(
-        MinimalPlugins.set(bevy::app::ScheduleRunnerPlugin::run_loop(
-            std::time::Duration::from_secs_f64(1.0 / shared::TICK_HZ),
-        )),
-    );
+    // Headless: no window. Pace the main loop (`LOOP_WAIT`); the default
+    // runner spins flat out and burns a whole core doing nothing.
+    app.add_plugins(MinimalPlugins.set(bevy::app::ScheduleRunnerPlugin::run_loop(LOOP_WAIT)));
     app.add_plugins(bevy::log::LogPlugin::default());
     app.insert_resource(admission::MaxPlayers(announce_cfg.max_players));
     add_core(&mut app, announce_cfg.port);
     if let Some(endpoint) = web_endpoint {
         // Self-signed certificates expire within 14 days: exit before that
-        // and let the restart policy bring the server back with a new one.
-        if let Some(uptime) = endpoint.restart_after {
-            app.insert_resource(web::RestartAfter(uptime));
+        // (when idle, else at the hard limit) and let the service supervisor
+        // bring the server back with a new one.
+        if let Some(policy) = endpoint.restart {
+            app.insert_resource(policy);
             app.add_systems(Update, web::exit_after_uptime);
         }
         add_web(&mut app, endpoint);

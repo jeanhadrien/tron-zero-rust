@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use std::net::IpAddr;
 use std::sync::{
     Arc, Condvar, Mutex, MutexGuard, PoisonError,
-    atomic::{AtomicU32, Ordering},
+    atomic::{AtomicU8, AtomicU32, Ordering},
 };
 use std::thread::JoinHandle;
 use std::time::Duration;
@@ -23,6 +23,11 @@ pub const HTTP_TIMEOUT: Duration = Duration::from_secs(5);
 /// Manager evicts rooms idle for 40s (30s heartbeat interval + 10s grace).
 /// Our 2s heartbeat / 5s retry are comfortably inside that budget.
 pub const EVICTION_BUDGET: Duration = Duration::from_secs(40);
+
+/// How long the first registration waits for the WebTransport listener to
+/// report open or failed, before announcing without web fields.
+const WEB_OPEN_WAIT_STEP: Duration = Duration::from_millis(100);
+const WEB_OPEN_WAIT_STEPS: u32 = 50;
 
 /// UDP port the game listener binds (also the register default).
 #[derive(Resource, Debug, Clone, Copy)]
@@ -46,6 +51,8 @@ pub struct AnnounceConfig {
     pub allow_loopback_announce: bool,
     /// UDP port of the WebTransport listener for browser players (`webPort`),
     /// set by `main` once the listener's certificate is known. `None`: no web.
+    /// Only sent to the manager while the listener is actually open
+    /// ([`LiveCounts::web_open`]).
     pub web_port: Option<u16>,
     /// SHA-256 of the self-signed WebTransport certificate, lowercase hex
     /// without colons (`certHash`). `None` with a CA-issued certificate.
@@ -162,7 +169,14 @@ impl AnnounceConfig {
         })
     }
 
-    fn register_payload(&self) -> RegisterPayload {
+    /// `web_open`: the WebTransport listener is up, so browsers may be told
+    /// about it. An announced-but-dead listener is a room nobody can join.
+    fn register_payload(&self, web_open: bool) -> RegisterPayload {
+        let (web_port, cert_hash) = if web_open {
+            (self.web_port, self.cert_hash.clone())
+        } else {
+            (None, None)
+        };
         RegisterPayload {
             host: self.advertised_host.clone(),
             port: self.advertised_port,
@@ -170,8 +184,8 @@ impl AnnounceConfig {
             secure: self.advertised_secure.then_some(true),
             display_name: self.server_name.clone(),
             max_players: self.max_players,
-            web_port: self.web_port,
-            cert_hash: self.cert_hash.clone(),
+            web_port,
+            cert_hash,
         }
     }
 }
@@ -188,7 +202,7 @@ fn clean_manager_url(raw: &str) -> String {
     unquoted.trim_end_matches('/').to_string()
 }
 
-fn parse_port(raw: &str) -> u16 {
+pub(crate) fn parse_port(raw: &str) -> u16 {
     match raw.trim().parse::<u16>() {
         Ok(p) => p,
         Err(_) => {
@@ -268,10 +282,10 @@ fn agent() -> ureq::Agent {
         .into()
 }
 
-fn do_register(agent: &ureq::Agent, cfg: &AnnounceConfig) -> Option<Registration> {
+fn do_register(agent: &ureq::Agent, cfg: &AnnounceConfig, web_open: bool) -> Option<Registration> {
     match agent
         .post(&cfg.register_url())
-        .send_json(cfg.register_payload())
+        .send_json(cfg.register_payload(web_open))
     {
         Ok(mut res) => match res.body_mut().read_json::<Registration>() {
             Ok(reg) if !reg.token.is_empty() => Some(reg),
@@ -366,6 +380,36 @@ fn unregister_blocking(cfg: &AnnounceConfig, reg: &Registration) {
 pub struct LiveCounts {
     pub humans: AtomicU32,
     pub bots: AtomicU32,
+    web: AtomicU8,
+}
+
+/// Lifecycle of the WebTransport listener, as the announcer needs it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WebState {
+    /// Not (yet) known to be listening: do not advertise.
+    Pending = 0,
+    /// Bound and accepting sessions: advertise `webPort`/`certHash`.
+    Open = 1,
+    /// Failed to bind or closed later: stop advertising.
+    Failed = 2,
+}
+
+impl LiveCounts {
+    pub fn set_web(&self, state: WebState) {
+        self.web.store(state as u8, Ordering::Relaxed);
+    }
+
+    pub fn web_state(&self) -> WebState {
+        match self.web.load(Ordering::Relaxed) {
+            1 => WebState::Open,
+            2 => WebState::Failed,
+            _ => WebState::Pending,
+        }
+    }
+
+    pub fn web_open(&self) -> bool {
+        self.web_state() == WebState::Open
+    }
 }
 
 #[derive(Debug, Default)]
@@ -466,19 +510,32 @@ pub fn spawn_announcer(
             );
         }
         let agent = agent();
+        // The listener opens within the first ticks; wait briefly so the first
+        // registration already carries the web fields (no register/unregister
+        // churn at every start). A listener that never opens is announced
+        // without them.
+        if cfg.web_port.is_some() {
+            for _ in 0..WEB_OPEN_WAIT_STEPS {
+                if counts.web_state() != WebState::Pending {
+                    break;
+                }
+                std::thread::sleep(WEB_OPEN_WAIT_STEP);
+            }
+        }
         tracing::info!(url = %cfg.manager_url, "Registering with manager");
         loop {
             // Register with infinite 5s retry.
-            let reg = loop {
+            let (reg, advertised_web) = loop {
                 if !handle.begin_register() {
                     return;
                 }
-                let result = do_register(&agent, &cfg);
+                let advertised_web = counts.web_open();
+                let result = do_register(&agent, &cfg, advertised_web);
                 if !handle.finish_register(&cfg, result.as_ref()) {
                     return;
                 }
                 if let Some(reg) = result {
-                    break reg;
+                    break (reg, advertised_web);
                 }
                 tracing::warn!("Retrying register in 5s");
                 std::thread::sleep(RETRY_DELAY);
@@ -499,6 +556,17 @@ pub fn spawn_announcer(
                         std::thread::sleep(RETRY_DELAY);
                         break;
                     }
+                }
+                if counts.web_open() != advertised_web {
+                    // The listener opened or died since we registered; the
+                    // manager has no update call, so replace the room.
+                    tracing::warn!(
+                        web_open = counts.web_open(),
+                        "WebTransport availability changed; re-registering"
+                    );
+                    handle.clear_registration();
+                    unregister_blocking(&cfg, &reg);
+                    break;
                 }
                 std::thread::sleep(HEARTBEAT_PERIOD);
             }
@@ -636,7 +704,7 @@ mod tests {
             web_port: None,
             cert_hash: None,
         };
-        let value = serde_json::to_value(cfg.register_payload()).unwrap();
+        let value = serde_json::to_value(cfg.register_payload(false)).unwrap();
         let obj = value.as_object().unwrap();
         let keys: Vec<&str> = obj.keys().map(String::as_str).collect();
         assert_eq!(keys.len(), 4);
@@ -655,7 +723,7 @@ mod tests {
             advertised_secure: true,
             ..cfg.clone()
         };
-        let secure_value = serde_json::to_value(secure_cfg.register_payload()).unwrap();
+        let secure_value = serde_json::to_value(secure_cfg.register_payload(false)).unwrap();
         assert_eq!(secure_value["secure"], Value::Bool(true));
 
         // The web fields appear only when the WebTransport listener is on.
@@ -664,9 +732,14 @@ mod tests {
             cert_hash: Some("ab".repeat(32)),
             ..cfg
         };
-        let web_value = serde_json::to_value(web_cfg.register_payload()).unwrap();
+        let web_value = serde_json::to_value(web_cfg.register_payload(true)).unwrap();
         assert_eq!(web_value["webPort"], Value::Number(5001.into()));
         assert_eq!(web_value["certHash"], Value::String("ab".repeat(32)));
+
+        // ...and only while the listener is actually open.
+        let closed_value = serde_json::to_value(web_cfg.register_payload(false)).unwrap();
+        assert!(closed_value.get("webPort").is_none());
+        assert!(closed_value.get("certHash").is_none());
     }
 
     #[test]

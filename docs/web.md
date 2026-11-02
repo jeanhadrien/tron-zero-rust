@@ -44,7 +44,12 @@ the release profile, no logging below `info` on web.
   `LocalAddr(0.0.0.0:0)` at spawn, or it never becomes `Connected`.
 - **No UDP socket, no env vars, no filesystem.** Transport is WebTransport;
   configuration comes from the build-time `TRONZERO_MANAGER_URL` and saved
-  preferences; preferences live in `localStorage`.
+  preferences; preferences live in `localStorage`. URL query parameters
+  (`MANAGER_URL`, `TRON_AUTOCONNECT`, `TRON_CERT_DIGEST`, `TRON_SIM_*`, debug
+  flags) stand in for env vars **only on a local dev host** (`localhost`,
+  `*.localhost`, `127.0.0.1`, `[::1]`); on the production origin they are
+  ignored, because otherwise a crafted link could point the page at an
+  attacker's lobby or auto-join an attacker's server.
 - **No `std::time::Instant`.** Use `bevy::platform::time::Instant` (web-time
   backed) everywhere the client measures time.
 - **No process exit.** The Quit button is hidden on web; closing the tab
@@ -71,7 +76,11 @@ same network. The handshake (one QUIC + one HTTP/3 CONNECT) happens once.
 
 - Ports: open **UDP 5000** (desktop) and **UDP 5001** (browser) on the host
   or firewall. Nothing TCP is needed for gameplay.
-- A self-signed server must restart within 14 days; the server exits on its
-  own after `WEB_MAX_UPTIME_HOURS` and the container restart policy brings it
-  back with a new certificate and hash.
+- A self-signed server must restart within 14 days. After
+  `WEB_MAX_UPTIME_HOURS` (default 12 days) it exits at the first moment no
+  human is connected, and at the hard limit (soft + 24 h, at most 332 h)
+  regardless. The supervisor (on GCE: systemd `Restart=always` around
+  `docker run --rm`) brings it back with a new certificate and hash, which it
+  re-announces. The room advertises `webPort`/`certHash` only while the
+  listener is open; `WEB_PORT` must differ from `PORT`.
 - Build and serve the web client locally: see `web/README.md`.
