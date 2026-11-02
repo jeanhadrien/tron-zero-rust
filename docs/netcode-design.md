@@ -1,13 +1,19 @@
 # Network & Simulation Architecture (Netcode)
 
-## Current Rust MVP implementation
+Status: updated 2026-11-02. Describes what is implemented; open work is in
+`NETWORK.md`. Sections 1-6 at the end are the design rationale; where they
+differ from the implementation described first, the implementation wins.
 
-The client now starts disconnected and connects to localhost only on request.
-Menu visibility is separate from the connection lifecycle: opening the overlay
-captures fresh gameplay input but does not stop simulation or networking.
+## Current Rust implementation
+
+The client starts disconnected and connects on request: to localhost
+(`127.0.0.1:5000`), to a room from the server browser (rooms come from the
+`server-manager` lobby; connecting uses the same entry point), or on startup
+with `TRON_AUTOCONNECT`. Menu visibility is separate from the connection
+lifecycle: opening the overlay captures fresh gameplay input but does not stop
+simulation or networking.
 `crates\client\src\connection.rs` owns connect, readiness, timeout, and teardown;
-`menu.rs` owns the overlay. A future master-server browser can feed the same
-connection entry point; discovery is not implemented.
+`menu.rs` owns the overlay and `browser.rs` the room list.
 
 Raw UDP's local `Connected` marker does not prove a remote server is present.
 An application heartbeat runs every second, with a 5-second liveness timeout
@@ -46,9 +52,9 @@ respawn requests, in one-second windows. A link over its allowance is closed.
 This is basic lifecycle handling and abuse bounding, not authenticated
 admission or a replacement for the hardening tracked in `NETWORK.md`.
 
-The sections below describe broader design goals, not a complete inventory of
-implemented features. The Rust MVP uses Lightyear 0.28 at 120 Hz with the following
-simulation contract:
+The transport is raw UDP: no authentication or encryption, and a source address
+is a "connection" as soon as one packet arrives (see `NETWORK.md`). Lightyear
+0.28 runs at 120 Hz with the following simulation contract:
 
 - `SimulationRole::Server` advances all players; the client role advances only
   `Predicted` players. Owning human clients predict their rider; other humans and
@@ -272,6 +278,27 @@ leakage; a flooding client (rejected commands, or duplicate batches) being
 disconnected while another client plays on; twenty copies of one command being
 one decision; no replication and a bounded link count for spoofed peers;
 rejection delivery with 8 clients at 30% loss each way.
+
+### Lightyear 0.28 facts this design relies on
+
+- `LocalTimeline` on the client is driven by `InputTimeline`; the native input
+  buffer is stamped with the same tick numbers; the server applies native
+  inputs in `FixedPreUpdate` with a repeat-last-input fallback (hence the
+  unconditional overwrite for humans); native messages more than 64 ticks
+  ahead are dropped (`TURN_MAX_LEAD_TICKS` matches).
+- A timeline resync is a relabel, not a rewind. `InputTimeline` emits a
+  `SyncEvent` on the first sync (about +45 ticks) and again whenever its error
+  exceeds `max_error_margin` (a -11 tick jump was seen at 150 ms / 3% loss
+  shortly after joining, when lost pings skewed the estimate). The rider keeps
+  simulating forward; only tick labels jump, and Lightyear shifts its
+  prediction and input histories by the same delta. No turn runs twice. A
+  backward jump makes client and server differ for that tick label, so a normal
+  rollback follows. The nettest client trace and the turn outbox both follow
+  the event (see "Timeline resync" above).
+- Rejected alternatives for late commands: a strict deadline (reject anything
+  after its intended tick) discards physical presses under jitter; server
+  rewind is out of scope. The bounded late window (12 ticks, 100 ms) is a
+  measured but untuned default.
 
 Collision is against zero-thickness, start-of-tick segments. Swept front clearance
 prevents crossing that geometry, but simultaneous newly grown trail intersections

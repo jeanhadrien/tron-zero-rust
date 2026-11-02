@@ -1,5 +1,7 @@
 # Game Mechanics Design Document
 
+Status: verified against `constants.rs` and `physics.rs` on 2026-11-02.
+
 This document outlines the core game mechanics. These should be respected at all times.
 
 ## 1. Core Entity: The Player (Lightcycle)
@@ -42,7 +44,7 @@ Directly hitting a wall or trail does not instantly kill the player. Instead, th
 
 - **Getting Stuck:** When a player approaches and faces a wall/trail within 12 world units, speed drops aggressively: the player is visually stopped. Under the hood, the player keeps moving forward at a very slow pace. The Zeno step is `front * (front / 12)^2`, never more than the rider's normal step (otherwise entering the zone would lurch the rider forward). Related mathematical concept: Zeno's paradox (dichotomy paradox). A geometric series where each step is a fraction of the remaining distance, so the limit tends to the wall asymptotically but never reaches it.
 - **Speed Drop:** The player's speed drops aggressively in proportion to how close they are to the wall, practically halting them before they cross the line.
-- **Rubber Consumption:** While stuck, the player's "Rubber" meter rapidly depletes from a maximum of 120. As in the original JS game, drain increases with the cruise speed multiplier: `RUBBER_DRAIN * (1 + TargetSpeedMult)^3` per tick, `RUBBER_DRAIN = DELTA_STUFF * 0.03 = 0.36`. That is about 0.35 s to die at base speed and about 0.1 s (12-19 ticks) at the 2.0x cap, which deliberately stays at or above the 12-tick netcode late-turn window so a correctly timed but late turn can still save a rider. Obstacle distance controls slowdown, not this drain rate.
+- **Rubber Consumption:** While stuck, the player's "Rubber" meter rapidly depletes from a maximum of 120. As in the original JS game, drain increases with the cruise speed multiplier: `RUBBER_DRAIN * (1 + TargetSpeedMult)^3` per tick, `RUBBER_DRAIN = DELTA_STUFF * 0.03 = 0.36`. That is about 0.35 s to die at base speed and about 0.1 s (13 ticks) at the 2.0x cap, which deliberately stays at or above the 12-tick netcode late-turn window so a correctly timed but late turn can still save a rider. Obstacle distance controls slowdown, not this drain rate.
 - **Death:** If the Rubber meter reaches zero, the player dies and the lightcycle is disabled before movement in that tick. Its trail is cleared rather than remaining as a permanent obstacle.
 - **Rubber Regeneration:** If the player manages to turn away from the wall before dying, the Rubber meter regenerates at `RUBBER_REGEN` = 0.15 per tick (18/s, empty to full in ~6.7 s) whenever the front is clear. Tapping a wall is cheap; camping on the rubber is not (drain outpaces regen ~19:1 at base speed).
 

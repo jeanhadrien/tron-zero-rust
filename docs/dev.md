@@ -1,5 +1,7 @@
 # Dev Build
 
+Status: updated 2026-11-02.
+
 Day-to-day development on Windows. Builds run natively on Windows for fast iteration and a visible game window.
 
 ## Prerequisites (one-time)
@@ -21,15 +23,20 @@ From PowerShell / Windows Terminal, in `C:\dev\tron-zero-rust`:
 cargo run -p tron-zero-client     # builds + runs the client (opens a window)
 cargo run -p tron-zero-server     # builds + runs the headless server
 cargo check -p tron-zero-client   # type-check only, no codegen — fastest feedback
-cargo check --workspace --tests   # compile regression tests without executing them
-cargo clippy --workspace --tests -- -D warnings
-cargo clippy --workspace -- -D warnings
+cargo clippy --workspace --all-targets -- -D warnings   # the lint gate
 cargo fmt -- --check
+cargo test --workspace --no-fail-fast
 ```
+
+If a running game locks `target\debug\*.exe` ("Access is denied"), `cargo check`,
+`clippy` and `cargo test` for library crates still work; only linking the
+binaries fails.
 
 ### Hot-reload (auto restart on save)
 
-In two separate terminals:
+`dev-watch.bat` opens a watcher window for the server and one for the client
+(each restarts only for its own crate or `shared`, and sets `TRON_BOT_DEBUG=1`
+for the bot overlay). By hand, in two separate terminals:
 
 ```
 cargo watch -c -w crates -x "run -p tron-zero-server"
@@ -51,9 +58,11 @@ If a build mysteriously rebuilds from scratch, you probably touched the repo fro
 
 - `tron-zero-shared` — lib, the simulation core (no transport, no rendering).
 - `tron-zero-bots` — lib, the bot brain (sense → decide over a world snapshot; no ECS systems, no networking).
-- `tron-zero-server` — bin, headless server, bot roster/scheduling + manager HTTP.
-- `tron-zero-client` — bin, rendering + UI + audio.
+- `tron-zero-server` — lib + bin, headless server: netcode wiring in the lib (`add_core`), bot roster/scheduling and manager HTTP in the bin.
+- `tron-zero-client` — lib + bin, rendering + UI (egui); the lib holds connection, input and prediction so tests can drive them without a window.
 - `tron-zero-lab` — lib + bin, headless deterministic scenario runner (see below).
+- `tron-zero-nettest` — lib + tests, real server and clients over loopback UDP (see below).
+- `server-manager/` — Bun/TypeScript lobby service (see its README).
 
 The WASM web client target (`wasm32-unknown-unknown`) is not set up yet — see `docs/building.md`.
 
@@ -70,7 +79,7 @@ ping**. The dev profile already builds dependencies at `opt-level = 3` and our
 crates at 1 (see `Cargo.toml`), so it is playable and shares `target/` with
 `cargo watch`; use `release` only if the frame rate disappoints.
 
-Environment variables (all opt-in, read by the client):
+Environment variables (all opt-in, read by the client; `TRON_BOT_DEBUG=1` is read by both server and client and enables the bot overlay):
 
 | Variable | Effect |
 |----------|--------|
@@ -79,6 +88,7 @@ Environment variables (all opt-in, read by the client):
 | `TRON_SIM_LOSS_PCT` | Packet loss percentage applied to each direction. |
 | `TRON_AUTOCONNECT` | `host:port` to join at startup; retries every 1.5 s until the server is up. Any menu action by hand (Cancel, Disconnect, Quit) turns it off, as does reaching play once. |
 | `TRON_CONFIG_FILE` | Use this settings file instead of the platform one. |
+| `MANAGER_URL` | Lobby base URL for the server browser (see Settings file for precedence). |
 
 **How the simulation works.** Lightyear's link conditioner only delays what a
 peer *receives*, so a client-only conditioner would shape just the server ->
@@ -96,8 +106,9 @@ measured `ping`.
 ## Settings file
 
 The client persists the player name, turn key bindings and an optional
-`manager_url` to `%APPDATA%\tron-zero\client.json` (platform config dir; the
-file is created on first change). Reading or writing can fail without
+`manager_url` to `client.json` in the platform config dir under `tron-zero\`
+(`%APPDATA%\tron-zero\client.json` on Windows; `TRON_CONFIG_FILE` overrides).
+Preferences are written debounced and atomically after a change. Reading or writing can fail without
 consequence: a missing, corrupt or illegal file falls back to defaults and a
 failed save is only logged. Manager URL precedence: `MANAGER_URL` env, file,
 build-time `TRONZERO_MANAGER_URL`, `http://localhost:3001`.
@@ -113,10 +124,33 @@ bun install          # first time only
 bun run dev          # listens on :3001 (PORT to override)
 ```
 
-Then start the Rust server with `MANAGER_URL=http://localhost:3001` (this is
-also the default) and open the client's Rooms screen. The server registers,
-heartbeats every 2s (humans-only `playerCount`, plus `botCount`) and re-registers on a 404. The manager issues a per-room token that the server sends on heartbeat/unregister (a legacy manager without tokens still works). A server announcing a loopback `ADVERTISED_HOST` to a non-local `MANAGER_URL` refuses to announce; set `ADVERTISED_HOST`/`ADVERTISED_PORT` to the public address. `ALLOW_LOOPBACK_ANNOUNCE=1` (dev only; `dev-cloud.bat` sets it) turns that refusal into a loud warning, e.g. to test the browser path on one machine against the Cloud Run manager. Without the manager the server
-keeps retrying every 5s and the client still shows its pinned localhost row.
+Then start the Rust server (`MANAGER_URL` defaults to `http://localhost:3001`)
+and open the client's Rooms screen. The server registers, heartbeats every 2 s
+and re-registers on a 404; without the manager it retries every 5 s and the
+client still shows its pinned localhost row. Server env vars (`MANAGER_URL`,
+`ADVERTISED_HOST`, `ALLOW_LOOPBACK_ANNOUNCE`, ...) are in `docs/building.md`;
+the API and the announce protocol are in `server-manager/README.md`.
+
+`dev-cloud.bat [name]` starts a local server that announces itself to the
+Cloud Run manager (with `ALLOW_LOOPBACK_ANNOUNCE=1` and `ADVERTISED_HOST=127.0.0.1`,
+so it puts a loopback address on a **public** list; close the server window
+when done) and a client pointed at the same manager.
+
+## Netcode harness (nettest)
+
+`crates/nettest` runs the real server app and real client app(s) in one
+process over loopback UDP, with Lightyear's link conditioner (latency, jitter,
+loss) and the client's own `TRON_SIM_*` uplink queue. Tests script key presses
+and assert on the client/server traces.
+
+```
+cargo test -p tron-zero-nettest                                           # serialized, wall-clock
+cargo test -p tron-zero-nettest --test measure -- --ignored --nocapture   # arrival-margin table
+```
+
+It uses wall-clock timing and an unseeded conditioner, so a failure should be
+re-run alone before treating it as real. Results and the contract it checks are
+in `docs/netcode-design.md`.
 
 ## Lab (headless scenarios)
 
@@ -165,7 +199,7 @@ trace: bless it once the change is intended.
 
 Tests: `cargo test -p tron-zero-shared` (unit, property and rollback tests) and
 `cargo test -p tron-zero-lab` (mechanics assertions + golden traces for every
-scenario). After an intended behaviour change, regenerate goldens with
+scenario; a scenario without a golden fails). After an intended behaviour change, regenerate goldens with
 `LAB_BLESS=1 cargo test -p tron-zero-lab` and review the diff.
 
 ## Gameplay smoke check
@@ -220,7 +254,7 @@ that no menu keys become turns or respawn requests. Disconnect/reconnect several
 times and confirm one controlled rider, one camera, and no old trails. Stop the
 server during play and verify a timeout with a retry option. With a second
 client, verify the departing rider disappears (within the lease timeout if the
-leave is lost). These runtime checks have not been executed by the agent.
+leave is lost). These runtime checks have not been run by a human yet (see `NETWORK.md`).
 
 ### Riding and respawning
 
@@ -290,5 +324,4 @@ covering it. These visual checks require running the client.
 
 Death feedback and manual human respawn are implemented; multiplayer respawn, latency/rollback,
 no-space retries and disconnect behavior still need the runtime smoke checks
-above. `cargo check/clippy --tests` compile regression coverage only; they do
-not execute tests or establish multiplayer runtime correctness.
+above. Unit tests and nettest cover the logic, not the windowed UI.

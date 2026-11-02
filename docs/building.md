@@ -1,6 +1,37 @@
 # Production Build
 
-Shipping builds. Dev builds live in `docs/dev.md`.
+Status: updated 2026-11-02. Shipping builds and runtime configuration. Dev
+builds live in `docs/dev.md`; releases and hosting for friends in `docs/release.md`.
+
+## Ports and configuration
+
+The game server listens on **UDP** (raw, unauthenticated, unencrypted for now;
+see `NETWORK.md`) bound to `0.0.0.0`. The lobby manager speaks HTTP.
+
+Server (`tron-zero-server`, all optional):
+
+| Variable | Default | Effect |
+|----------|---------|--------|
+| `PORT` | `5000` | UDP port to bind (also the default advertised port). |
+| `MAX_PLAYERS` | `10` | Human capacity; the 11th player is rejected `ServerFull`. Bots do not count. |
+| `SERVER_NAME` | `Unnamed Server` | Name shown in the server browser. |
+| `MANAGER_URL` | `http://localhost:3001` | Lobby to register with. |
+| `ADVERTISED_HOST` | `127.0.0.1` | Public host clients should use. A loopback value with a non-local `MANAGER_URL` is refused (no announce, game still runs). |
+| `ADVERTISED_PORT` | `PORT` | Public port, if NAT maps it differently. |
+| `ADVERTISED_SECURE` | unset | `true` marks the room `secure` (reserved for WebTransport). |
+| `ALLOW_LOOPBACK_ANNOUNCE` | unset | `1`/`true` (dev only) turns the loopback refusal into a warning. |
+| `TRON_BOT_DEBUG` | unset | Truthy: replicate bot decision snapshots for the client debug overlay (extra bandwidth; not for public servers). |
+| `RUST_LOG` | `info` | Standard Bevy/tracing filter. |
+
+Client (`tron-zero-client`): `MANAGER_URL` (runtime) / `TRONZERO_MANAGER_URL`
+(build time; the release workflow bakes in the production lobby),
+`TRON_CONFIG_FILE`, `TRON_AUTOCONNECT=host:port`, `TRON_SIM_LATENCY_MS`,
+`TRON_SIM_JITTER_MS`, `TRON_SIM_LOSS_PCT`, `TRON_BOT_DEBUG`. Semantics are in
+`docs/dev.md`. Settings live in `client.json` under the platform config dir.
+
+Manager (`server-manager/`): `PORT` (3001; `MANAGER_PORT` fallback), `HOST`,
+`LOG_LEVEL`, `TRUST_PROXY`, `REGISTER_LIMIT_PER_MIN`; see its README. The
+Docker image has never been built here (`NETWORK.md`).
 
 ## Server — Linux (prod target)
 
@@ -8,7 +39,7 @@ The server deploys on Linux. Two ways to produce a Linux binary from a Windows d
 
 ### Option A — build in WSL (recommended)
 
-WSL already has `rustup` + cargo 1.96.1. The Linux C toolchain is missing by default, so install it once:
+WSL needs `rustup` and the Linux C toolchain, installed once:
 
 ```
 sudo apt update && sudo apt install -y build-essential

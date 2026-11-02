@@ -1,61 +1,66 @@
 # Tron Zero (Rust) — Project Overview
 
+Status: updated 2026-11-02.
+
 Rust rewrite of **Tron Zero**, a multiplayer Lightcycle (Tron/Armagetron-style)
 arena game. Players ride continuously-moving lightcycles on a 2D arena, leave
-collidable trails behind them, boost by grinding close to walls, and survive
-via a "rubber" buffer that drains when stuck facing an obstacle and regenerates
-in open space. Death clears the trail; humans respawn manually (Space/Enter).
+collidable trails behind them, boost by grinding close to *other* riders'
+trails, and survive via a "rubber" buffer that drains when stuck facing an
+obstacle and regenerates in open space. Death clears the trail; humans respawn
+manually (Space/Enter).
 
 ## Tech stack
 
-- **Engine/ECS:** Bevy 0.19 (`bevy_ecs`, full `bevy` on client, `MinimalPlugins` on server). Math via `glam::Vec2` (`f32` only in sim).
-- **Networking:** Lightyear 0.28 — server-authoritative, tick-based, with client prediction + rollback and state replication. Dev transport is raw UDP (`127.0.0.1:5000`); WebTransport (QUIC) for browser/prod is planned, not wired.
-- **Client UI:** `bevy_egui` (menu, server browser via `ehttp`, HUD, death overlay). Rendering is Bevy 2D (arena grid, trails, rider sprites, follow camera).
-- **Lobby:** the Rust server announces itself to the existing Node `server-manager` via HTTP (`POST /api/rooms`, heartbeat, `DELETE` on shutdown) — lobby stays in JS.
-- **Other:** `serde` + `postcard` (wire), `tracing` (logging, never `println!` in `crates/`), `rand` (bots only, never in predicted sim).
+- **Engine/ECS:** Bevy 0.19 (`bevy_ecs`; full `bevy` on the client, `MinimalPlugins` on the server). Math via `glam::Vec2` (`f32` only in sim).
+- **Networking:** Lightyear 0.28 — server-authoritative, tick-based, client prediction + rollback, state replication. Transport is **raw UDP, unauthenticated and unencrypted** (default `0.0.0.0:5000`, env `PORT`); WebTransport and Lightyear netcode connect tokens are planned, not wired.
+- **Client UI:** `bevy_egui` (menu, settings, server browser via `ehttp`, HUD, death overlay). Rendering is Bevy 2D.
+- **Lobby:** the server announces itself over HTTP to `server-manager/` (Bun + Express, in this repo): register, heartbeat, unregister, with a per-room bearer token.
+- **Other:** `serde` + `postcard` (wire), `tracing` (never `println!` in `crates/` non-test code), `rand` (bot spawns and the client's network simulator only, never in the sim).
 
-## Workspace layout (`crates/`)
+## Workspace layout
 
-- **`shared/` (lib)** — the simulation core. Pure Bevy ECS, no networking/rendering/`rand`/wall-clock. Both client and server run the same `simulate_players` system at **120 Hz** (`TICK_HZ`). Contains: `components/` (player, trail, arena newtypes like `Rubber`, `SpeedMult`, `Position`), `systems/player.rs` (lifecycle + turn → sense → move → rubber; order is load-bearing), `systems/arena.rs`, `trail/` (tail-trim, arc length), `spawn.rs` + `math.rs` (safe-spawn search, rotations), `protocol.rs` (lightyear registration: what is `predict()` vs `replicate_once()` vs local-only), `constants.rs`.
-- **`bots/` (lib)** — the bot brain, split out of the server so the lab can run it: `WorldSnapshot` (+ its ECS builder), ray/BFS sensing, memory, physics forecaster, territory analysis, strategies (survivalist, trapper, adaptive, territorialist, duelist) and the Elo knob curve. `Brain::think` is one decision epoch. Deterministic: no `rand`, no wall clock.
-- **`server/` (lib + bin)** — headless authoritative server; `add_core` is the production wiring shared with `nettest`. FixedUpdate chain: `handle_respawns → bot_brain_input → apply_turn_commands → simulate_players → bot_spawner`, plus `turns.rs` (per-link `TurnQueue`, intended-tick scheduling). Plus `bot/` (ECS glue: roster, staggered scheduling, spawning, `BotDebug` writer), `session.rs` (heartbeat/leave/lease), `announce.rs` (manager HTTP), `systems.rs` (connect/disconnect observers, arena spawn, respawn queue).
-- **`client/` (lib + bin)** — native desktop client (WASM target not wired yet). Owns connection lifecycle (`connection.rs`: connect/cancel/timeout/disconnect, readiness gating), keyboard queue (`input/`), rendering + camera (`render/`), egui menu/HUD/death overlay (`menu.rs`, `render/hud.rs`, `render/death.rs`), server browser (`browser.rs`), keybindings (`settings.rs`).
-- **`nettest/` (lib + tests)** — headless real-UDP harness: the production server and client systems with scripted key presses, Lightyear's link conditioner (latency/jitter/loss) and per-tick traces on both sides. `cargo test -p tron-zero-nettest` (~40 s, serialized, wall-clock); measurements: `-- --ignored --nocapture`. Use it for any netcode change.
-- **`lab/` (lib + bin)** — headless, deterministic scenario runner over the real `simulate_players` (no networking). TOML scenarios in `crates/lab/scenarios/` script riders per tick or hand them to the bot brain (seeded bot arenas); output is a JSONL event trace (turns, rubber zone, slides, deaths with cause, respawns) and PNG snapshots. Tests assert mechanics and compare golden traces. **This is how an agent "plays" the game**: write or edit a scenario, re-run from tick 0, read the trace and PNG. See `docs/dev.md` § Lab.
-- **`server-manager/` (Bun/TS, outside `crates/`)** — standalone lobby service (Express, in-memory room store; imported from the JS repo, no monorepo deps). Rust servers register/heartbeat via `announce.rs`; the client lists rooms via `browser.rs`. Not a cargo member: `bun install && bun run start` (default port 3001). See `server-manager/README.md`.
+`crates/` (all lib + bin pairs keep logic in the lib so `nettest` can run the real apps):
+
+- **`shared/` (lib)** — the simulation core and wire protocol. Pure Bevy ECS: no rendering, no wall clock. Both sides run `simulate_players` at **120 Hz** (`TICK_HZ`). `physics.rs` (`step_rider`, pure), `constants.rs` (gameplay numbers), `systems/` (turn → sense → move → rubber; order is load-bearing), `trail/`, `spawn.rs`, `protocol.rs` (components, messages, channels, `PROTOCOL_ID`, turn constants), `components/`.
+- **`bots/` (lib)** — bot brain over a `WorldSnapshot` (sensing, memory, forecast, territory, strategies, Elo knobs). Deterministic: no `rand`, no wall clock. Shared by the server and the lab.
+- **`server/` (lib + bin)** — headless authoritative server. `add_core` (lib.rs) wires Lightyear and the chain `handle_respawns → apply_turn_commands → simulate_players`; `main.rs` adds bots, logging and the announcer. Modules: `admission` (hello handshake, capacity), `session` (heartbeat/leave/lease), `turns` (sequenced turn commands, acks), `budget` (per-link abuse limits), `systems` (connect/disconnect, arena, respawn queue), `announce` (manager HTTP), `bot/` (ECS glue).
+- **`client/` (lib + bin)** — native desktop client (WASM not wired). `connection` (lifecycle, readiness, autoconnect, quit), `input/` (keyboard queue, `TurnOutbox` redundant delivery), `menu`/`settings`/`browser`/`config` (UI, key bindings, room list, persisted preferences), `sim` (latency simulator), `render/` (arena, trails, riders, camera, HUD, death, bot debug).
+- **`lab/` (lib + bin)** — headless deterministic scenario runner over the real `simulate_players`. TOML scenarios in `crates/lab/scenarios/` (goldens `*.golden.jsonl`); JSONL trace + PNG output. **This is how an agent "plays" the game**: edit a scenario, re-run from tick 0, read trace and PNG. See `docs/dev.md` § Lab.
+- **`nettest/` (lib + tests)** — real server and client(s) in one process over loopback UDP with a link conditioner; scripted key presses, trace assertions (`tests/turns.rs`, `session.rs`) and arrival measurements (`measure.rs`, `--ignored`). Uses wall-clock time, so a failure should be re-run alone before it is believed.
+- **`server-manager/` (Bun/TypeScript)** — in-memory lobby service. API, env vars and deployment in its README; `bun run typecheck`.
 
 ## Netcode model (short version)
 
-Forward-only authoritative server, immediate local prediction, client
-reconciliation only — no server rewind. Own rider is `Predicted`; opponents/bots
-are interpolated (step interpolation keeps cardinal corners coherent). Trail is
-a single replicated+predicted `Trail(Vec<Vec2>)` component (oldest → head),
-**not** child entities — this deliberately diverges from `PLAN.md`. Turns are
-sequenced `TurnCommand`s on the ordered-reliable `TurnChannel`, stamped with the
-tick the client predicted them at and executed by the server on that tick (late
-ones within 12 ticks run on the first free tick, later ones are rejected); the
-native Lightyear input only drives prediction and is overwritten on the server
-for humans. Respawn/session/leave are ordered-reliable messages
-(`RespawnChannel`, `SessionChannel`), never inputs. Human respawn is
-server-applied and tagged by `LifeGeneration` (connection nonce + life counter)
-so stale turns can't leak across lives. See `docs/netcode-design.md` for the
-implemented contract and `NETWORK.md` for the hardening backlog (redundant
-resend under loss, late-turn client repair, collision fairness, diagnostics).
+Forward-only authoritative server, immediate local prediction, client reconciliation only — no server rewind. Own rider is `Predicted`; opponents and bots are step-interpolated. A trail is one replicated+predicted `Trail(Vec<Vec2>)` component, **not** child entities (this deliberately diverges from `PLAN.md`).
+
+- **Turns** are sequenced commands (`TurnCommand { seq, direction, generation, tick }`), not Lightyear inputs: every undecided command is resent in each tick's unreliable `TurnBatch` (<= 16 commands, repeated for 48 ticks), the server decides each seq once, executes it at its intended tick, within a 12-tick late window, or rejects it with a reason, and acks cumulatively. Lightyear's native `PlayerInput` only feeds client prediction; the server overwrites it for humans.
+- **Session:** the first message is a `SessionHello { protocol, name }`; the server admits (sanitized unique name) or rejects (`VersionMismatch`, `ServerFull`). Nothing replicates to a link before admission. Heartbeats, leave and respawn travel on ordered-reliable channels (`SessionChannel`, `RespawnChannel`); respawns are server-applied and tagged by `LifeGeneration`.
+- **Hardening:** per-link `LinkBudget`, capped unadmitted links, `PROTOCOL_ID` = hand-bumped `PROTOCOL_VERSION` + fingerprint of every sim constant (a physics retune changes it by itself; a *logic* change with the same constants needs a manual bump).
+
+Implemented contract and measurements: `docs/netcode-design.md`. Open items: `NETWORK.md`.
 
 ## Gameplay invariants (`docs/core-gameplay-mechanics.md` is normative)
 
-120 ticks/s, base speed 360 u/s, one turn per tick, trail cap `TRAIL_MAX_LENGTH`,
-rubber max 120 with cubic-speed drain and slow regen, slide boost near walls,
-Zeno-style slowdown within 12 units, deterministic spawn/safe-respawn search
-(margin/clearance/corridor), manual human respawn only.
+120 ticks/s, base speed 360 u/s, 2000x2000 arena, one turn per tick, trail cap `TRAIL_MAX_LENGTH` (2400), rubber max 120 with cubic-in-cruise-speed drain and slow regen, Zeno-style slowdown within 12 units of a front obstacle, capped inertial speed (`MAX_SPEED_MULT` 2.0) fed by grinding within `SLIDE_DISTANCE` of others' trails (own trail never grinds; arena walls pay 0.4x), deterministic spawn/safe-respawn search, manual human respawn only. Sim arithmetic uses `+ - * /` only (no `powi`/`exp`) so client and server stay bit-identical.
+
+## Dev loops (details in `docs/dev.md`)
+
+- `cargo test -p tron-zero-shared` — sim core (unit, property, rollback); fast.
+- `cargo test -p tron-zero-lab` — mechanics + golden traces; bless intended changes with `LAB_BLESS=1`.
+- `cargo test -p tron-zero-nettest` — netcode over real UDP (about 1-2 min; serialized).
+- `play-local.bat [release]` — server + bots + auto-joining client with simulated 20 ms RTT (`TRON_SIM_*`, `TRON_AUTOCONNECT`).
+- `dev-watch.bat` — `cargo watch` for server and client (sets `TRON_BOT_DEBUG=1`).
+- `dev-cloud.bat [name]` — local server announcing to the Cloud Run manager (`ALLOW_LOOPBACK_ANNOUNCE=1`, so it advertises 127.0.0.1 on a public list).
+- `cd server-manager && bun run dev` — local lobby on `:3001`.
 
 ## Doc map
 
-- `PLAN.md` — original rewrite plan. Aspirational in places (child-entity trails, bot stack, WebTransport, audio/chat); **current code wins** where they disagree.
 - `docs/core-gameplay-mechanics.md` — gameplay rules, respect at all times.
-- `docs/netcode-design.md` — what netcode is actually implemented vs goals.
-- `NETWORK.md` — netcode hardening backlog + next-session TODO (paused 2026-10-01).
-- `docs/dev.md` — Windows dev loop + gameplay smoke checks. `docs/building.md` — prod builds (Linux server, Windows client). `EXPLORATION.md` — Armagetron ideas, not committed work. `STYLE.md` — enforced style (fmt + clippy `-D warnings`).
+- `docs/netcode-design.md` — implemented netcode contract and measurements.
+- `NETWORK.md` — open netcode/ops backlog.
+- `docs/dev.md` — dev loop, env vars, lab, smoke checks. `docs/building.md` — prod builds, ports and env. `docs/release.md` — releases and hosting for friends.
+- `server-manager/README.md` — lobby API.
+- `PLAN.md` — original rewrite plan; **current code wins** (see its top note). `EXPLORATION.md` (Armagetron ideas), `BOT-AI-*.md` (bot research) — not committed work. `STYLE.md` — enforced style (fmt + clippy `-D warnings`).
 
 # Agent (you)
 

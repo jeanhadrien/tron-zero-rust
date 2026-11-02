@@ -95,7 +95,7 @@ if front < 12.0 { ... }
 ## 7. Formatting — always enforced
 
 - Must pass: `cargo fmt -- --check` and
-  `cargo clippy --workspace --tests -- -D warnings`.
+  `cargo clippy --workspace --all-targets -- -D warnings`.
 - `#[allow(clippy::type_complexity)]` on Bevy system signatures is accepted.
 
 ## 8. Perf hints — `#[inline]` only on cross-crate tiny fns
@@ -141,10 +141,14 @@ pub fn rotate_left(v: Vec2) -> Vec2 {
 
 ## 13. Message / Event / Input split
 
-- `PlayerInput` = per-tick Lightyear Input (buffered + replayed, keep small).
-- `RespawnRequest/Reply`, `SessionRequest`, `ChatMessage` = Lightyear
-  Messages (reliable, not replayed).
-- `GameEvent` = local drain at top of Phase 1, never leaves the peer.
+- `PlayerInput` = per-tick Lightyear Input (feeds prediction and rollback
+  replay; keep small). For humans the server ignores it.
+- Human turns are `TurnCommand`s in unreliable `TurnBatch` messages, answered
+  by unreliable `TurnAck`s. `SessionHello/HelloReply`, `SessionRequest/Reply`
+  and `RespawnRequest/Reply` are ordered-reliable Lightyear Messages (not
+  replayed). Never carry a one-shot action in an input.
+- Every new message gets a per-link budget in `server/budget.rs` if a client
+  can send it freely.
 
 ## 14. Module home — sim stays in shared/
 

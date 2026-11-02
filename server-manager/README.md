@@ -1,8 +1,10 @@
 # server-manager
 
+Status: updated 2026-11-02.
+
 Lobby service for Tron Zero: game servers register themselves, the client's
 server browser lists them. In-memory only (rooms vanish on restart; servers
-re-register when a heartbeat returns 404). Express on Bun, no other deps.
+re-register when a heartbeat returns 404). Express 5 + `cors` on Bun.
 
 ```
 bun install
@@ -59,6 +61,8 @@ Behaviour:
 - Client (`crates/client/src/browser.rs`): `GET {MANAGER_URL}/api/rooms` (env at runtime, else the URL baked in via `TRONZERO_MANAGER_URL` at build time). It reads `id, host, port, displayName, playerCount, maxPlayers, lastHeartbeat` and optional `botCount`, and ignores `secure`. A row is Full when `playerCount >= maxPlayers` (humans only, matching server admission); bots are shown as `(+N bots)`.
 
 ## Docker / Cloud Run
+
+The image has not been built or run yet (listed in `NETWORK.md`); the Dockerfile sets `TRUST_PROXY=1` for Cloud Run.
 
 ```
 docker build -t server-manager .
