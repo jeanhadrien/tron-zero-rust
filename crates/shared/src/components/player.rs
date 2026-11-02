@@ -139,14 +139,6 @@ pub enum PlayerInput {
 }
 
 impl PlayerInput {
-    pub fn for_life(self, generation: u128) -> Self {
-        match self {
-            Self::TurnLeft => Self::TurnLeftFor(generation),
-            Self::TurnRight => Self::TurnRightFor(generation),
-            _ => Self::None,
-        }
-    }
-
     /// Untagged inputs are for bots only; humans must match the current life.
     pub fn eligible_turn(self, life: Option<&LifeGeneration>) -> Self {
         match (self, life) {

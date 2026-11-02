@@ -1,18 +1,12 @@
 //! Shared palette for the egui overlays (menu, HUD, death prompt).
 //!
-//! Every overlay reads its colors from here so the look can never drift
-//! apart. Colors are exposed in both `egui::Color32` (drawing) and
-//! `bevy::prelude::Color` (tests / gizmos) forms; the two are matched
-//! channel-by-channel from the same 0-255 source values.
+//! Every overlay reads its colors from here so the look can never drift apart.
 
-use bevy::prelude::Color;
 use bevy_egui::egui;
 
 // Inclusive upper bounds of the rubber warning bands (fraction of base).
 pub const RUBBER_RED_MAX: f32 = 0.2;
 pub const RUBBER_AMBER_MAX: f32 = 0.5;
-
-// --- egui forms (used for drawing) ---
 
 pub const CYAN: egui::Color32 = egui::Color32::from_rgb(0, 255, 204);
 pub const BODY: egui::Color32 = egui::Color32::from_rgb(165, 180, 195);
@@ -33,50 +27,7 @@ pub fn panel() -> egui::Color32 {
     egui::Color32::from_rgba_unmultiplied(8, 15, 23, 245)
 }
 
-// --- Bevy forms (same channels, for tests / non-egui use) ---
-// Only exercised by unit tests (`cargo check` skips those), hence the allow.
-#[allow(dead_code)]
-pub const CYAN_BEVY: Color = Color::srgb_u8(0, 255, 204);
-#[allow(dead_code)]
-pub const BODY_BEVY: Color = Color::srgb_u8(165, 180, 195);
-#[allow(dead_code)]
-pub const PANEL_EDGE_BEVY: Color = Color::srgb_u8(20, 60, 66);
-#[allow(dead_code)]
-pub const BTN_BEVY: Color = Color::srgb_u8(15, 56, 66);
-#[allow(dead_code)]
-pub const BTN_HOVER_BEVY: Color = Color::srgb_u8(20, 87, 97);
-#[allow(dead_code)]
-pub const BTN_DOWN_BEVY: Color = Color::srgb_u8(26, 128, 122);
-#[allow(dead_code)]
-pub const RUBBER_RED_BEVY: Color = Color::srgb_u8(255, 77, 77);
-#[allow(dead_code)]
-pub const RUBBER_AMBER_BEVY: Color = Color::srgb_u8(255, 191, 64);
-#[allow(dead_code)]
-pub const TRACK_BEVY: Color = Color::srgb(0.12, 0.18, 0.22);
-
-#[allow(dead_code)]
-pub fn dim_bevy() -> Color {
-    Color::srgba_u8(3, 5, 10, 184)
-}
-
-#[allow(dead_code)]
-pub fn panel_bevy() -> Color {
-    Color::srgba_u8(8, 15, 23, 245)
-}
-
-// Warning color for a rubber fraction in [0, 1].
-#[allow(dead_code)]
-pub fn rubber_bevy(fraction: f32) -> Color {
-    if fraction <= RUBBER_RED_MAX {
-        RUBBER_RED_BEVY
-    } else if fraction <= RUBBER_AMBER_MAX {
-        RUBBER_AMBER_BEVY
-    } else {
-        CYAN_BEVY
-    }
-}
-
-// egui twin of [`rubber_bevy`], used for the HUD fill and numbers.
+// Warning color for a rubber fraction in [0, 1]: HUD fill and numbers.
 pub fn rubber_egui(fraction: f32) -> egui::Color32 {
     if fraction <= RUBBER_RED_MAX {
         RUBBER_RED
@@ -124,53 +75,4 @@ pub fn action_button(ui: &mut egui::Ui, caption: &str) -> egui::Response {
         [width, 44.0],
         egui::Button::new(egui::RichText::new(caption).size(20.0)),
     )
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn channels_bevy(c: Color) -> [u8; 4] {
-        let s = c.to_srgba();
-        [
-            (s.red * 255.0).round() as u8,
-            (s.green * 255.0).round() as u8,
-            (s.blue * 255.0).round() as u8,
-            (s.alpha * 255.0).round() as u8,
-        ]
-    }
-
-    #[test]
-    fn egui_and_bevy_palettes_agree() {
-        fn channels_egui(c: egui::Color32) -> [u8; 4] {
-            [c.r(), c.g(), c.b(), c.a()]
-        }
-        for (e, b) in [
-            (CYAN, CYAN_BEVY),
-            (BODY, BODY_BEVY),
-            (PANEL_EDGE, PANEL_EDGE_BEVY),
-            (BTN, BTN_BEVY),
-            (BTN_HOVER, BTN_HOVER_BEVY),
-            (BTN_DOWN, BTN_DOWN_BEVY),
-            (RUBBER_RED, RUBBER_RED_BEVY),
-            (RUBBER_AMBER, RUBBER_AMBER_BEVY),
-        ] {
-            assert_eq!(channels_egui(e), channels_bevy(b));
-        }
-        // egui stores alpha colors premultiplied; rebuild from the straight
-        // Bevy channels the same way `dim()`/`panel()` do.
-        for (e, b) in [(dim(), dim_bevy()), (panel(), panel_bevy())] {
-            let [r, g, bl, a] = channels_bevy(b);
-            assert_eq!(e, egui::Color32::from_rgba_unmultiplied(r, g, bl, a));
-        }
-    }
-
-    #[test]
-    fn rubber_bands_agree_across_forms() {
-        for f in [0.0, 0.2, 0.21, 0.5, 0.51, 1.0] {
-            let e = rubber_egui(f);
-            let [r, g, b, _] = channels_bevy(rubber_bevy(f));
-            assert_eq!([e.r(), e.g(), e.b()], [r, g, b], "fraction {f}");
-        }
-    }
 }

@@ -174,17 +174,17 @@ pub fn hud_ui(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::theme::{CYAN_BEVY, RUBBER_AMBER_BEVY, RUBBER_RED_BEVY};
+    use crate::theme::{CYAN, RUBBER_AMBER, RUBBER_RED};
     use bevy::ecs::system::RunSystemOnce;
     use lightyear::prelude::{PeerId, RemoteId};
 
     #[test]
     fn rubber_warning_thresholds_are_inclusive() {
-        assert_eq!(theme::rubber_bevy(0.51), CYAN_BEVY);
-        assert_eq!(theme::rubber_bevy(0.5), RUBBER_AMBER_BEVY);
-        assert_eq!(theme::rubber_bevy(0.21), RUBBER_AMBER_BEVY);
-        assert_eq!(theme::rubber_bevy(0.2), RUBBER_RED_BEVY);
-        assert_eq!(theme::rubber_bevy(0.0), RUBBER_RED_BEVY);
+        assert_eq!(theme::rubber_egui(0.51), CYAN);
+        assert_eq!(theme::rubber_egui(0.5), RUBBER_AMBER);
+        assert_eq!(theme::rubber_egui(0.21), RUBBER_AMBER);
+        assert_eq!(theme::rubber_egui(0.2), RUBBER_RED);
+        assert_eq!(theme::rubber_egui(0.0), RUBBER_RED);
     }
 
     #[test]
