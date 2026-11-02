@@ -1,0 +1,34 @@
+# syntax=docker/dockerfile:1
+# Headless Tron Zero game server. Build context = repo root:
+#   docker build -f Dockerfile.server -t tron-zero-server .
+# Speaks raw UDP (5000), plus 5001/udp reserved for WebTransport.
+
+ARG RUST_VERSION=1.96
+
+# --- planner: reduce the workspace to a dependency recipe ---------------------
+FROM lukemathwalker/cargo-chef:latest-rust-${RUST_VERSION}-bookworm AS planner
+WORKDIR /app
+COPY . .
+RUN cargo chef prepare --recipe-path recipe.json
+
+# --- builder: cached dependency layer, then the server itself -----------------
+FROM lukemathwalker/cargo-chef:latest-rust-${RUST_VERSION}-bookworm AS builder
+WORKDIR /app
+COPY --from=planner /app/recipe.json recipe.json
+RUN cargo chef cook --release -p tron-zero-server --bin tron-zero-server --recipe-path recipe.json
+COPY . .
+RUN cargo build --release -p tron-zero-server --bin tron-zero-server \
+    && strip target/release/tron-zero-server
+
+# --- runtime ------------------------------------------------------------------
+FROM debian:bookworm-slim AS runtime
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd --system --uid 10001 --no-create-home --shell /usr/sbin/nologin tron
+COPY --from=builder /app/target/release/tron-zero-server /usr/local/bin/tron-zero-server
+USER 10001:10001
+ENV PORT=5000 RUST_LOG=info
+EXPOSE 5000/udp 5001/udp
+# Exec form: the server is PID 1 and handles SIGTERM itself (ctrlc "termination").
+ENTRYPOINT ["/usr/local/bin/tron-zero-server"]

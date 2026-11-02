@@ -67,6 +67,22 @@ cross build --release -p tron-zero-server --target x86_64-unknown-linux-gnu
 
 Requires Docker Desktop with WSL2 backend. Slower than Option A per build, but reproducible across machines.
 
+### Option C — container image (GCE VM)
+
+`Dockerfile.server` (context = repo root) builds a slim Debian image: cargo-chef
+dependency caching, non-root user, `ca-certificates` for the HTTPS announcer,
+`EXPOSE 5000/udp 5001/udp`. The server is PID 1 and exits on SIGTERM (`ctrlc`).
+
+```
+docker build -f Dockerfile.server -t tron-zero-server .
+docker run --rm -p 5000:5000/udp -e MANAGER_URL=... -e ADVERTISED_HOST=... tron-zero-server
+```
+
+`cloudbuild.server.yaml` builds and pushes it to Artifact Registry
+(`gcloud builds submit --config cloudbuild.server.yaml --substitutions=_TAG=v1 .`).
+The server crate depends on Bevy with default features off (`bevy_log`,
+`bevy_state` only): no winit/alsa/udev in the image.
+
 ## Client — Windows (native)
 
 ```

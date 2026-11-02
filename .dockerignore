@@ -1,0 +1,16 @@
+target/
+**/target/
+.git/
+.github/
+.claude/
+.codegraph/
+.opencode/
+**/node_modules/
+server-manager/
+docs/
+*.md
+Dockerfile*
+.dockerignore
+.gcloudignore
+cloudbuild*.yaml
+*.bat
