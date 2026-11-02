@@ -18,6 +18,10 @@ Server (`tron-zero-server`, all optional):
 | `MANAGER_URL` | `http://localhost:3001` | Lobby to register with. |
 | `ADVERTISED_HOST` | `127.0.0.1` | Public host clients should use. A loopback value with a non-local `MANAGER_URL` is refused (no announce, game still runs). |
 | `ADVERTISED_PORT` | `PORT` | Public port, if NAT maps it differently. |
+| `WEB_PORT` | `5001` | UDP port of the WebTransport listener for browser players (QUIC; open it in the firewall next to `PORT`). `0` disables it. |
+| `ADVERTISED_WEB_PORT` | `WEB_PORT` | Public WebTransport port, if NAT maps it differently. Announced as `webPort`. |
+| `WEB_CERT` / `WEB_KEY` | unset | PEM certificate chain and key (e.g. Let's Encrypt) for the WebTransport listener. Unset: a self-signed 14-day ECDSA certificate is generated and its SHA-256 announced as `certHash`. |
+| `WEB_MAX_UPTIME_HOURS` | `312` | Self-signed only: exit cleanly (after unregistering) once this long has passed, so the container restart policy (`always`/`unless-stopped`, exit code 0) restarts it with a fresh certificate. |
 | `ADVERTISED_SECURE` | unset | `true` marks the room `secure` (reserved for WebTransport). |
 | `ALLOW_LOOPBACK_ANNOUNCE` | unset | `1`/`true` (dev only) turns the loopback refusal into a warning. |
 | `TRON_BOT_DEBUG` | unset | Truthy: replicate bot decision snapshots for the client debug overlay (extra bandwidth; not for public servers). |

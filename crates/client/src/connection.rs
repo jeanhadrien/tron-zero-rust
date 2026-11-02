@@ -77,9 +77,28 @@ impl Default for Session {
 }
 
 impl Session {
-    /// Start connecting to `address`, joining as `name` (the server has the
-    /// final say on it). Does nothing while a session exists or a quit is pending.
+    /// Start connecting to `address` over UDP, joining as `name` (the server
+    /// has the final say on it). Does nothing while a session exists or a quit
+    /// is pending.
     pub fn connect(&mut self, address: SocketAddr, name: &str, now: f64, commands: &mut Commands) {
+        let io = (
+            UdpIo::default(),
+            LocalAddr(SocketAddr::from((Ipv4Addr::UNSPECIFIED, 0))),
+            PeerAddr(address),
+        );
+        self.connect_with(address, io, name, now, commands);
+    }
+
+    /// [`Session::connect`] over another transport: `io` is the link's IO
+    /// bundle (it must include `PeerAddr(address)`), e.g. WebTransport.
+    pub fn connect_with(
+        &mut self,
+        address: SocketAddr,
+        io: impl Bundle,
+        name: &str,
+        now: f64,
+        commands: &mut Commands,
+    ) {
         if self.phase != ConnectionPhase::Offline
             || self.client.is_some()
             || self.quit_requested_at.is_some()
@@ -89,9 +108,7 @@ impl Session {
         let client = commands
             .spawn((
                 RawClient,
-                UdpIo::default(),
-                LocalAddr(SocketAddr::from((Ipv4Addr::UNSPECIFIED, 0))),
-                PeerAddr(address),
+                io,
                 PredictionManager::default(),
                 InputTimelineConfig::default().with_input_delay(InputDelayConfig::no_input_delay()),
             ))

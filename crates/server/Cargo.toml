@@ -7,7 +7,13 @@ edition = "2024"
 shared = { path = "../shared", package = "tron-zero-shared" }
 bots = { path = "../bots", package = "tron-zero-bots" }
 bevy.workspace = true
-lightyear = { workspace = true, features = ["udp", "raw_connection", "input_native"] }
+lightyear = { workspace = true, features = ["udp", "raw_connection", "input_native", "webtransport"] }
+# Direct deps only for the WebTransport listener (`web.rs`); versions match lightyear_webtransport.
+aeronet_io = "0.21"
+aeronet_webtransport = { version = "0.21", features = ["server"] }
+lightyear_aeronet = "0.28"
+time = "0.3"
+tokio = { version = "1", features = ["rt"] }
 rand.workspace = true
 tracing.workspace = true
 serde.workspace = true

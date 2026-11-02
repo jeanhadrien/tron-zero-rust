@@ -2,10 +2,24 @@
 
 use bevy::prelude::*;
 use std::sync::Arc;
-use tron_zero_server::{add_core, admission, announce, bot, systems};
+use tron_zero_server::{add_core, add_web, admission, announce, bot, systems, web};
 
 fn main() {
-    let announce_cfg = announce::AnnounceConfig::from_env();
+    let mut announce_cfg = announce::AnnounceConfig::from_env();
+    // Browser players: a WebTransport listener beside the UDP one. A failure
+    // here (bad WEB_CERT/WEB_KEY) disables only the web side.
+    let web_endpoint =
+        web::WebConfig::from_env().and_then(|cfg| match web::WebEndpoint::new(&cfg) {
+            Ok(endpoint) => {
+                announce_cfg.web_port = Some(cfg.advertised_port);
+                announce_cfg.cert_hash = endpoint.cert_hash.clone();
+                Some(endpoint)
+            }
+            Err(e) => {
+                tracing::error!("WebTransport disabled: {e}");
+                None
+            }
+        });
     let counts = Arc::new(announce::LiveCounts::default());
     let announce_handle = Arc::new(announce::AnnounceHandle::default());
 
@@ -34,6 +48,15 @@ fn main() {
     app.add_plugins(bevy::log::LogPlugin::default());
     app.insert_resource(admission::MaxPlayers(announce_cfg.max_players));
     add_core(&mut app, announce_cfg.port);
+    if let Some(endpoint) = web_endpoint {
+        // Self-signed certificates expire within 14 days: exit before that
+        // and let the restart policy bring the server back with a new one.
+        if let Some(uptime) = endpoint.restart_after {
+            app.insert_resource(web::RestartAfter(uptime));
+            app.add_systems(Update, web::exit_after_uptime);
+        }
+        add_web(&mut app, endpoint);
+    }
 
     // Human/bot counts published for the announcer heartbeat.
     app.insert_resource(announce::PlayerCountProbe(counts));
@@ -59,4 +82,7 @@ fn main() {
     );
 
     app.run();
+
+    // Reached on a requested exit (max uptime): leave the lobby cleanly.
+    announce_handle.shutdown(&announce_cfg);
 }

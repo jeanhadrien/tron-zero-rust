@@ -11,4 +11,4 @@ tron-zero-server = { path = "../server" }
 tron-zero-client = { path = "../client" }
 bevy.workspace = true
 glam.workspace = true
-lightyear = { workspace = true, features = ["udp", "raw_connection", "input_native"] }
+lightyear = { workspace = true, features = ["udp", "raw_connection", "input_native", "webtransport"] }
