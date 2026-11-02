@@ -4,19 +4,19 @@
   Builds the browser client into web/dist (wasm + JS glue + index.html).
 
 .DESCRIPTION
-  1. cargo build --profile wasm-release --target wasm32-unknown-unknown
+  1. cargo build --profile $CargoProfile --target wasm32-unknown-unknown
   2. wasm-bindgen --target web   (CLI version must equal the wasm-bindgen crate in Cargo.lock)
-  3. wasm-opt -O3                (skipped with -SkipOpt)
+  3. wasm-opt -O3                (only with -WasmOpt; see web/README.md)
   4. copy web/index.html
 
   One-time setup:
     rustup target add wasm32-unknown-unknown
     cargo install wasm-bindgen-cli --version <version from Cargo.lock> --locked
-    npm i -g binaryen            # provides wasm-opt (or: cargo install wasm-opt)
+    npm i -g binaryen            # only for -WasmOpt (or: cargo install wasm-opt)
 
   Set TRONZERO_MANAGER_URL to bake the lobby URL into the build.
 #>
-param([switch]$SkipOpt)
+param([switch]$WasmOpt, [string]$CargoProfile = 'wasm-release')
 
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
@@ -31,18 +31,20 @@ if ($cliVersion -ne $lockVersion) {
     throw "wasm-bindgen CLI is $cliVersion but Cargo.lock has $lockVersion. Run: cargo install wasm-bindgen-cli --version $lockVersion --locked"
 }
 
-cargo build --profile wasm-release --target wasm32-unknown-unknown -p tron-zero-client
+cargo build --profile $CargoProfile --target wasm32-unknown-unknown -p tron-zero-client
 if ($LASTEXITCODE) { throw 'cargo build failed' }
 
 if (Test-Path $dist) { Remove-Item $dist -Recurse -Force }
 New-Item -ItemType Directory $dist | Out-Null
 
-wasm-bindgen --target web --no-typescript --out-dir $dist --out-name $name `
-    "target/wasm32-unknown-unknown/wasm-release/$name.wasm"
+# Names and producers sections are debugging aids only: 11 MB of the raw wasm.
+wasm-bindgen --target web --no-typescript --remove-name-section --remove-producers-section `
+    --out-dir $dist --out-name $name `
+    "target/wasm32-unknown-unknown/$CargoProfile/$name.wasm"
 if ($LASTEXITCODE) { throw 'wasm-bindgen failed' }
 
 $wasm = Join-Path $dist "${name}_bg.wasm"
-if (-not $SkipOpt) {
+if ($WasmOpt) {
     # Explicit features: --all-features also enables ones browsers reject
     # (e.g. compact imports). These are what rustc emits by default.
     wasm-opt -O3 --enable-bulk-memory --enable-nontrapping-float-to-int --enable-sign-ext `
@@ -51,5 +53,7 @@ if (-not $SkipOpt) {
 }
 
 Copy-Item (Join-Path $PSScriptRoot 'index.html') $dist
+$cname = Join-Path $PSScriptRoot 'CNAME'
+if (Test-Path $cname) { Copy-Item $cname $dist }
 $size = (Get-Item $wasm).Length
 "{0}: {1:N1} MB raw" -f (Split-Path $wasm -Leaf), ($size / 1MB)

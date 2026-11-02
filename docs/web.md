@@ -12,9 +12,9 @@ play.
 | Fallback | **None** (no WebSocket) | WebTransport has been Baseline since March 2026 (Chrome/Edge, Firefox 125+, Safari 26.4+ with cert hashes). A TCP fallback would mean head-of-line stalls on every lost packet, which the turn/ack design can't hide. Desktop is the answer for anything older. |
 | Server listeners | **One Lightyear server entity, two transports**: raw UDP on `PORT` (5000) for desktop, WebTransport on `WEB_PORT` (5001, UDP) for browsers; `crates/server/src/web.rs` turns each WebTransport session into a `LinkOf` child of the same server | Same game, same simulation, same admission/session/turn code. Two server entities break Lightyear's `Replicate::to_clients` (it resolves a single started `Server`); QUIC can't share the raw socket. |
 | Certificate | **Self-signed ECDSA P-256, ≤14 days, pinned by SHA-256** (`serverCertificateHashes`) by default; a real CA cert (`WEB_CERT`/`WEB_KEY`) when the server has a DNS name | Self-signed works for any IP host (friends hosting, a VM without DNS), and needs no ACME. Browsers only accept pinned certs that are ECDSA and valid ≤14 days, so the server restarts itself before expiry (`WEB_MAX_UPTIME_HOURS`) and re-announces the new hash. |
-| Discovery | The manager's `RoomEntry` gains optional `webPort` and `certHash` (64 lowercase hex). The browser lists only rooms with a `webPort`; desktop keeps using `port`. | A room without `webPort` is native-only. A room with `webPort` but no `certHash` (server started with `WEB_CERT`/`WEB_KEY`) would need CA validation against a DNS name, but Lightyear's client only dials `https://<ip>:<port>`, so the browser treats such rooms as unjoinable for now. |
+| Discovery | The manager's `RoomEntry` gains optional `webPort` and `certHash` (64 lowercase hex). The browser lists only rooms with a `webPort`; desktop keeps using `port`. | A room without `webPort` is native-only. A room with `webPort` but no `certHash` (server started with `WEB_CERT`/`WEB_KEY`) would need CA validation against a DNS name, but Lightyear's client only dials `https://<ip>:<port>`, so the browser lists such rooms disabled ("no certificate hash announced"). Same for a room whose host is a hostname instead of an IP: the browser dials a `SocketAddr`, so it is disabled with a message. |
 | Renderer | **WebGL2** | The game draws a few thousand line segments; GPU is never the bottleneck. WebGL2 runs everywhere; WebGPU buys nothing here and costs a second code path. |
-| Build | `wasm32-unknown-unknown`, `wasm-bindgen --target web`, `wasm-opt -O3`, profile `wasm-release` (fat LTO, `codegen-units = 1`, `opt-level = 3`) | Speed over size. Size is paid once per visit, then cached; frame time is paid every frame. |
+| Build | `wasm32-unknown-unknown`, `wasm-bindgen --target web` (name and producers sections stripped), profile `wasm-release` (fat LTO, `codegen-units = 1`, `opt-level = 3`); `wasm-opt -O3` is optional (`WASM_OPT=1`) | Speed over size. Size is paid once per visit, then cached; frame time is paid every frame. `wasm-opt` shrinks the raw file by about 10% but not the compressed transfer, and costs 5+ minutes. |
 | Hosting | Static files: `web/dist` on GitHub Pages at `play.tronzero.dev` (free, CDN, gzip, correct `application/wasm`) | No server-side logic needed; no GCP load balancer (about $18/month just for a forwarding rule). |
 
 ## Performance model
@@ -35,7 +35,7 @@ Not worth doing: WebGPU, wasm threads (would need cross-origin isolation
 headers, which GitHub Pages can't set, for a sim that runs in microseconds per
 tick), SIMD hand-tuning.
 
-Worth doing: `wasm-opt -O3`, fat LTO, `panic = "abort"`, no debug asserts in
+Worth doing: fat LTO, `panic = "abort"`, no debug asserts in
 the release profile, no logging below `info` on web.
 
 ## Browser constraints and how they're handled

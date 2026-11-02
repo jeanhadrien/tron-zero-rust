@@ -95,28 +95,45 @@ cargo build --release -p tron-zero-client
 
 Output: `target/release/tron-zero-client.exe`. Distribute the `.exe` alongside any required runtime DLLs (none expected for a static release build; verify with a clean-machine test).
 
-## Client — WASM (web, spike)
+## Client - WASM (web)
 
-The client compiles and starts in the browser (menu, settings, server browser
-list; WebGL2). Connecting is not wired yet: the browser transport is
-Lightyear's WebTransport client (`WebTransportClientIo`), which needs the
-server-side WebTransport listener and its certificate digest
-(`?TRON_CERT_DIGEST=` query parameter).
+The browser client plays over WebTransport against rooms that announce a
+`webPort` and `certHash` (see `docs/web.md`); build, serve and deploy steps are
+in `web/README.md`.
 
 ```
 rustup target add wasm32-unknown-unknown
 cargo install wasm-bindgen-cli --version <wasm-bindgen version in Cargo.lock> --locked
-npm i -g binaryen            # wasm-opt
-./web/build.ps1              # -> web/dist (serve it with any static server)
+./web/build.ps1              # or ./web/build.sh -> web/dist (serve with any static server)
 ```
 
-`[profile.wasm-release]` is fat LTO (about 25 min, ~12 GB RAM, plus ~10 min of
-wasm-opt); for iteration use `-SkipOpt` or a plain
-`cargo build --target wasm32-unknown-unknown`. `--cfg=web_sys_unstable_apis`
-and the getrandom `wasm_js` cfg live in `.cargo/config.toml`. Browsers have no
-environment variables: `platform::env_var` reads URL query parameters of the
-same name (`?MANAGER_URL=...`), preferences use `localStorage`, and the Quit
-button is hidden.
+`[profile.wasm-release]` is fat LTO, one codegen unit, `opt-level = 3` (tens of
+minutes, lots of RAM); for iteration pass `-CargoProfile release` /
+`CARGO_PROFILE=release`. `--cfg=web_sys_unstable_apis` and the getrandom
+`wasm_js` cfg live in `.cargo/config.toml`. Browsers have no environment
+variables: `platform::env_var` reads URL query parameters of the same name
+(`?MANAGER_URL=...`), preferences use `localStorage`, and the Quit button is
+hidden.
+
+Bevy features: the workspace dependency has `default-features = false` and each
+crate opts in. The client enables only 2D rendering (`2d_bevy_render`: camera,
+gizmos, `Text2d`), `bevy_winit` and the default font; `bevy_egui` runs with
+`render` only (no `bevy_ui`, picking, URL opening). No 3D, PBR, UI, audio,
+gamepad or scene support is compiled in.
+
+Size of `tron-zero-client_bg.wasm` (`wasm-release`, 2026-11-02):
+
+| Build | raw | gzip -9 | brotli -q 11 |
+|-------|-----|---------|--------------|
+| Bevy default features, names kept | 57.5 MB | n/a | 8.7 MB |
+| Trimmed bevy/egui features, names kept | 57.1 MB | 12.6 MB | 7.6 MB |
+| + name/producers sections stripped (**current**) | 43.7 MB | 10.1 MB | 6.0 MB |
+| + `wasm-opt -O3` (opt-in) | 39.1 MB | 9.9 MB | 6.0 MB |
+
+Feature trimming alone barely moves the needle (Bevy's ECS monomorphisation
+dominates the code); the debug `name` section was 11 MB of the raw file.
+`wasm-opt -O3` (5 minutes) saves 10% raw but nothing on the wire, so it is
+opt-in (`WASM_OPT=1` / `-WasmOpt`); frame time was not measurable in the pane.
 
 ## Release notes
 

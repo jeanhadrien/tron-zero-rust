@@ -12,22 +12,30 @@
 //! a request unless one is already in flight; `poll_browser_fetch` drains the
 //! completed result once per frame. DNS resolution is a blocking
 //! `ToSocketAddrs` call, but it runs once per refresh on receipt — never per
-//! frame — so no worker thread is warranted. On wasm, resolution is skipped
-//! and Connect is disabled: listing works over browser fetch, but play needs
-//! the native UDP transport until WebTransport lands (see PLAN.md).
+//! frame — so no worker thread is warranted.
+//!
+//! Native clients dial a room's UDP `port`. The browser can only speak
+//! WebTransport: it dials `webPort` and pins the room's `certHash`, and it
+//! cannot resolve hostnames (lightyear dials `https://<ip>:<port>`), so a
+//! web row is joinable only when it announces an IP, a `webPort` and a hash.
 
-use std::net::{Ipv4Addr, SocketAddr};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::{Arc, Mutex};
 
 use bevy::prelude::*;
 use serde::Deserialize;
 
+use crate::connection::Endpoint;
+
 const LOCAL_PORT: u16 = 5000;
+const LOCAL_WEB_PORT: u16 = 5001;
 const LOCAL_ID: &str = "local";
 
-fn local_addr() -> SocketAddr {
-    SocketAddr::from((Ipv4Addr::LOCALHOST, LOCAL_PORT))
-}
+/// Whether this build dials rooms over WebTransport (the browser) rather than UDP.
+const WEB: bool = cfg!(target_family = "wasm");
+
+/// Port of the pinned localhost server for this build's transport.
+pub const LOCAL_PLAY_PORT: u16 = if WEB { LOCAL_WEB_PORT } else { LOCAL_PORT };
 
 // One room as served by `GET /api/rooms` (see `server-manager/src/room.ts`).
 // `secure` is deliberately absent: serde drops unknown fields, so omitting
@@ -38,6 +46,13 @@ pub struct RoomInfo {
     pub id: String,
     pub host: String,
     pub port: u16,
+    // WebTransport (QUIC) UDP port; absent on native-only rooms.
+    #[serde(default)]
+    pub web_port: Option<u16>,
+    // Hex SHA-256 of the room's self-signed certificate; absent when the
+    // server uses a CA certificate.
+    #[serde(default)]
+    pub cert_hash: Option<String>,
     pub display_name: String,
     // Humans only; `max_players` caps humans too, so Full compares the two.
     pub player_count: u32,
@@ -56,30 +71,51 @@ impl RoomInfo {
     }
 }
 
-// One rendered row: the room plus its resolved game address, if any.
+// One rendered row: the room plus where to dial it, or why it can't be dialed.
 #[derive(Debug, Clone)]
 pub struct BrowserRow {
     pub room: RoomInfo,
-    pub addr: Option<SocketAddr>,
-    pub resolve_error: Option<String>,
+    pub endpoint: Option<Endpoint>,
+    pub problem: Option<String>,
     pub is_local: bool,
 }
 
-// The pinned first row: needs no manager and no DNS.
+impl BrowserRow {
+    // The port this build dials (the WebTransport one in the browser).
+    pub fn play_port(&self) -> u16 {
+        match &self.endpoint {
+            Some(endpoint) => endpoint.addr.port(),
+            None if WEB => self.room.web_port.unwrap_or(self.room.port),
+            None => self.room.port,
+        }
+    }
+}
+
+// The pinned first row: needs no manager and no DNS. In the browser it dials
+// the local WebTransport port and needs the dev server's certificate digest
+// from the `TRON_CERT_DIGEST` query parameter (the server logs it at startup).
 pub fn local_row() -> BrowserRow {
+    let digest = crate::platform::env_var("TRON_CERT_DIGEST").filter(|d| !d.trim().is_empty());
+    let problem = (WEB && digest.is_none())
+        .then(|| "Add ?TRON_CERT_DIGEST=<server certificate hash> to the page URL.".to_owned());
     BrowserRow {
         room: RoomInfo {
             id: LOCAL_ID.into(),
             host: Ipv4Addr::LOCALHOST.to_string(),
             port: LOCAL_PORT,
+            web_port: Some(LOCAL_WEB_PORT),
+            cert_hash: digest.clone(),
             display_name: "Localhost (built-in)".into(),
             player_count: 0,
             max_players: 0,
             bot_count: 0,
             last_heartbeat: 0,
         },
-        addr: Some(local_addr()),
-        resolve_error: None,
+        endpoint: problem.is_none().then(|| Endpoint {
+            addr: SocketAddr::from((Ipv4Addr::LOCALHOST, LOCAL_PLAY_PORT)),
+            cert_digest: if WEB { digest } else { None },
+        }),
+        problem,
         is_local: true,
     }
 }
@@ -127,11 +163,18 @@ pub fn transport_error(url: &str, err: impl std::fmt::Display) -> String {
     format!("Could not reach manager at {url}: {err}")
 }
 
-// Resolve a room's game address. Numeric IPs never touch DNS, so this is
-// offline-safe for them; hostnames may block briefly, which is why this runs
-// once per refresh on receipt, not per frame.
-#[cfg(not(target_arch = "wasm32"))]
-fn resolve_room(room: &RoomInfo) -> (Option<SocketAddr>, Option<String>) {
+// Where to dial a room, or why it can't be dialed. Numeric IPs never touch
+// DNS, so this is offline-safe for them; hostnames may block briefly natively,
+// which is why this runs once per refresh on receipt, not per frame.
+fn resolve_room(room: &RoomInfo) -> (Option<Endpoint>, Option<String>) {
+    if WEB {
+        web_endpoint(room)
+    } else {
+        native_endpoint(room)
+    }
+}
+
+fn native_endpoint(room: &RoomInfo) -> (Option<Endpoint>, Option<String>) {
     use std::net::ToSocketAddrs as _;
     match (room.host.as_str(), room.port).to_socket_addrs() {
         Ok(addrs) => {
@@ -139,7 +182,7 @@ fn resolve_room(room: &RoomInfo) -> (Option<SocketAddr>, Option<String>) {
             // Windows may resolve "localhost" to ::1 first; the server binds IPv4.
             addrs.sort_by_key(|addr| if addr.is_ipv4() { 0 } else { 1 });
             match addrs.into_iter().next() {
-                Some(addr) => (Some(addr), None),
+                Some(addr) => (Some(addr.into()), None),
                 None => (
                     None,
                     Some(format!(
@@ -156,31 +199,55 @@ fn resolve_room(room: &RoomInfo) -> (Option<SocketAddr>, Option<String>) {
     }
 }
 
-// wasm has no UDP transport yet: skip resolution, rows are listing-only.
-#[cfg(target_arch = "wasm32")]
-fn resolve_room(_room: &RoomInfo) -> (Option<SocketAddr>, Option<String>) {
-    (None, None)
-}
-
-// UDP play needs a native build; wasm must wait for WebTransport.
-pub const fn connect_supported() -> bool {
-    cfg!(not(target_arch = "wasm32"))
+// Browsers dial `host:webPort` pinning the room's certificate hash.
+fn web_endpoint(room: &RoomInfo) -> (Option<Endpoint>, Option<String>) {
+    let Some(web_port) = room.web_port else {
+        return (None, Some("Desktop only: no browser support.".into()));
+    };
+    let Some(hash) = room.cert_hash.as_ref().filter(|hash| !hash.is_empty()) else {
+        return (
+            None,
+            Some("Not joinable from a browser: no certificate hash announced.".into()),
+        );
+    };
+    let Ok(ip) = room.host.parse::<IpAddr>() else {
+        return (
+            None,
+            Some(format!(
+                "Not joinable from a browser: {} is a hostname, not an IP address.",
+                room.host
+            )),
+        );
+    };
+    (
+        Some(Endpoint {
+            addr: SocketAddr::new(ip, web_port),
+            cert_digest: Some(hash.to_ascii_lowercase()),
+        }),
+        None,
+    )
 }
 
 // Local row first, then manager rooms; a manager entry pointing at the local
-// server is dropped so the pinned row wins and never duplicates.
+// server is dropped so the pinned row wins and never duplicates. The browser
+// lists only rooms that announce a `webPort`.
 fn build_rows(rooms: Vec<RoomInfo>) -> Vec<BrowserRow> {
-    let local = local_addr();
-    let mut rows = vec![local_row()];
+    let local = local_row();
+    let local_addr = local.endpoint.as_ref().map(|endpoint| endpoint.addr);
+    let mut rows = vec![local];
     for room in sort_manager_rows(rooms) {
-        let (addr, resolve_error) = resolve_room(&room);
-        if addr == Some(local) {
+        if WEB && room.web_port.is_none() {
+            continue;
+        }
+        let (endpoint, problem) = resolve_room(&room);
+        let addr = endpoint.as_ref().map(|endpoint| endpoint.addr);
+        if addr.is_some() && addr == local_addr {
             continue;
         }
         rows.push(BrowserRow {
             room,
-            addr,
-            resolve_error,
+            endpoint,
+            problem,
             is_local: false,
         });
     }
@@ -350,6 +417,8 @@ mod tests {
             id: id.into(),
             host: "example.com".into(),
             port: 5000,
+            web_port: None,
+            cert_hash: None,
             display_name: id.into(),
             player_count: players,
             max_players: 8,
@@ -420,7 +489,7 @@ mod tests {
         ]);
         assert_eq!(rows.len(), 4);
         assert!(rows[0].is_local);
-        assert!(rows[0].addr.is_some());
+        assert!(rows[0].endpoint.is_some());
         let ids: Vec<&str> = rows[1..].iter().map(|row| row.room.id.as_str()).collect();
         assert_eq!(ids, ["busy-fresh", "busy-stale", "quiet"]);
     }
@@ -547,7 +616,55 @@ mod tests {
         assert!(message.contains("connection refused"));
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn room_info_reads_web_transport_fields() {
+        let body = br#"[{
+            "id": "abc", "host": "203.0.113.7", "port": 5000,
+            "webPort": 5001, "certHash": "AB12",
+            "displayName": "Arena", "playerCount": 1, "maxPlayers": 8
+        }]"#;
+        let room = &parse_rooms(body).unwrap()[0];
+        assert_eq!(room.web_port, Some(5001));
+        assert_eq!(room.cert_hash.as_deref(), Some("AB12"));
+        let old = br#"[{
+            "id": "abc", "host": "h", "port": 5000,
+            "displayName": "Arena", "playerCount": 1, "maxPlayers": 8
+        }]"#;
+        assert_eq!(parse_rooms(old).unwrap()[0].web_port, None);
+    }
+
+    fn web_room(host: &str, web_port: Option<u16>, hash: Option<&str>) -> RoomInfo {
+        RoomInfo {
+            host: host.into(),
+            web_port,
+            cert_hash: hash.map(str::to_owned),
+            ..room("w", 0, 0)
+        }
+    }
+
+    #[test]
+    fn browser_dials_web_port_with_lowercased_hash() {
+        let (endpoint, problem) = web_endpoint(&web_room("203.0.113.7", Some(5001), Some("AB12")));
+        assert!(problem.is_none());
+        let endpoint = endpoint.unwrap();
+        assert_eq!(endpoint.addr, "203.0.113.7:5001".parse().unwrap());
+        assert_eq!(endpoint.cert_digest.as_deref(), Some("ab12"));
+    }
+
+    #[test]
+    fn browser_rejects_rooms_it_cannot_dial() {
+        for room in [
+            web_room("203.0.113.7", None, Some("ab")),
+            web_room("203.0.113.7", Some(5001), None),
+            web_room("203.0.113.7", Some(5001), Some("")),
+            web_room("play.example.com", Some(5001), Some("ab")),
+        ] {
+            let (endpoint, problem) = web_endpoint(&room);
+            assert!(endpoint.is_none());
+            assert!(problem.is_some());
+        }
+    }
+
     #[test]
     fn numeric_ip_resolves_without_dns() {
         let numeric = RoomInfo {
@@ -555,8 +672,11 @@ mod tests {
             port: 6000,
             ..room("n", 0, 0)
         };
-        let (addr, error) = resolve_room(&numeric);
-        assert_eq!(addr, Some(SocketAddr::from((Ipv4Addr::LOCALHOST, 6000))));
+        let (endpoint, error) = native_endpoint(&numeric);
+        assert_eq!(
+            endpoint,
+            Some(SocketAddr::from((Ipv4Addr::LOCALHOST, 6000)).into())
+        );
         assert!(error.is_none());
     }
 }
