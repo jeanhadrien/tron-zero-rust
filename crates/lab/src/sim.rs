@@ -159,6 +159,7 @@ impl Lab {
 
         let mut world = World::new();
         world.insert_resource(SimulationRole::Server);
+        world.insert_resource(DeathLog::default());
         world.spawn((Arena, size, WallSegments(walls.clone())));
         let mut schedule = Schedule::default();
         schedule.add_systems(simulate_players);
@@ -359,8 +360,7 @@ impl Lab {
 
         let decided = self.decide_bots();
         let before = self.riders();
-        let mut causes = Vec::with_capacity(before.len());
-        for ((rider, view), decided) in self.riders.iter().zip(&before).zip(decided) {
+        for (rider, decided) in self.riders.iter().zip(decided) {
             // Inputs are one-shot: a tick without a command must hold, or a
             // lingering turn would spin the rider.
             let input = match (decided, rider.commands.get(&tick)) {
@@ -373,13 +373,13 @@ impl Lab {
                 .get_mut::<ActionState<PlayerInput>>(rider.entity)
                 .unwrap()
                 .0 = input;
-            // Death cleanup clears trails, so the cause must be read now.
-            causes.push(view.alive.then(|| self.front_cause(view.index, input)));
         }
 
         self.schedule.run(&mut self.world);
+        // The sim reports what each dying rider was draining against.
+        let deaths = std::mem::take(&mut self.world.resource_mut::<DeathLog>().0);
 
-        for (index, (before, cause)) in before.into_iter().zip(causes).enumerate() {
+        for (index, before) in before.into_iter().enumerate() {
             let after = self.view(index);
             if !before.alive {
                 continue;
@@ -399,7 +399,11 @@ impl Lab {
                 rider.was_colliding = false;
                 rider.was_sliding = false;
                 rider.respawn_at = rider.respawn_after.map(|after| tick + after.max(1));
-                let cause = cause.flatten().unwrap_or_else(|| "unknown".into());
+                let entity = self.riders[index].entity;
+                let cause = deaths
+                    .iter()
+                    .find(|d| d.victim == entity)
+                    .map_or_else(|| "unknown".into(), |d| self.cause_label(d.cause));
                 self.push(
                     index,
                     EventKind::Death {
@@ -484,72 +488,20 @@ impl Lab {
         });
     }
 
-    /// What the front sensor faces this tick, using the same obstacle model
-    /// and self-exclusions as the sim (turn applied before sensing).
-    fn front_cause(&self, index: usize, input: PlayerInput) -> Option<String> {
-        let me = &self.riders[index];
-        let position = self.world.get::<Position>(me.entity).unwrap().0;
-        let mut heading = self.world.get::<Direction>(me.entity).unwrap().0;
-        match input {
-            PlayerInput::TurnLeft => heading = rotate_left(heading),
-            PlayerInput::TurnRight => heading = rotate_right(heading),
-            _ => {}
-        }
-        let mut groups: Vec<(String, Vec<physics::Segment>)> = vec![(
-            "wall".into(),
-            self.walls
-                .iter()
-                .map(|w| physics::Segment {
-                    a: Vec2::new(w[0], w[1]),
-                    b: Vec2::new(w[2], w[3]),
-                    owner: None,
-                    from_head: 0,
-                })
-                .collect(),
-        )];
-        for (other_index, other) in self.riders.iter().enumerate() {
-            if !self.world.get::<IsAlive>(other.entity).unwrap().0 {
-                continue;
+    /// Trace label for a death cause reported by the sim.
+    fn cause_label(&self, cause: DeathCause) -> String {
+        match cause {
+            DeathCause::Wall => "wall".into(),
+            DeathCause::OwnTrail => "own_trail".into(),
+            DeathCause::Trail(owner) => {
+                let name = self
+                    .riders
+                    .iter()
+                    .find(|r| r.entity == owner)
+                    .map_or("?", |r| r.name.as_str());
+                format!("trail:{name}")
             }
-            let mut trail = self.world.get::<Trail>(other.entity).unwrap().clone();
-            if other_index == index && input != PlayerInput::None {
-                trail.turn(position);
-            }
-            let n = trail.0.len();
-            let owner = Some(other.entity.to_bits());
-            let label = if other_index == index {
-                "own_trail".into()
-            } else {
-                format!("trail:{}", other.name)
-            };
-            let segments = trail
-                .0
-                .windows(2)
-                .enumerate()
-                .map(|(i, p)| physics::Segment {
-                    a: p[0],
-                    b: p[1],
-                    owner,
-                    from_head: n - 2 - i,
-                })
-                .collect();
-            groups.push((label, segments));
         }
-        groups
-            .into_iter()
-            .map(|(label, segments)| {
-                let distance = physics::nearest(
-                    &segments,
-                    Some(me.entity.to_bits()),
-                    position,
-                    heading,
-                    false,
-                );
-                (label, distance)
-            })
-            .filter(|(_, distance)| distance.is_finite())
-            .min_by(|a, b| a.1.total_cmp(&b.1))
-            .map(|(label, _)| label)
     }
 
     /// Mirror of the server's `try_respawn` reset: same safe-spawn inputs
