@@ -1,6 +1,9 @@
 # Tron Zero Rust — Style Spec
 
-Locked from quiz with JH (2026-10-03). High-density, enforce via `cargo fmt` + `clippy`.
+Locked from quiz with JH (2026-10-03). Code style only; architecture rules
+(determinism, system order, replication, message split, module homes) live
+in `AGENTS.md`. Not checked by CI: run `cargo fmt` and `clippy` before
+committing (§7).
 
 ## 1. Comments — short, only when not obvious
 
@@ -115,44 +118,6 @@ pub fn rotate_left(v: Vec2) -> Vec2 {
 
 - `warn!` = denied/degraded, `info!` = lifecycle (join/leave/spawn accepted),
   `debug!` = stale/ignorable per-tick noise.
-- Never `println!`/`eprintln!` in `crates/` — use `tracing` only.
-
-## 10. Simulation determinism — same inputs, same sim
-
-- Shared sim: `f32`/`Vec2` only, headings as ±X/±Y swaps (no trig at turn
-  sites), no `rand`, no wall-clock, no `HashMap` iteration without sort.
-- Spawn from seeded RNG (`spawn_from_seed`, `find_safe_spawn` with seed).
-- Randomness (bots, rotation) stays server-side outside the predicted
-  snapshot, or is seeded + replicated.
-
-## 11. System ordering — declare order vs simulate_players
-
-- Bevy runs systems in parallel unless chained. New `FixedUpdate` systems
-  declare `.after(simulate_players)` / `.before(...)` with a why-comment.
-- Keep the obstacle-snapshot build atomic before mutation; turn → sense →
-  move → rubber order is load-bearing.
-
-## 12. Replication — register every replicated component
-
-- New component → one line in `protocol.rs` + why: `predict()` (client
-  guesses + rolls back: position, rubber), `replicate_once()` (spawn-time:
-  id, color), or local-only (`ActionState<PlayerInput>`).
-- Discrete `step` interpolation for cardinal turns/trail heads.
-
-## 13. Message / Event / Input split
-
-- `PlayerInput` = per-tick Lightyear Input (feeds prediction and rollback
-  replay; keep small). For humans the server ignores it.
-- Human turns are `TurnCommand`s in unreliable `TurnBatch` messages, answered
-  by unreliable `TurnAck`s. `SessionHello/HelloReply`, `SessionRequest/Reply`
-  and `RespawnRequest/Reply` are ordered-reliable Lightyear Messages (not
-  replayed). Never carry a one-shot action in an input.
-- Every new message gets a per-link budget in `server/budget.rs` if a client
-  can send it freely.
-
-## 14. Module home — sim stays in shared/
-
-- `shared/`: pure ECS (`components/`, `systems/`, `spatial/`, `trail/`,
-  `math.rs`, `spawn.rs`, `protocol.rs`). No rendering, no HTTP, no `rand`.
-- `server/`: bot AI, respawn/auth, manager HTTP. Only place with secrets.
-- `client/`: render, UI, input, audio, connection. Only place with `egui`.
+- Never `println!`/`eprintln!` in `crates/` — use `tracing` only. One
+  exception: a binary's `main` may `eprintln!` a fatal error raised before
+  its log subscriber exists (`tracing` would drop it silently).

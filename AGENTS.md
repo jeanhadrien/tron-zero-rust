@@ -15,13 +15,13 @@ manually (Space/Enter).
 - **Networking:** Lightyear 0.28 — server-authoritative, tick-based, client prediction + rollback, state replication. One server entity carries two transports: **raw UDP** for the desktop client (default `0.0.0.0:5000`, env `PORT`; unauthenticated, unencrypted) and **WebTransport** for browsers (UDP `WEB_PORT`, default 5001; self-signed ECDSA cert pinned by the `certHash` the server announces). Lightyear netcode connect tokens for the UDP path are planned, not wired.
 - **Client UI:** `bevy_egui` (menu, settings, server browser via `ehttp`, HUD, death overlay). Rendering is Bevy 2D.
 - **Lobby:** the server announces itself over HTTP to `server-manager/` (Bun + Express, in this repo): register, heartbeat, unregister, with a per-room bearer token.
-- **Other:** `serde` + `postcard` (wire), `tracing` (never `println!` in `crates/` non-test code), `rand` (bot spawns and the client's network simulator only, never in the sim).
+- **Other:** `serde` + `postcard` (wire), `tracing` (never `println!` in `crates/` non-test code; see `STYLE.md` §9), `rand` (bot spawns and the client's network simulator only, never in the sim).
 
 ## Workspace layout
 
 `crates/` (all lib + bin pairs keep logic in the lib so `nettest` can run the real apps):
 
-- **`shared/` (lib)** — the simulation core and wire protocol. Pure Bevy ECS: no rendering, no wall clock. Both sides run `simulate_players` at **120 Hz** (`TICK_HZ`). `physics.rs` (`step_rider`, pure), `constants.rs` (gameplay numbers), `systems/` (turn → sense → move → rubber; order is load-bearing), `trail/`, `spawn.rs`, `protocol.rs` (components, messages, channels, `PROTOCOL_ID`, turn constants), `components/`.
+- **`shared/` (lib)** — the simulation core and wire protocol. Pure Bevy ECS: no rendering, no wall clock. Both sides run `simulate_players` at **120 Hz** (`TICK_HZ`). `physics.rs` (`step_rider`, pure), `constants.rs` (gameplay numbers), `systems/` (turn → sense → move → rubber; order is load-bearing), `components/` (incl. `trail.rs`, the rollbackable trail), `spawn.rs`, `math.rs` (rotations, arena walls, seeded spawn), `polyline.rs` (render-only arc-length helpers), `probe.rs` (UDP server-discovery datagram), `protocol.rs` (components, messages, channels, `PROTOCOL_ID`, turn constants).
 - **`bots/` (lib)** — bot brain over a `WorldSnapshot` (sensing, memory, forecast, territory, strategies, Elo knobs). Deterministic: no `rand`, no wall clock. Shared by the server and the lab.
 - **`server/` (lib + bin)** — headless authoritative server. `add_core` (lib.rs) wires Lightyear and the chain `handle_respawns → apply_turn_commands → simulate_players`; `main.rs` adds bots, logging and the announcer. Modules: `admission` (hello handshake, capacity), `session` (heartbeat/leave/lease), `turns` (sequenced turn commands, acks), `budget` (per-link abuse limits), `systems` (connect/disconnect, arena, respawn queue), `announce` (manager HTTP), `bot/` (ECS glue).
 - **`client/` (lib + bin)** — desktop client (UDP) and browser client (wasm32, WebTransport; `platform.rs` holds the target splits, build with `web/build.ps1` or `web/build.sh`, design in `docs/specs/web.md`). `connection` (lifecycle, readiness, autoconnect, quit), `input/` (keyboard queue, `TurnOutbox` redundant delivery), `menu`/`settings`/`browser`/`config` (UI, key bindings, room list, persisted preferences), `sim` (latency simulator), `render/` (arena, trails, riders, camera, HUD, death, bot debug).
@@ -43,6 +43,16 @@ Implemented contract and measurements: `docs/specs/netcode-design.md`. Open item
 
 120 ticks/s, base speed 360 u/s, 2000x2000 arena, one turn per tick, trail cap `TRAIL_MAX_LENGTH` (2400), rubber max 120 with cubic-in-cruise-speed drain and slow regen, Zeno-style slowdown within 12 units of a front obstacle, capped inertial speed (`MAX_SPEED_MULT` 2.0) fed by grinding within `SLIDE_DISTANCE` of others' trails (own trail never grinds; arena walls pay 0.4x), deterministic spawn/safe-respawn search, manual human respawn only. Sim arithmetic uses `+ - * /` only (no `powi`/`exp`) so client and server stay bit-identical.
 
+## Architecture rules
+
+Code style (comments, newtypes, errors, constants, logging, fmt/clippy) is in `STYLE.md`. These rules are about where code goes and how it plugs into the sim:
+
+- **Determinism:** the shared sim uses `f32`/`Vec2` only, headings as ±X/±Y swaps (no trig at turn sites), no `rand`, no wall clock, no unsorted `HashMap` iteration. Spawns come from a seed (`spawn_from_seed`, `find_safe_spawn`). Other randomness (bots, rotation) stays server-side outside the predicted state, or is seeded and replicated.
+- **System order:** Bevy runs unchained systems in parallel. A new `FixedUpdate` system declares `.after(simulate_players)` / `.before(...)` with a comment saying why. Build the obstacle snapshot in one piece before any mutation.
+- **Replication:** every replicated component gets one line in `protocol.rs` with its reason: `predict()` (client guesses and rolls back: position, rubber), `replicate_once()` (spawn-time: id, color), or local-only (`ActionState<PlayerInput>`). Cardinal turns and trail heads use discrete `step` interpolation.
+- **Messages vs inputs:** never carry a one-shot action in `PlayerInput`; it is a Lightyear message. Every message a client can send freely gets a per-link budget in `server/budget.rs`.
+- **Module homes:** `shared/` has no rendering, HTTP or `rand`. `server/` holds bot glue, respawn/auth and manager HTTP, and is the only place with secrets. `client/` holds render, UI, input and connection, and is the only place with `egui`.
+
 ## Dev loops (details in `docs/guides/dev.md`)
 
 - `cargo test -p tron-zero-shared` — sim core (unit, property, rollback); fast.
@@ -63,7 +73,7 @@ Implemented contract and measurements: `docs/specs/netcode-design.md`. Open item
 - `server-manager/README.md` — lobby API and Cloud Run deployment.
 - `docs/specs/web.md` — browser client and WebTransport decisions; `web/README.md` — build, serve, deploy.
 - `deploy/gce/` — game server VM (Container-Optimized OS) on GCP; image via `cloudbuild.server.yaml`.
-- `PLAN.md` — original rewrite plan; **current code wins** (see its top note). `EXPLORATION.md` (Armagetron ideas), `BOT-AI-*.md` (bot research) — not committed work. `STYLE.md` — enforced style (fmt + clippy `-D warnings`).
+- `PLAN.md` — original rewrite plan; **current code wins** (see its top note). `EXPLORATION.md` (Armagetron ideas), `BOT-AI-*.md` (bot research) — not committed work. `STYLE.md` — code style; must pass fmt + clippy `-D warnings` (not checked by CI).
 
 # Agent (you)
 
