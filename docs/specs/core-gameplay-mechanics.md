@@ -54,8 +54,16 @@ The simulation takes an obstacle snapshot before advancing riders each tick. A
 trail cleared on death stops blocking on the following tick. Unlike the original
 JS next-update death guard, rubber depletion disables the rider immediately.
 Movement is also clamped short of sensed obstacles to prevent high-speed
-tunneling through existing geometry. Simultaneous newly grown trail intersections
-and head-to-head movement are not yet swept against each other.
+tunneling through existing geometry. Trail grown during the tick is invisible to
+that snapshot, so a second pass sweeps every rider's movement this tick against
+the others': at a crossing, the rider who gets there first (by fraction of the
+tick) keeps going and the later one stops just short of the new trail; equal
+arrival and head-on meetings stop both short of the meeting point, where either
+can still turn away. Being stopped costs the same rubber and brake as a tick
+facing an obstacle, so two riders tied at a crossing play chicken rather than
+wait forever. A rider stopped before a crossing lays no trail there.
+Contact tolerances are world-space (0.001 units), so a long straight never
+reaches past its corner.
 
 ## 6. Human Death & Manual Respawn (Rust MVP)
 

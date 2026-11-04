@@ -500,3 +500,161 @@ fn seeded_spawns_are_repeatable_distinct_and_inside_centered_arena() {
     assert!(a.0.y.abs() <= ARENA_HEIGHT * 0.5 - 100.0);
     assert_eq!(a.1.length_squared(), 1.0);
 }
+
+/// Two riders whose trails end at their positions, coming from 50 units back.
+fn riders_with_tails(world: &mut World, riders: [(Vec2, Vec2); 2]) -> [Entity; 2] {
+    riders.map(|(position, direction)| {
+        let entity = cycle(world, position, direction);
+        *world.get_mut::<Trail>(entity).unwrap() =
+            Trail(vec![position - direction * 50.0, position]);
+        entity
+    })
+}
+
+#[test]
+fn same_tick_crossing_blocks_the_later_arrival() {
+    let (mut world, mut schedule) = setup();
+    // A reaches (0,0) a third into the tick, B two thirds in.
+    let [a, b] = riders_with_tails(
+        &mut world,
+        [
+            (Vec2::new(-1.0, 0.0), Vec2::X),
+            (Vec2::new(0.0, -2.0), Vec2::Y),
+        ],
+    );
+    schedule.run(&mut world);
+    near(world.get::<Position>(a).unwrap().0.x, 2.0);
+    let pb = world.get::<Position>(b).unwrap().0;
+    assert!(
+        pb.y < 0.0 && pb.y > -0.01,
+        "B crossed or stopped early: {pb}"
+    );
+    assert!(world.get::<IsColliding>(b).unwrap().0);
+    assert!(world.get::<Rubber>(b).unwrap().0 < BASE_RUBBER);
+    for _ in 0..5 {
+        schedule.run(&mut world);
+    }
+    assert!(world.get::<Position>(b).unwrap().0.y < 0.0);
+    // Stopped just short of A's trail, B can still turn along it.
+    world.get_mut::<ActionState<PlayerInput>>(b).unwrap().0 = PlayerInput::TurnLeft;
+    schedule.run(&mut world);
+    world.get_mut::<ActionState<PlayerInput>>(b).unwrap().0 = PlayerInput::None;
+    for _ in 0..120 {
+        schedule.run(&mut world);
+    }
+    assert!(world.get::<IsAlive>(b).unwrap().0, "B could not turn away");
+    assert!(world.get::<IsAlive>(a).unwrap().0);
+}
+
+#[test]
+fn equal_arrival_at_a_crossing_blocks_both() {
+    let (mut world, mut schedule) = setup();
+    let [a, b] = riders_with_tails(
+        &mut world,
+        [
+            (Vec2::new(-1.0, 0.0), Vec2::X),
+            (Vec2::new(0.0, -1.0), Vec2::Y),
+        ],
+    );
+    schedule.run(&mut world);
+    assert!(world.get::<Position>(a).unwrap().0.x < 0.0);
+    assert!(world.get::<Position>(b).unwrap().0.y < 0.0);
+    // Neither yields: both stay stopped, drain rubber and die together.
+    for _ in 0..120 {
+        schedule.run(&mut world);
+    }
+    assert!(!world.get::<IsAlive>(a).unwrap().0);
+    assert!(!world.get::<IsAlive>(b).unwrap().0);
+}
+
+#[test]
+fn equal_arrival_turning_away_survives_and_the_other_rider_goes_on() {
+    let (mut world, mut schedule) = setup();
+    let [a, b] = riders_with_tails(
+        &mut world,
+        [
+            (Vec2::new(-1.0, 0.0), Vec2::X),
+            (Vec2::new(0.0, -1.0), Vec2::Y),
+        ],
+    );
+    schedule.run(&mut world);
+    world.get_mut::<ActionState<PlayerInput>>(a).unwrap().0 = PlayerInput::TurnRight;
+    schedule.run(&mut world);
+    world.get_mut::<ActionState<PlayerInput>>(a).unwrap().0 = PlayerInput::None;
+    for _ in 0..120 {
+        schedule.run(&mut world);
+    }
+    assert!(world.get::<IsAlive>(a).unwrap().0, "A could not turn away");
+    assert!(world.get::<IsAlive>(b).unwrap().0);
+    assert!(world.get::<Position>(b).unwrap().0.y > 100.0);
+}
+
+#[test]
+fn boosted_head_on_stops_both_short_and_a_turn_still_escapes() {
+    let (mut world, mut schedule) = setup();
+    let [a, b] = riders_with_tails(
+        &mut world,
+        [
+            (Vec2::new(0.0, 0.0), Vec2::X),
+            (Vec2::new(10.0, 0.0), Vec2::NEG_X),
+        ],
+    );
+    for e in [a, b] {
+        world.get_mut::<TargetSpeedMult>(e).unwrap().0 = 2.0;
+    }
+    schedule.run(&mut world);
+    let (xa, xb) = (
+        world.get::<Position>(a).unwrap().0.x,
+        world.get::<Position>(b).unwrap().0.x,
+    );
+    assert!(xa < 5.0 && xb > 5.0, "riders overlapped: {xa} {xb}");
+    world.get_mut::<ActionState<PlayerInput>>(a).unwrap().0 = PlayerInput::TurnLeft;
+    schedule.run(&mut world);
+    world.get_mut::<ActionState<PlayerInput>>(a).unwrap().0 = PlayerInput::None;
+    for _ in 0..120 {
+        schedule.run(&mut world);
+    }
+    assert!(
+        world.get::<IsAlive>(a).unwrap().0,
+        "turning away did not escape"
+    );
+    assert!(!world.get::<IsAlive>(b).unwrap().0);
+}
+
+#[test]
+fn long_segments_do_not_reach_past_their_corner() {
+    let (mut world, mut schedule) = setup();
+    let b = cycle(&mut world, Vec2::new(500.0, 300.0), Vec2::Y);
+    *world.get_mut::<Trail>(b).unwrap() = Trail(vec![
+        Vec2::new(-500.0, 0.0),
+        Vec2::new(500.0, 0.0),
+        Vec2::new(500.0, 300.0),
+    ]);
+    let a = cycle(&mut world, Vec2::new(500.5, -11.0), Vec2::Y);
+    for _ in 0..5 {
+        schedule.run(&mut world);
+        assert!(!world.get::<IsColliding>(a).unwrap().0);
+    }
+}
+
+#[test]
+fn a_rider_stopped_before_a_crossing_lays_no_trail_there() {
+    use crate::physics::{Move, resolve_crossings};
+    let mv = |x: f32, y: f32, direction: Vec2| Move {
+        from: Vec2::new(x, y),
+        direction,
+        length: 3.0,
+    };
+    // B stops A at (0,0) a sixth into the tick. A alone would cross (1,0) at
+    // half-tick, ahead of C (0.8), and stop C; stopped earlier, it does not.
+    let a = mv(-0.5, 0.0, Vec2::X);
+    let b = mv(0.0, -0.3, Vec2::Y);
+    let c = mv(1.0, -2.4, Vec2::Y);
+    let lengths = resolve_crossings(&[a, b, c]);
+    assert!(lengths[0].is_some_and(|l| l < 0.5));
+    assert_eq!(lengths[1], None);
+    assert_eq!(lengths[2], None);
+    let without_b = resolve_crossings(&[a, c]);
+    assert_eq!(without_b[0], None);
+    assert!(without_b[1].is_some_and(|l| l < 2.4));
+}

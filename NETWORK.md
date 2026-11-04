@@ -50,11 +50,14 @@ numbers are in `docs/specs/netcode-design.md`; the headless harness is
 - [ ] **Bot self-trapping.** 22 of the 23 deaths in the `bot_arena` and
   `bot_arena8` goldens are `own_trail`; the brain boxes itself in. Tuning the
   strategies changes those goldens (bless after intent).
-- [ ] Collision fairness (`crates/shared/src/systems/player.rs`): simultaneous
-  newly grown trail crossings and head-to-head movement are not swept against
-  each other; behaviour with missing/stale opponent history is "omit that
-  opponent"; equal-tick ties, near-contact tolerances and cross-platform float
-  determinism are unverified.
+- [ ] Collision fairness follow-ups (`crates/shared/src/systems/player.rs`):
+  same-tick crossings, head-on meetings and endpoint tolerances are resolved.
+  Left: client prediction reads an opponent's newest confirmed trail, about
+  one RTT behind the predicted tick, so the own rider can locally drive
+  through that stretch until corrected (extrapolating the opponent head is
+  the candidate fix); x86_64/wasm32 bit-identity is argued (scalar `+ - * /`,
+  correctly rounded sqrt, no FMA), not measured (run the lab goldens on
+  wasm32-wasip1 to verify).
 - [ ] Diagnostics: structured tracing correlating session, command, intended
   tick, applied/rejected and rollback range (the server `TurnLog` and harness
   traces exist; client side and rollback ranges do not); RTT/jitter/loss,

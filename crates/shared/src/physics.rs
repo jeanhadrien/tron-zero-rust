@@ -10,6 +10,10 @@ use glam::Vec2;
 use crate::*;
 
 const EPSILON: f32 = 0.001;
+/// How far short of another rider's new trail a crossing stops a rider. It
+/// must stay well outside `ray_hit`'s `EPSILON` bands, or a turn from there
+/// would read as collinear with that trail and could never escape.
+const STOP_MARGIN: f32 = 10.0 * EPSILON;
 
 /// A ray blocker: an arena wall or a rider trail segment.
 #[derive(Clone, Copy, Debug)]
@@ -38,7 +42,10 @@ pub fn ray_hit(origin: Vec2, direction: Vec2, a: Vec2, b: Vec2) -> Option<f32> {
     }
     let distance = offset.perp_dot(edge) / cross;
     let along = offset.perp_dot(direction) / cross;
-    if distance >= -EPSILON && (-EPSILON..=1.0 + EPSILON).contains(&along) {
+    // `along` is a fraction of the edge, so the endpoint slack is scaled back
+    // to world units: a long straight must not reach past its corner.
+    let slack = EPSILON / edge.length();
+    if distance >= -EPSILON && (-slack..=1.0 + slack).contains(&along) {
         Some(distance.max(0.0))
     } else {
         None
@@ -183,8 +190,7 @@ pub fn step_rider(
     let step = if colliding {
         let fraction = front / SLOW_DOWN_DISTANCE;
         let ratio = fraction * fraction;
-        let load = 1.0 + cruise;
-        rubber -= RUBBER_DRAIN * load * load * load;
+        rubber -= crash_drain(cruise);
         // Zeno decay may never exceed cruise speed: at the zone edge it would
         // otherwise lurch the rider forward (~12 u in one tick at base speed).
         (front * ratio)
@@ -217,7 +223,7 @@ pub fn step_rider(
     let sliding = grind > 0.0;
     let goal = 1.0 + (MAX_SPEED_MULT - 1.0) * grind;
     target_speed = if colliding {
-        (cruise - CRASH_BRAKE).max(1.0)
+        crash_brake(cruise)
     } else if cruise < goal {
         (cruise + SLIDE_ACCEL).min(goal)
     } else {
@@ -237,4 +243,122 @@ pub fn step_rider(
         colliding,
         died: false,
     }
+}
+
+/// Rubber one tick stuck facing an obstacle costs at cruise multiplier `cruise`.
+fn crash_drain(cruise: f32) -> f32 {
+    let load = 1.0 + cruise;
+    RUBBER_DRAIN * load * load * load
+}
+
+/// Cruise multiplier after one tick stuck facing an obstacle.
+fn crash_brake(cruise: f32) -> f32 {
+    (cruise - CRASH_BRAKE).max(1.0)
+}
+
+/// `(target_speed, rubber)` for a rider that entered the tick with `cruise`
+/// and `rubber` and was stopped by `resolve_crossings`: the same cost as a
+/// tick spent facing an obstacle, replacing whatever `step_rider` decided.
+pub fn crash(cruise: f32, rubber: f32) -> (f32, f32) {
+    (
+        crash_brake(cruise),
+        (rubber - crash_drain(cruise)).clamp(0.0, BASE_RUBBER),
+    )
+}
+
+/// One rider's straight movement during a tick: `length` units along
+/// `direction` (unit, cardinal) from `from`.
+#[derive(Clone, Copy, Debug)]
+pub struct Move {
+    pub from: Vec2,
+    pub direction: Vec2,
+    pub length: f32,
+}
+
+/// Two moves meeting at `time` (fraction of the tick): `arrive[k]` is when
+/// `riders[k]` reaches the meeting point, and `blocks[k]` whether it is the
+/// one stopped there.
+struct Meeting {
+    time: f32,
+    riders: [usize; 2],
+    arrive: [f32; 2],
+    blocks: [bool; 2],
+}
+
+/// Sweeps this tick's moves against each other: geometry grown during the tick
+/// is invisible to the start-of-tick snapshot `step_rider` senses against.
+///
+/// Whoever reaches a crossing first keeps going and the later rider stops just
+/// short of the new trail; equal arrivals and head-on meetings stop both. A
+/// rider that was itself stopped before a crossing never lays trail there.
+/// Returns each move's new length when it was shortened. Order-independent,
+/// and `+ - * /` only like the rest of the sim.
+pub fn resolve_crossings(moves: &[Move]) -> Vec<Option<f32>> {
+    let mut meetings = Vec::new();
+    for i in 0..moves.len() {
+        for j in i + 1..moves.len() {
+            meetings.extend(meeting(moves, i, j));
+        }
+    }
+    // Stops happen in time order, so each meeting sees every earlier stop.
+    // Meetings at the same time commute (a stop at `t` only matters for
+    // arrivals after `t`), so their relative order is irrelevant.
+    meetings.sort_by(|a, b| a.time.total_cmp(&b.time));
+    let mut stops: Vec<Option<f32>> = vec![None; moves.len()];
+    let reaches = |stops: &[Option<f32>], rider: usize, time: f32| {
+        stops[rider].is_none_or(|stop| stop > time)
+    };
+    for m in &meetings {
+        if !(0..2).all(|k| reaches(&stops, m.riders[k], m.arrive[k])) {
+            continue;
+        }
+        for k in (0..2).filter(|&k| m.blocks[k]) {
+            stops[m.riders[k]] = Some(m.time);
+        }
+    }
+    stops
+        .iter()
+        .zip(moves)
+        .map(|(stop, m)| stop.map(|t| (m.length * t - STOP_MARGIN).max(0.0)))
+        .collect()
+}
+
+/// Where and when moves `i` and `j` meet, if their new segments touch.
+fn meeting(moves: &[Move], i: usize, j: usize) -> Option<Meeting> {
+    let (a, b) = (moves[i], moves[j]);
+    if a.length <= 0.0 || b.length <= 0.0 {
+        // A rider that did not move is a point already in the snapshot.
+        return None;
+    }
+    let offset = b.from - a.from;
+    let cross = a.direction.perp_dot(b.direction);
+    if cross.abs() <= EPSILON {
+        // Head-on along one line: they close the gap together.
+        let gap = offset.dot(a.direction);
+        let closing = a.length + b.length;
+        let collinear = offset.perp_dot(a.direction).abs() <= EPSILON;
+        if !collinear || a.direction.dot(b.direction) >= 0.0 || gap <= 0.0 || closing < gap {
+            return None;
+        }
+        let time = gap / closing;
+        return Some(Meeting {
+            time,
+            riders: [i, j],
+            arrive: [time, time],
+            blocks: [true, true],
+        });
+    }
+    // Perpendicular: each rider's distance to the crossing point.
+    let along_a = offset.perp_dot(b.direction) / cross;
+    let along_b = offset.perp_dot(a.direction) / cross;
+    if !(0.0..=a.length).contains(&along_a) || !(0.0..=b.length).contains(&along_b) {
+        return None;
+    }
+    let arrive = [along_a / a.length, along_b / b.length];
+    Some(Meeting {
+        time: arrive[0].max(arrive[1]),
+        riders: [i, j],
+        arrive,
+        blocks: [arrive[0] >= arrive[1], arrive[1] >= arrive[0]],
+    })
 }

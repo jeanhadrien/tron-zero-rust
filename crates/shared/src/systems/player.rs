@@ -4,7 +4,7 @@ use bevy_ecs::{prelude::*, query::QueryData};
 use glam::Vec2;
 use lightyear::prelude::{ConfirmedHistory, LocalTimeline, Predicted};
 
-use crate::physics::{RiderState, Segment, step_rider};
+use crate::physics::{Move, RiderState, Segment, crash, resolve_crossings, step_rider};
 use crate::*;
 
 #[derive(Resource, Default, Clone, Copy, Debug, PartialEq, Eq)]
@@ -75,7 +75,8 @@ pub fn simulate_players(
     }
     for player in &players.p0() {
         let (trail, alive) = if *role == SimulationRole::Client && !player.predicted {
-            // During rollback never use an opponent's future rendered state.
+            // Never use an opponent's rendered (interpolated) state: read its
+            // newest confirmed state at or before the tick being simulated.
             if let Some(tick) = tick {
                 let Some(trail) = player.trail_history.and_then(|h| h.get_present(tick)) else {
                     continue;
@@ -102,6 +103,8 @@ pub fn simulate_players(
         }));
     }
 
+    let mut moved = Vec::new();
+    let mut moves = Vec::new();
     for mut player in &mut players.p1() {
         if !role.simulates(player.predicted) {
             continue;
@@ -120,6 +123,7 @@ pub fn simulate_players(
         if player.trail.0.is_empty() {
             *player.trail = Trail::new(player.position.0);
         }
+        let (cruise, rubber) = (player.target.0, player.rubber.0);
         let outcome = step_rider(
             Some(player.entity.to_bits()),
             RiderState {
@@ -145,7 +149,43 @@ pub fn simulate_players(
         // but preserves accumulated boost for escape; boost affects next tick.
         player.speed.0 = outcome.speed;
         player.velocity.0 = outcome.direction * (outcome.step * 1000.0);
+        moved.push((player.entity, cruise, rubber));
+        moves.push(Move {
+            from: player.position.0,
+            direction: outcome.direction,
+            length: outcome.step,
+        });
         player.position.0 = outcome.position;
+    }
+
+    // Second pass: trails grown this tick, which the snapshot could not see.
+    // On clients only the own rider moves here, so this is server-side in
+    // practice; a client that crosses an opponent mid-tick is corrected.
+    let mut cycles = players.p1();
+    // Being stopped is a collision: it costs rubber like facing a wall, or two
+    // riders tied at a crossing would wait there forever, regenerating.
+    let stops = resolve_crossings(&moves);
+    for ((&(entity, cruise, rubber), m), length) in moved.iter().zip(&moves).zip(stops) {
+        let Some(length) = length else {
+            continue;
+        };
+        let Ok(mut player) = cycles.get_mut(entity) else {
+            continue;
+        };
+        let (target, rubber) = crash(cruise, rubber);
+        if rubber == 0.0 {
+            disable(&mut player);
+            continue;
+        }
+        player.target.0 = target;
+        player.rubber.0 = rubber;
+        player.sliding.0 = false;
+        let position = m.from + m.direction * length;
+        player.position.0 = position;
+        player.velocity.0 = m.direction * (length * 1000.0);
+        player.speed.0 = length / (BASE_SPEED * TICK_SECS);
+        player.colliding.0 = true;
+        player.trail.advance(position, TRAIL_MAX_LENGTH);
     }
 }
 
