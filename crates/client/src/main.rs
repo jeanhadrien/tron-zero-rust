@@ -30,6 +30,7 @@ fn main() {
     app.insert_resource(saved.name());
     app.insert_resource(saved.bindings());
     app.insert_resource(saved.theme());
+    app.insert_resource(saved.fx());
     app.insert_resource(browser::ManagerConfig::from_env_and_saved(
         saved.manager_url.clone(),
     ));
@@ -108,6 +109,7 @@ fn main() {
     app.add_systems(Startup, (render::setup_camera, render::spawn_grid));
     app.add_systems(Update, render::apply_world_theme);
     render::add_smoothing(&mut app);
+    render::add_fx(&mut app);
     app.add_systems(
         Update,
         (

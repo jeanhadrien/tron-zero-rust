@@ -7,6 +7,7 @@ use crate::browser::{self, BrowserRow, BrowserState, FetchStatus, ManagerConfig}
 use crate::connection::{AutoConnect, ConnectionPhase, Endpoint, IDLE_STATUS, Session};
 use crate::input::PendingInput;
 use crate::local_scan::LocalServers;
+use crate::render::FxSettings;
 use crate::settings::{
     MAX_KEYS_PER_SIDE, PlayerName, RebindState, TurnBindings, TurnSide, key_label,
 };
@@ -106,6 +107,7 @@ enum UiAction {
     RemoveKey(TurnSide, usize),
     ResetBindings,
     SetTheme(ThemeId),
+    SetEffects(bool),
 }
 
 impl UiAction {
@@ -200,6 +202,7 @@ fn main_screen(
 fn settings_screen(
     ui: &mut egui::Ui,
     theme: &Theme,
+    effects: bool,
     bindings: &TurnBindings,
     rebind: &RebindState,
     action: &mut UiAction,
@@ -219,6 +222,10 @@ fn settings_screen(
             }
         }
     });
+    let mut effects_on = effects;
+    if ui.checkbox(&mut effects_on, "Particle effects").changed() {
+        action.set_once(UiAction::SetEffects(effects_on));
+    }
     ui.separator();
     for (side, title) in [(TurnSide::Left, "Left"), (TurnSide::Right, "Right")] {
         ui.label(
@@ -403,6 +410,7 @@ pub fn menu_ui(
     mut auto: Option<ResMut<AutoConnect>>,
     mut rebind: ResMut<RebindState>,
     mut theme: ResMut<Theme>,
+    mut fx: ResMut<FxSettings>,
     mut browser: ResMut<BrowserState>,
     config: Res<ManagerConfig>,
     servers: Res<LocalServers>,
@@ -456,7 +464,7 @@ pub fn menu_ui(
                         &mut action,
                     ),
                     MenuScreen::Settings => {
-                        settings_screen(ui, &theme, &bindings, &rebind, &mut action)
+                        settings_screen(ui, &theme, fx.enabled, &bindings, &rebind, &mut action)
                     }
                     MenuScreen::Rooms => rooms_screen(
                         ui,
@@ -522,6 +530,7 @@ pub fn menu_ui(
             rebind.error = bindings.remove_key(side, index).err().map(str::to_owned);
         }
         UiAction::SetTheme(id) => *theme = Theme::from_id(id),
+        UiAction::SetEffects(enabled) => fx.enabled = enabled,
         UiAction::ResetBindings => {
             bindings.reset();
             rebind.capturing = None;

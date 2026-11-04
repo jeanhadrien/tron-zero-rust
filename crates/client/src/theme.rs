@@ -76,6 +76,8 @@ pub struct Theme {
     pub dead_rider: Rgb,
     /// Width in pixels of every gizmo line (trails, riders, walls).
     pub line_width: f32,
+    /// How many particles each effect makes (1.0 = baseline).
+    pub fx_scale: f32,
 
     // UI.
     /// Headings, key figures, the player's own name.
@@ -123,6 +125,7 @@ impl Theme {
             dead_trail: Rgb(77, 77, 77),
             dead_rider: Rgb(255, 38, 38),
             line_width: 2.0,
+            fx_scale: 1.0,
             accent: Rgb(0, 255, 204),
             body: Rgb(165, 180, 195),
             text: Rgb(180, 190, 200),
@@ -150,6 +153,7 @@ impl Theme {
             dead_trail: Rgb(55, 65, 75),
             dead_rider: Rgb(255, 60, 40),
             line_width: 2.5,
+            fx_scale: 0.8,
             accent: Rgb(120, 232, 255),
             body: Rgb(140, 180, 200),
             text: Rgb(210, 240, 255),
@@ -177,6 +181,7 @@ impl Theme {
             dead_trail: Rgb(80, 60, 100),
             dead_rider: Rgb(255, 60, 80),
             line_width: 3.0,
+            fx_scale: 1.6,
             accent: Rgb(255, 230, 0),
             body: Rgb(190, 170, 230),
             text: Rgb(245, 235, 255),

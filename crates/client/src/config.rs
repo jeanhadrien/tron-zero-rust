@@ -11,6 +11,7 @@ use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 use shared::protocol::sanitize_name;
 
+use crate::render::FxSettings;
 use crate::settings::{Binding, PlayerName, TurnBindings};
 use crate::theme::{Theme, ThemeId};
 
@@ -31,9 +32,18 @@ pub struct SavedConfig {
     pub manager_url: Option<String>,
     /// Selected visual theme; `None` (or an unknown name) means the default.
     pub theme: Option<ThemeId>,
+    /// Particle effects on or off; `None` means on.
+    pub effects: Option<bool>,
 }
 
 impl SavedConfig {
+    /// Effects setting to start with.
+    pub fn fx(&self) -> FxSettings {
+        FxSettings {
+            enabled: self.effects.unwrap_or(true),
+        }
+    }
+
     /// The theme to start with.
     pub fn theme(&self) -> Theme {
         Theme::from_id(self.theme.unwrap_or_default())
@@ -169,11 +179,14 @@ impl Preferences {
 /// Save name and bindings once they have stopped changing for
 /// [`SAVE_DEBOUNCE_SECS`], and immediately on app exit. The first run is
 /// skipped: resources just inserted from the file count as "changed".
+// Bevy injects each resource as its own parameter; the count is structural.
+#[allow(clippy::too_many_arguments)]
 pub fn persist_preferences(
     mut prefs: ResMut<Preferences>,
     name: Res<PlayerName>,
     bindings: Res<TurnBindings>,
     theme: Res<Theme>,
+    fx: Res<FxSettings>,
     time: Res<Time<Real>>,
     mut exits: MessageReader<AppExit>,
     mut started: Local<bool>,
@@ -182,7 +195,7 @@ pub fn persist_preferences(
     let exiting = exits.read().count() > 0;
     if !*started {
         *started = true;
-    } else if name.is_changed() || bindings.is_changed() || theme.is_changed() {
+    } else if name.is_changed() || bindings.is_changed() || theme.is_changed() || fx.is_changed() {
         prefs.dirty_since = Some(now);
     }
     let Some(since) = prefs.dirty_since else {
@@ -201,6 +214,7 @@ pub fn persist_preferences(
         right_keys: Some(bindings.right.clone()),
         manager_url: prefs.manager_url.clone(),
         theme: Some(theme.id),
+        effects: Some(fx.enabled),
     };
     if let Err(err) = save_to(path, &config) {
         warn!(path = %path.display(), %err, "Could not save preferences");
@@ -229,6 +243,7 @@ mod tests {
             right_keys: Some(bindings.right.clone()),
             manager_url: Some("http://lobby.example:3001".into()),
             theme: Some(ThemeId::Grid82),
+            effects: Some(false),
         };
         save_to(&path, &config).unwrap();
         let loaded = load_from(&path);
@@ -267,6 +282,7 @@ mod tests {
         world.init_resource::<TurnBindings>();
         world.insert_resource(PlayerName("Neo".into()));
         world.init_resource::<Theme>();
+        world.init_resource::<FxSettings>();
         world.insert_resource(Preferences {
             path: Some(path),
             manager_url: None,
@@ -327,6 +343,7 @@ mod tests {
             right_keys: Some(bindings.right),
             manager_url: None,
             theme: None,
+            effects: None,
         };
         assert_eq!(config.bindings(), TurnBindings::default());
         assert_eq!(config.name().0, "Trinity");
