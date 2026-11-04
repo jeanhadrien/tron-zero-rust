@@ -13,13 +13,22 @@ use tron_zero_server::{add_core, add_web, admission, announce, bot, systems, web
 const LOOP_WAIT: std::time::Duration = std::time::Duration::from_millis(1);
 
 fn main() {
+    let mut app = App::new();
+
+    // Headless: no window. Pace the main loop (`LOOP_WAIT`); the default
+    // runner spins flat out and burns a whole core doing nothing. Logging
+    // goes in first: it installs the global subscriber, and every config
+    // warning below would otherwise be dropped silently.
+    app.add_plugins(MinimalPlugins.set(bevy::app::ScheduleRunnerPlugin::run_loop(LOOP_WAIT)));
+    app.add_plugins(bevy::log::LogPlugin::default());
+
     let mut announce_cfg = announce::AnnounceConfig::from_env();
     // Browser players: a WebTransport listener beside the UDP one. A config
     // that cannot work (e.g. WEB_PORT == PORT) stops the server; a failure to
     // load WEB_CERT/WEB_KEY disables only the web side. The room is announced
     // to browsers only once the listener is actually open (see `web`).
     let web_config = web::WebConfig::from_env().unwrap_or_else(|e| {
-        eprintln!("Invalid configuration: {e}");
+        tracing::error!("Invalid configuration: {e}");
         std::process::exit(2);
     });
     let web_endpoint = web_config.and_then(|cfg| match web::WebEndpoint::new(&cfg) {
@@ -54,12 +63,6 @@ fn main() {
         Arc::clone(&announce_handle),
     );
 
-    let mut app = App::new();
-
-    // Headless: no window. Pace the main loop (`LOOP_WAIT`); the default
-    // runner spins flat out and burns a whole core doing nothing.
-    app.add_plugins(MinimalPlugins.set(bevy::app::ScheduleRunnerPlugin::run_loop(LOOP_WAIT)));
-    app.add_plugins(bevy::log::LogPlugin::default());
     app.insert_resource(admission::MaxPlayers(announce_cfg.max_players));
     add_core(&mut app, announce_cfg.port);
     if let Some(endpoint) = web_endpoint {

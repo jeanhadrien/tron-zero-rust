@@ -118,6 +118,6 @@ pub fn rotate_left(v: Vec2) -> Vec2 {
 
 - `warn!` = denied/degraded, `info!` = lifecycle (join/leave/spawn accepted),
   `debug!` = stale/ignorable per-tick noise.
-- Never `println!`/`eprintln!` in `crates/` — use `tracing` only. One
-  exception: a binary's `main` may `eprintln!` a fatal error raised before
-  its log subscriber exists (`tracing` would drop it silently).
+- Never `println!`/`eprintln!` in `crates/` — use `tracing` only. A binary
+  installs its log subscriber before reading config, or early warnings are
+  dropped silently.
