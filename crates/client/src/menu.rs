@@ -10,7 +10,7 @@ use crate::local_scan::LocalServers;
 use crate::settings::{
     MAX_KEYS_PER_SIDE, PlayerName, RebindState, TurnBindings, TurnSide, key_label,
 };
-use crate::theme;
+use crate::theme::{self, Theme, ThemeId};
 use shared::protocol::{MAX_NAME_CHARS, sanitize_name};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -105,6 +105,7 @@ enum UiAction {
     StartCapture(TurnSide, usize),
     RemoveKey(TurnSide, usize),
     ResetBindings,
+    SetTheme(ThemeId),
 }
 
 impl UiAction {
@@ -124,32 +125,37 @@ impl UiAction {
 // palette: near-black navy panel over a dimmed fullscreen backdrop, cyan
 // headings, teal full-width action buttons.
 
-fn heading(ui: &mut egui::Ui, text: &str, size: f32) {
+fn heading(ui: &mut egui::Ui, theme: &Theme, text: &str, size: f32) {
     ui.label(
         egui::RichText::new(text)
             .size(size)
             .strong()
-            .color(theme::CYAN),
+            .color(theme.accent.egui()),
     );
 }
 
-fn body_label(ui: &mut egui::Ui, text: impl Into<String>, size: f32) {
-    ui.label(egui::RichText::new(text).size(size).color(theme::BODY));
+fn body_label(ui: &mut egui::Ui, theme: &Theme, text: impl Into<String>, size: f32) {
+    ui.label(
+        egui::RichText::new(text)
+            .size(size)
+            .color(theme.body.egui()),
+    );
 }
 
 fn main_screen(
     ui: &mut egui::Ui,
+    theme: &Theme,
     phase: ConnectionPhase,
     status: &str,
     name_edit: &mut String,
     local: Option<&Endpoint>,
     action: &mut UiAction,
 ) {
-    heading(ui, "TRON ZERO", 34.0);
-    body_label(ui, status, 16.0);
+    heading(ui, theme, "TRON ZERO", 34.0);
+    body_label(ui, theme, status, 16.0);
     ui.separator();
     ui.horizontal(|ui| {
-        body_label(ui, "Name", 16.0);
+        body_label(ui, theme, "Name", 16.0);
         ui.add_enabled(
             phase == ConnectionPhase::Offline,
             egui::TextEdit::singleline(name_edit)
@@ -193,18 +199,33 @@ fn main_screen(
 
 fn settings_screen(
     ui: &mut egui::Ui,
+    theme: &Theme,
     bindings: &TurnBindings,
     rebind: &RebindState,
     action: &mut UiAction,
 ) {
-    heading(ui, "SETTINGS", 26.0);
+    heading(ui, theme, "SETTINGS", 26.0);
+    ui.separator();
+    ui.label(
+        egui::RichText::new("Theme")
+            .size(16.0)
+            .strong()
+            .color(theme.body.egui()),
+    );
+    ui.horizontal_wrapped(|ui| {
+        for id in ThemeId::ALL {
+            if ui.selectable_label(theme.id == id, id.label()).clicked() {
+                action.set_once(UiAction::SetTheme(id));
+            }
+        }
+    });
     ui.separator();
     for (side, title) in [(TurnSide::Left, "Left"), (TurnSide::Right, "Right")] {
         ui.label(
             egui::RichText::new(title)
                 .size(16.0)
                 .strong()
-                .color(theme::BODY),
+                .color(theme.body.egui()),
         );
         ui.horizontal_wrapped(|ui| {
             for (index, binding) in bindings.keys(side).iter().enumerate() {
@@ -226,7 +247,9 @@ fn settings_screen(
         });
         let len = bindings.keys(side).len();
         if rebind.capturing == Some((side, len)) {
-            ui.label(egui::RichText::new(format!("Press a key for {title}...")).color(theme::BODY));
+            ui.label(
+                egui::RichText::new(format!("Press a key for {title}...")).color(theme.body.egui()),
+            );
         } else if ui
             .add_enabled(len < MAX_KEYS_PER_SIDE, egui::Button::new("Add key"))
             .clicked()
@@ -235,7 +258,7 @@ fn settings_screen(
         }
     }
     if let Some(error) = &rebind.error {
-        ui.colored_label(egui::Color32::RED, error.as_str());
+        ui.colored_label(theme.danger.egui(), error.as_str());
     }
     ui.separator();
     if theme::action_button(ui, "Reset defaults").clicked() {
@@ -246,8 +269,12 @@ fn settings_screen(
     }
 }
 
+// One parameter per piece of state the screen draws; grouping them would only
+// add a struct used in a single place.
+#[allow(clippy::too_many_arguments)]
 fn rooms_screen(
     ui: &mut egui::Ui,
+    theme: &Theme,
     browser: &BrowserState,
     rows: &[BrowserRow],
     config: &ManagerConfig,
@@ -255,10 +282,10 @@ fn rooms_screen(
     now: f64,
     action: &mut UiAction,
 ) {
-    heading(ui, "SERVERS", 26.0);
-    body_label(ui, config.base_url.as_str(), 14.0);
+    heading(ui, theme, "SERVERS", 26.0);
+    body_label(ui, theme, config.base_url.as_str(), 14.0);
     match browser.status {
-        FetchStatus::Loading => body_label(ui, "Loading rooms...", 14.0),
+        FetchStatus::Loading => body_label(ui, theme, "Loading rooms...", 14.0),
         FetchStatus::Loaded => {
             let count = browser.rows.len();
             let noun = if count == 1 { "room" } else { "rooms" };
@@ -269,11 +296,11 @@ fn rooms_screen(
                 ),
                 None => format!("{count} {noun}"),
             };
-            body_label(ui, line, 14.0);
+            body_label(ui, theme, line, 14.0);
         }
         FetchStatus::Failed => {
             ui.colored_label(
-                egui::Color32::RED,
+                theme.danger.egui(),
                 browser.error.as_deref().unwrap_or("Room fetch failed."),
             );
         }
@@ -299,10 +326,10 @@ fn rooms_screen(
                 } else {
                     "Your server is registered - it is listed above as Localhost."
                 };
-                body_label(ui, empty, 14.0);
+                body_label(ui, theme, empty, 14.0);
             }
             for row in rows {
-                room_card(ui, row, phase, action);
+                room_card(ui, theme, row, phase, action);
             }
         });
     if theme::action_button(ui, "Back").clicked() {
@@ -310,20 +337,26 @@ fn rooms_screen(
     }
 }
 
-fn room_card(ui: &mut egui::Ui, row: &BrowserRow, phase: ConnectionPhase, action: &mut UiAction) {
-    theme::card_frame().show(ui, |ui| {
+fn room_card(
+    ui: &mut egui::Ui,
+    theme: &Theme,
+    row: &BrowserRow,
+    phase: ConnectionPhase,
+    action: &mut UiAction,
+) {
+    theme.card_frame().show(ui, |ui| {
         // Pinned local row reads as the preselected default; connecting still
         // takes one explicit click.
         let name_color = if row.is_local {
-            theme::CYAN
+            theme.accent
         } else {
-            theme::BODY
+            theme.body
         };
         ui.label(
             egui::RichText::new(row.room.display_name.as_str())
                 .size(18.0)
                 .strong()
-                .color(name_color),
+                .color(name_color.egui()),
         );
         let bots = match row.room.bot_count {
             0 => String::new(),
@@ -331,6 +364,7 @@ fn room_card(ui: &mut egui::Ui, row: &BrowserRow, phase: ConnectionPhase, action
         };
         body_label(
             ui,
+            theme,
             format!(
                 "{}/{} players{} - {}:{}",
                 row.room.player_count,
@@ -342,7 +376,7 @@ fn room_card(ui: &mut egui::Ui, row: &BrowserRow, phase: ConnectionPhase, action
             14.0,
         );
         if let Some(problem) = &row.problem {
-            ui.colored_label(egui::Color32::RED, problem.as_str());
+            ui.colored_label(theme.danger.egui(), problem.as_str());
         }
         let full = row.room.is_full();
         let can_connect = row.endpoint.is_some() && phase == ConnectionPhase::Offline && !full;
@@ -368,6 +402,7 @@ pub fn menu_ui(
     mut player_name: ResMut<PlayerName>,
     mut auto: Option<ResMut<AutoConnect>>,
     mut rebind: ResMut<RebindState>,
+    mut theme: ResMut<Theme>,
     mut browser: ResMut<BrowserState>,
     config: Res<ManagerConfig>,
     servers: Res<LocalServers>,
@@ -402,27 +437,37 @@ pub fn menu_ui(
         .fixed_pos(viewport.min)
         .interactable(false)
         .show(ctx, |ui| {
-            ui.painter().rect_filled(viewport, 0.0, theme::dim());
+            ui.painter().rect_filled(viewport, 0.0, theme.dim());
         });
     egui::Area::new("menu_panel".into())
         .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
         .show(ctx, |ui| {
-            theme::panel_frame().show(ui, |ui| {
+            theme.panel_frame().show(ui, |ui| {
                 ui.set_min_width(404.0);
-                theme::theme_panel(ui);
+                theme::panel_spacing(ui);
                 ui.vertical_centered(|ui| match screen {
                     MenuScreen::Main => main_screen(
                         ui,
+                        &theme,
                         phase,
                         &status,
                         &mut name_edit,
                         local_endpoint.as_ref(),
                         &mut action,
                     ),
-                    MenuScreen::Settings => settings_screen(ui, &bindings, &rebind, &mut action),
-                    MenuScreen::Rooms => {
-                        rooms_screen(ui, &browser, &rows, &config, phase, now, &mut action)
+                    MenuScreen::Settings => {
+                        settings_screen(ui, &theme, &bindings, &rebind, &mut action)
                     }
+                    MenuScreen::Rooms => rooms_screen(
+                        ui,
+                        &theme,
+                        &browser,
+                        &rows,
+                        &config,
+                        phase,
+                        now,
+                        &mut action,
+                    ),
                 });
             });
         });
@@ -476,6 +521,7 @@ pub fn menu_ui(
         UiAction::RemoveKey(side, index) => {
             rebind.error = bindings.remove_key(side, index).err().map(str::to_owned);
         }
+        UiAction::SetTheme(id) => *theme = Theme::from_id(id),
         UiAction::ResetBindings => {
             bindings.reset();
             rebind.capturing = None;

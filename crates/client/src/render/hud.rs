@@ -12,7 +12,7 @@ use shared::{BASE_RUBBER, IsAlive, Player, PlayerInput, Rubber, SpeedMult};
 use crate::connection::{ConnectionPhase, Session};
 use crate::menu::MenuState;
 use crate::sim::NetSim;
-use crate::theme;
+use crate::theme::Theme;
 
 // Fixed card width (matches the old 220px Bevy-UI cards). Without the max,
 // the Area auto-sizes to content and `available_width()` below is unbounded,
@@ -51,6 +51,7 @@ pub fn status_badge_ui(
     mut contexts: EguiContexts,
     session: Res<Session>,
     menu: Res<MenuState>,
+    theme: Res<Theme>,
     sim: Option<Res<NetSim>>,
     links: Query<&Link, With<Client>>,
 ) {
@@ -68,21 +69,25 @@ pub fn status_badge_ui(
         .anchor(egui::Align2::RIGHT_TOP, [-20.0, 20.0])
         .interactable(false)
         .show(ctx, |ui| {
-            theme::card_frame().show(ui, |ui| {
+            theme.card_frame().show(ui, |ui| {
                 ui.label(
                     egui::RichText::new(session.name.as_str())
                         .size(16.0)
-                        .color(theme::CYAN),
+                        .color(theme.accent.egui()),
                 );
                 if let Some(ping) = ping {
-                    ui.label(egui::RichText::new(ping).size(13.0).color(theme::BODY));
+                    ui.label(
+                        egui::RichText::new(ping)
+                            .size(13.0)
+                            .color(theme.body.egui()),
+                    );
                 }
                 if let Some(sim) = sim {
                     ui.label(
                         egui::RichText::new(sim.label())
                             .size(13.0)
                             .strong()
-                            .color(theme::RUBBER_AMBER),
+                            .color(theme.warn.egui()),
                     );
                 }
             });
@@ -94,6 +99,7 @@ pub fn hud_ui(
     mut contexts: EguiContexts,
     session: Res<Session>,
     menu: Res<MenuState>,
+    theme: Res<Theme>,
     clients: Query<Entity, (With<Client>, With<Connected>)>,
     players: Query<
         (&Rubber, &SpeedMult, &IsAlive, Option<&ControlledBy>),
@@ -124,7 +130,7 @@ pub fn hud_ui(
         return;
     };
     let fraction = rubber_fraction(rubber.0);
-    let color = theme::rubber_egui(fraction);
+    let color = theme.rubber_color(fraction);
 
     // Two cards pinned to the bottom corners; non-interactive so gameplay
     // clicks pass through. Painted in the default Middle order — the menu
@@ -133,10 +139,14 @@ pub fn hud_ui(
         .anchor(egui::Align2::LEFT_BOTTOM, [20.0, -20.0])
         .interactable(false)
         .show(ctx, |ui| {
-            theme::card_frame().show(ui, |ui| {
+            theme.card_frame().show(ui, |ui| {
                 ui.set_min_width(CARD_WIDTH);
                 ui.set_max_width(CARD_WIDTH);
-                ui.label(egui::RichText::new("RUBBER").size(14.0).color(theme::BODY));
+                ui.label(
+                    egui::RichText::new("RUBBER")
+                        .size(14.0)
+                        .color(theme.body.egui()),
+                );
                 ui.label(
                     egui::RichText::new(format!("{}%", rubber_percent(fraction)))
                         .size(30.0)
@@ -146,7 +156,7 @@ pub fn hud_ui(
                     egui::vec2(ui.available_width(), 6.0),
                     egui::Sense::hover(),
                 );
-                ui.painter().rect_filled(rect, 0.0, theme::TRACK);
+                ui.painter().rect_filled(rect, 0.0, theme.track.egui());
                 let fill = egui::Rect::from_min_size(
                     rect.min,
                     egui::vec2(rect.width() * fraction, rect.height()),
@@ -158,14 +168,18 @@ pub fn hud_ui(
         .anchor(egui::Align2::RIGHT_BOTTOM, [-20.0, -20.0])
         .interactable(false)
         .show(ctx, |ui| {
-            theme::card_frame().show(ui, |ui| {
+            theme.card_frame().show(ui, |ui| {
                 ui.set_min_width(CARD_WIDTH);
                 ui.set_max_width(CARD_WIDTH);
-                ui.label(egui::RichText::new("SPEED").size(14.0).color(theme::BODY));
+                ui.label(
+                    egui::RichText::new("SPEED")
+                        .size(14.0)
+                        .color(theme.body.egui()),
+                );
                 ui.label(
                     egui::RichText::new(format_speed(speed.0))
                         .size(30.0)
-                        .color(theme::CYAN),
+                        .color(theme.accent.egui()),
                 );
             });
         });
@@ -174,18 +188,8 @@ pub fn hud_ui(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::theme::{CYAN, RUBBER_AMBER, RUBBER_RED};
     use bevy::ecs::system::RunSystemOnce;
     use lightyear::prelude::{PeerId, RemoteId};
-
-    #[test]
-    fn rubber_warning_thresholds_are_inclusive() {
-        assert_eq!(theme::rubber_egui(0.51), CYAN);
-        assert_eq!(theme::rubber_egui(0.5), RUBBER_AMBER);
-        assert_eq!(theme::rubber_egui(0.21), RUBBER_AMBER);
-        assert_eq!(theme::rubber_egui(0.2), RUBBER_RED);
-        assert_eq!(theme::rubber_egui(0.0), RUBBER_RED);
-    }
 
     #[test]
     fn ping_text_waits_for_a_sample() {

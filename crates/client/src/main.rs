@@ -9,7 +9,7 @@ use bevy_egui::{EguiPlugin, EguiPrimaryContextPass};
 use lightyear::prelude::*;
 use tron_zero_client::{
     add_input_and_prediction, add_network, attach_local_input, browser, config, connection, input,
-    local_scan, menu, render, settings, sim,
+    local_scan, menu, render, settings, sim, theme,
 };
 
 fn main() {
@@ -29,6 +29,7 @@ fn main() {
     let (preferences, saved) = config::Preferences::load();
     app.insert_resource(saved.name());
     app.insert_resource(saved.bindings());
+    app.insert_resource(saved.theme());
     app.insert_resource(browser::ManagerConfig::from_env_and_saved(
         saved.manager_url.clone(),
     ));
@@ -82,12 +83,16 @@ fn main() {
     app.add_systems(
         EguiPrimaryContextPass,
         (
-            render::hud_ui,
-            render::status_badge_ui,
-            render::death_ui,
-            render::debug_panel_ui,
-            menu::menu_ui,
-        ),
+            theme::apply_egui_theme,
+            (
+                render::hud_ui,
+                render::status_badge_ui,
+                render::death_ui,
+                render::debug_panel_ui,
+                menu::menu_ui,
+            ),
+        )
+            .chain(),
     );
     app.add_systems(Update, connection::send_leave);
     app.add_systems(
@@ -101,6 +106,7 @@ fn main() {
     // Rendering.
     app.insert_resource(render::DebugOverlay::from_env());
     app.add_systems(Startup, (render::setup_camera, render::spawn_grid));
+    app.add_systems(Update, render::apply_world_theme);
     render::add_smoothing(&mut app);
     app.add_systems(
         Update,

@@ -5,6 +5,7 @@ use shared::{Direction, DisplayName, IsAlive, Player, PlayerColor};
 
 use super::layers::Z_LABEL;
 use super::smooth::Rendered;
+use crate::theme::Theme;
 
 /// World-space Y offset of the name label above the rider.
 const NAME_Y_OFFSET: f32 = 26.0;
@@ -22,24 +23,24 @@ pub struct NameLabel {
 /// Draw trail line segments for every player, from the smoothed render pose.
 pub fn draw_trails(
     players: Query<(&Rendered, &PlayerColor, &IsAlive), With<Player>>,
+    theme: Res<Theme>,
     mut gizmos: Gizmos,
 ) {
     for (rendered, color, alive) in &players {
         let trail_color = if alive.0 {
             Color::srgb_u32(color.0)
         } else {
-            Color::srgb(0.3, 0.3, 0.3)
+            theme.dead_trail.bevy()
         };
-
-        for window in rendered.trail.windows(2) {
-            gizmos.line_2d(window[0], window[1], trail_color);
-        }
+        // One strip, not loose segments, so the corners get joints.
+        gizmos.linestrip_2d(rendered.trail.iter().copied(), trail_color);
     }
 }
 
 /// Draw every lightcycle: a filled circle plus a short heading line.
 pub fn draw_players(
     players: Query<(&Rendered, &Direction, &PlayerColor, &IsAlive), With<Player>>,
+    theme: Res<Theme>,
     mut gizmos: Gizmos,
 ) {
     for (rendered, dir, color, alive) in &players {
@@ -47,7 +48,7 @@ pub fn draw_players(
         let body = if alive.0 {
             Color::srgb_u32(color.0)
         } else {
-            Color::srgb(1.0, 0.15, 0.15)
+            theme.dead_rider.bevy()
         };
         gizmos.circle_2d(head, 14.0, body).resolution(24);
         if alive.0 {

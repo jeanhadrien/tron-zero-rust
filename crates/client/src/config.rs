@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use shared::protocol::sanitize_name;
 
 use crate::settings::{Binding, PlayerName, TurnBindings};
+use crate::theme::{Theme, ThemeId};
 
 #[cfg(not(target_family = "wasm"))]
 const CONFIG_FILE_ENV: &str = "TRON_CONFIG_FILE";
@@ -28,9 +29,16 @@ pub struct SavedConfig {
     pub right_keys: Option<Vec<Binding>>,
     /// Lobby manager base URL; the `MANAGER_URL` env var still wins.
     pub manager_url: Option<String>,
+    /// Selected visual theme; `None` (or an unknown name) means the default.
+    pub theme: Option<ThemeId>,
 }
 
 impl SavedConfig {
+    /// The theme to start with.
+    pub fn theme(&self) -> Theme {
+        Theme::from_id(self.theme.unwrap_or_default())
+    }
+
     /// The name to start with (sanitized so a bad file cannot poison it).
     pub fn name(&self) -> PlayerName {
         self.player_name
@@ -165,6 +173,7 @@ pub fn persist_preferences(
     mut prefs: ResMut<Preferences>,
     name: Res<PlayerName>,
     bindings: Res<TurnBindings>,
+    theme: Res<Theme>,
     time: Res<Time<Real>>,
     mut exits: MessageReader<AppExit>,
     mut started: Local<bool>,
@@ -173,7 +182,7 @@ pub fn persist_preferences(
     let exiting = exits.read().count() > 0;
     if !*started {
         *started = true;
-    } else if name.is_changed() || bindings.is_changed() {
+    } else if name.is_changed() || bindings.is_changed() || theme.is_changed() {
         prefs.dirty_since = Some(now);
     }
     let Some(since) = prefs.dirty_since else {
@@ -191,6 +200,7 @@ pub fn persist_preferences(
         left_keys: Some(bindings.left.clone()),
         right_keys: Some(bindings.right.clone()),
         manager_url: prefs.manager_url.clone(),
+        theme: Some(theme.id),
     };
     if let Err(err) = save_to(path, &config) {
         warn!(path = %path.display(), %err, "Could not save preferences");
@@ -218,6 +228,7 @@ mod tests {
             left_keys: Some(bindings.left.clone()),
             right_keys: Some(bindings.right.clone()),
             manager_url: Some("http://lobby.example:3001".into()),
+            theme: Some(ThemeId::Grid82),
         };
         save_to(&path, &config).unwrap();
         let loaded = load_from(&path);
@@ -255,6 +266,7 @@ mod tests {
         world.init_resource::<Messages<AppExit>>();
         world.init_resource::<TurnBindings>();
         world.insert_resource(PlayerName("Neo".into()));
+        world.init_resource::<Theme>();
         world.insert_resource(Preferences {
             path: Some(path),
             manager_url: None,
@@ -314,6 +326,7 @@ mod tests {
             left_keys: Some(bindings.left),
             right_keys: Some(bindings.right),
             manager_url: None,
+            theme: None,
         };
         assert_eq!(config.bindings(), TurnBindings::default());
         assert_eq!(config.name().0, "Trinity");
