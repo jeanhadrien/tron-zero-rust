@@ -12,7 +12,20 @@ pub mod sim;
 
 pub use render::{PALETTE, View, render};
 pub use scenario::Scenario;
+pub use shared::Elimination;
 pub use sim::{Event, EventKind, Lab, RiderView, Score};
+
+/// One JSON object per line.
+pub fn eliminations_jsonl(eliminations: &[Elimination<String>]) -> String {
+    eliminations
+        .iter()
+        .map(|e| {
+            serde_json::to_string(e).expect("eliminations serialize")
+                + "
+"
+        })
+        .collect()
+}
 
 /// One JSON object per line.
 pub fn to_jsonl(events: &[Event]) -> String {

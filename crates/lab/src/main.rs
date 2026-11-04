@@ -5,6 +5,10 @@
 //!   --seed N          override the scenario's spawn seed
 //!   --sample N        add a `sample` event per rider every N ticks
 //!   --events PATH     write the JSONL trace to PATH (default: stdout)
+//!   --seeds N         batch mode: run seeds S..S+N (S = --seed or the scenario's)
+//!                     and write only the rated eliminations, as JSONL, to
+//!                     --eliminations PATH (default: stdout)
+//!   --eliminations PATH  with --seeds: where the eliminations go
 //!   --png PATH        render the final state
 //!   --frames DIR      also render DIR/tick-NNNNN.png every `--every` ticks
 //!   --every N         frame interval for --frames (default 60)
@@ -27,6 +31,8 @@ struct Args {
     seed: Option<u64>,
     sample: u32,
     events: Option<PathBuf>,
+    seeds: Option<u64>,
+    eliminations: Option<PathBuf>,
     png: Option<PathBuf>,
     frames: Option<PathBuf>,
     every: u32,
@@ -42,6 +48,8 @@ fn parse_args() -> Result<Args, String> {
         seed: None,
         sample: 0,
         events: None,
+        seeds: None,
+        eliminations: None,
         png: None,
         frames: None,
         every: 60,
@@ -64,6 +72,11 @@ fn parse_args() -> Result<Args, String> {
             "--every" => args.every = number("--every", raw.next())?.max(1),
             "--px" => args.px = number("--px", raw.next())?.max(16),
             "--events" => args.events = raw.next().map(PathBuf::from),
+            "--seeds" => {
+                let value = raw.next().and_then(|v| v.parse().ok());
+                args.seeds = Some(value.ok_or("--seeds expects a number")?);
+            }
+            "--eliminations" => args.eliminations = raw.next().map(PathBuf::from),
             "--png" => args.png = raw.next().map(PathBuf::from),
             "--frames" => args.frames = raw.next().map(PathBuf::from),
             "--view" => {
@@ -85,7 +98,7 @@ fn parse_args() -> Result<Args, String> {
     if args.scenario.as_os_str().is_empty() {
         return Err(
             "usage: lab <scenario.toml> [--until N] [--seed N] [--sample N] [--events PATH] \
-                    [--png PATH] [--frames DIR --every N] [--view X,Y,SIZE] [--px N]"
+                    [--seeds N --eliminations PATH] [--png PATH] [--frames DIR --every N] [--view X,Y,SIZE] [--px N]"
                 .into(),
         );
     }
@@ -101,8 +114,32 @@ fn save(lab: &Lab, view: View, px: u32, path: &Path) -> Result<(), String> {
         .map_err(|e| format!("{}: {e}", path.display()))
 }
 
+/// Batch mode: run `count` consecutive seeds and write only the rated
+/// eliminations. Seeds are independent matches; a rating replay consumes the
+/// lines in order.
+fn run_batch(args: &Args, scenario: &Scenario, count: u64) -> Result<(), String> {
+    let until = args.until.unwrap_or(scenario.until);
+    let first = args.seed.unwrap_or(scenario.seed);
+    let mut out = String::new();
+    for seed in first..first + count {
+        let mut lab = Lab::with_seed(scenario, seed);
+        lab.run(until, 0);
+        out.push_str(&tron_zero_lab::eliminations_jsonl(lab.eliminations()));
+    }
+    match &args.eliminations {
+        Some(path) => std::fs::write(path, out).map_err(|e| format!("{}: {e}", path.display())),
+        None => io::stdout()
+            .lock()
+            .write_all(out.as_bytes())
+            .map_err(|e| e.to_string()),
+    }
+}
+
 fn run(args: Args) -> Result<(), String> {
     let scenario = Scenario::load(&args.scenario)?;
+    if let Some(count) = args.seeds {
+        return run_batch(&args, &scenario, count);
+    }
     let until = args.until.unwrap_or(scenario.until);
     let mut lab = Lab::with_seed(&scenario, args.seed.unwrap_or(scenario.seed));
     let view = args.view.unwrap_or_else(|| View::arena(&lab));

@@ -6,6 +6,7 @@
 
 pub mod components;
 pub mod constants;
+pub mod elimination;
 pub mod math;
 pub mod physics;
 pub mod polyline;
@@ -20,6 +21,7 @@ pub use components::debug::*;
 pub use components::player::*;
 pub use components::trail::*;
 pub use constants::*;
+pub use elimination::*;
 pub use lightyear::prelude::input::native::ActionState;
 pub use math::*;
 pub use physics::*;

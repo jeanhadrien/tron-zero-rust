@@ -119,6 +119,8 @@ struct LabRider {
     was_colliding: bool,
     was_sliding: bool,
     bot: Option<LabBot>,
+    /// Identity in the rating pool: the bot build id, or the rider's name.
+    rated_id: String,
     respawn_after: Option<u32>,
     respawn_at: Option<u32>,
 }
@@ -139,6 +141,7 @@ pub struct Lab {
     walls: Vec<[f32; 4]>,
     tick: u32,
     events: Vec<Event>,
+    eliminations: Vec<Elimination<String>>,
 }
 
 impl Lab {
@@ -219,6 +222,9 @@ impl Lab {
                 deaths: Vec::new(),
                 was_colliding: false,
                 was_sliding: false,
+                rated_id: bot
+                    .as_ref()
+                    .map_or_else(|| spec.name.clone(), |b| b.brain.build.rating_id()),
                 bot,
                 respawn_after: spec.respawn_after,
                 respawn_at: None,
@@ -236,11 +242,17 @@ impl Lab {
             walls,
             tick: 0,
             events: Vec::new(),
+            eliminations: Vec::new(),
         }
     }
 
     pub fn tick(&self) -> u32 {
         self.tick
+    }
+
+    /// Rated eliminations so far, in tick order (see `shared::Elimination`).
+    pub fn eliminations(&self) -> &[Elimination<String>] {
+        &self.eliminations
     }
 
     pub fn events(&self) -> &[Event] {
@@ -378,6 +390,7 @@ impl Lab {
         self.schedule.run(&mut self.world);
         // The sim reports what each dying rider was draining against.
         let deaths = std::mem::take(&mut self.world.resource_mut::<DeathLog>().0);
+        self.resolve_eliminations(&deaths);
 
         for (index, before) in before.into_iter().enumerate() {
             let after = self.view(index);
@@ -486,6 +499,28 @@ impl Lab {
             rider: self.riders[index].name.clone(),
             kind,
         });
+    }
+
+    /// Turn this tick's deaths into rated eliminations, with the riders still
+    /// alive at the end of the tick as the suicide field.
+    fn resolve_eliminations(&mut self, deaths: &[DeathRecord]) {
+        if deaths.is_empty() {
+            return;
+        }
+        let rated_id = |entity: Entity| {
+            self.riders
+                .iter()
+                .find(|r| r.entity == entity)
+                .map(|r| r.rated_id.clone())
+        };
+        let alive: Vec<String> = self
+            .riders
+            .iter()
+            .filter(|r| self.world.get::<IsAlive>(r.entity).is_some_and(|a| a.0))
+            .map(|r| r.rated_id.clone())
+            .collect();
+        let resolved = resolve_eliminations(deaths, rated_id, &alive);
+        self.eliminations.extend(resolved);
     }
 
     /// Trace label for a death cause reported by the sim.
