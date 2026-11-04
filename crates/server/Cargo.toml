@@ -23,4 +23,7 @@ tracing.workspace = true
 serde.workspace = true
 serde_json = "1"
 ureq = { version = "3", features = ["json"] }
+# Ranked mode (`ranked.rs`): join tickets are Ed25519-signed by the manager, carried as base64 in heartbeats.
+ed25519-dalek = "2"
+base64 = "0.22"
 ctrlc = { version = "3", features = ["termination"] }

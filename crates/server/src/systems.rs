@@ -114,7 +114,7 @@ pub fn on_client_connected(
 /// Spawn the controlled rider for an admitted client link. Spawn allocation
 /// is serialized in FixedUpdate against live geometry (`InitialSpawn`); the
 /// rider exists even when the arena has no safe space yet.
-pub fn spawn_human(commands: &mut Commands, link: Entity, peer: PeerId, name: String) {
+pub fn spawn_human(commands: &mut Commands, link: Entity, peer: PeerId, name: String) -> Entity {
     // (Split insert: the 15-component tuple Bundle limit is already reached.)
     commands
         .spawn((
@@ -141,7 +141,8 @@ pub fn spawn_human(commands: &mut Commands, link: Entity, peer: PeerId, name: St
                 lifetime: Lifetime::SessionBased,
             },
         ))
-        .insert(shared::DisplayName(name));
+        .insert(shared::DisplayName(name))
+        .id()
 }
 
 /// Drain queued per-link requests, deriving ownership from the link rather than

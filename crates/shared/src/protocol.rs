@@ -104,8 +104,18 @@ pub struct SessionHello {
 /// Why the server refused a [`SessionHello`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum JoinRejection {
-    VersionMismatch { server: u32 },
-    ServerFull { max_players: u32 },
+    VersionMismatch {
+        server: u32,
+    },
+    ServerFull {
+        max_players: u32,
+    },
+    /// The server is ranked and the hello came without a join ticket.
+    TicketRequired,
+    /// The ticket is forged, expired, for another server or already used.
+    InvalidTicket,
+    /// The ticket's account already has a live session on this server.
+    AlreadyConnected,
 }
 
 impl std::fmt::Display for JoinRejection {
@@ -119,8 +129,21 @@ impl std::fmt::Display for JoinRejection {
             Self::ServerFull { max_players } => {
                 write!(f, "Server is full ({max_players} players).")
             }
+            Self::TicketRequired => write!(f, "This is a ranked server: sign in to play here."),
+            Self::InvalidTicket => write!(f, "Your join ticket was not accepted. Try again."),
+            Self::AlreadyConnected => write!(f, "This account is already playing on this server."),
         }
     }
+}
+
+/// Sent by the client right before its [`SessionHello`] on a ranked server:
+/// the manager-signed join ticket. Ordered-reliable like the hello, so the
+/// server has it when it reads the hello. A separate message keeps the hello
+/// layout stable for old builds, which can then still be told they are
+/// outdated.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SessionTicket {
+    pub ticket: Vec<u8>,
 }
 
 /// Server -> client answer to [`SessionHello`]. `Accepted` carries the name
@@ -373,6 +396,10 @@ pub fn register_protocol(app: &mut App) {
         .add_direction(NetworkDirection::ClientToServer);
     app.register_message::<TurnAck>()
         .add_direction(NetworkDirection::ServerToClient);
+    // Registered last on purpose: appending keeps every earlier message id
+    // stable, so an older peer still decodes the hello pair.
+    app.register_message::<SessionTicket>()
+        .add_direction(NetworkDirection::ClientToServer);
     // --- Input ---
     app.add_plugins(InputPlugin::<PlayerInput>::default());
 

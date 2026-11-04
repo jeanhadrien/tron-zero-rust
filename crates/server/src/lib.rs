@@ -10,6 +10,7 @@ pub mod bot;
 pub mod budget;
 pub mod elimination;
 pub mod probe;
+pub mod ranked;
 pub mod session;
 pub mod systems;
 pub mod turns;
@@ -85,8 +86,14 @@ pub fn add_core(app: &mut App, port: u16) {
             shared::simulate_players,
             // Reads the end-of-tick state before anything is despawned.
             elimination::resolve_deaths,
+            // Only ranked servers report results (see `ranked`).
+            ranked::forward_eliminations.run_if(resource_exists::<ranked::RankedMode>),
         )
             .chain(),
+    );
+    app.add_systems(
+        Update,
+        ranked::publish_roster.run_if(resource_exists::<ranked::RankedMode>),
     );
 
     // Spawn the arena once on startup (replicated to all clients).

@@ -2,7 +2,7 @@
 
 use bevy::prelude::*;
 use std::sync::Arc;
-use tron_zero_server::{add_core, add_web, admission, announce, bot, systems, web};
+use tron_zero_server::{add_core, add_web, admission, announce, bot, ranked, systems, web};
 
 /// Pause between main-loop iterations. Packets are read (and replies sent)
 /// only once per iteration, so this bounds the polling latency added to every
@@ -56,13 +56,23 @@ fn main() {
         });
     }
 
+    // A server with a RANKED_KEY requires join tickets and reports results.
+    let ranked_state = announce_cfg
+        .ranked_key
+        .clone()
+        .map(|key| Arc::new(ranked::RankedState::new(key)));
+
     // Detached announcer thread; handle intentionally never joined.
     let _announcer = announce::spawn_announcer(
         announce_cfg.clone(),
         Arc::clone(&counts),
         Arc::clone(&announce_handle),
+        ranked_state.clone(),
     );
 
+    if let Some(state) = ranked_state {
+        app.insert_resource(ranked::RankedMode(state));
+    }
     app.insert_resource(admission::MaxPlayers(announce_cfg.max_players));
     add_core(&mut app, announce_cfg.port);
     if let Some(endpoint) = web_endpoint {

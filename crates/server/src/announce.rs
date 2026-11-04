@@ -6,6 +6,7 @@
 
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::net::IpAddr;
 use std::sync::{
     Arc, Condvar, Mutex, MutexGuard, PoisonError,
@@ -13,6 +14,8 @@ use std::sync::{
 };
 use std::thread::JoinHandle;
 use std::time::Duration;
+
+use crate::ranked::{RankedState, TicketKey};
 
 /// How often to POST player counts while registered.
 pub const HEARTBEAT_PERIOD: Duration = Duration::from_secs(2);
@@ -57,6 +60,9 @@ pub struct AnnounceConfig {
     /// SHA-256 of the self-signed WebTransport certificate, lowercase hex
     /// without colons (`certHash`). `None` with a CA-issued certificate.
     pub cert_hash: Option<String>,
+    /// `RANKED_KEY` (`<keyId>.<secret>`): registers the room as ranked, so
+    /// players need join tickets and results move ratings.
+    pub ranked_key: Option<String>,
 }
 
 impl AnnounceConfig {
@@ -128,6 +134,9 @@ impl AnnounceConfig {
             allow_loopback_announce,
             web_port: None,
             cert_hash: None,
+            ranked_key: get("RANKED_KEY")
+                .map(|v| v.trim().to_string())
+                .filter(|v| !v.is_empty()),
         }
     }
 
@@ -137,6 +146,10 @@ impl AnnounceConfig {
 
     pub fn heartbeat_url(&self, room_id: &str) -> String {
         format!("{}/api/rooms/{room_id}/heartbeat", self.manager_url)
+    }
+
+    pub fn results_url(&self, room_id: &str) -> String {
+        format!("{}/api/rooms/{room_id}/results", self.manager_url)
     }
 
     pub fn unregister_url(&self, room_id: &str) -> String {
@@ -186,6 +199,7 @@ impl AnnounceConfig {
             max_players: self.max_players,
             web_port,
             cert_hash,
+            ranked_key: self.ranked_key.clone(),
         }
     }
 }
@@ -250,6 +264,9 @@ pub struct RegisterPayload {
     pub web_port: Option<u16>,
     #[serde(rename = "certHash", skip_serializing_if = "Option::is_none")]
     pub cert_hash: Option<String>,
+    /// Presented once to register as ranked; the manager checks it.
+    #[serde(rename = "rankedKey", skip_serializing_if = "Option::is_none")]
+    pub ranked_key: Option<String>,
 }
 
 // `botCount` is additive: managers that predate it ignore the field.
@@ -259,6 +276,24 @@ pub struct HeartbeatPayload {
     pub player_count: u32,
     #[serde(rename = "botCount")]
     pub bot_count: u32,
+    /// Ranked rooms only: who is connected and the tickets not yet reported.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub roster: Option<RosterPayload>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct RosterPayload {
+    pub humans: Vec<String>,
+    /// Base64 tickets of players admitted since this registration began.
+    pub tickets: Vec<String>,
+}
+
+/// A verification key as the manager lists it.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct PublicKeyInfo {
+    pub kid: String,
+    #[serde(rename = "publicKey")]
+    pub public_key: String,
 }
 
 /// Our room as the manager knows it: its id and the per-room secret that
@@ -267,6 +302,11 @@ pub struct HeartbeatPayload {
 pub struct Registration {
     pub id: String,
     pub token: String,
+    /// Ranked rooms: the stable id of our ranked key (tickets are bound to it).
+    #[serde(rename = "keyId", default)]
+    pub key_id: Option<String>,
+    #[serde(rename = "publicKeys", default)]
+    pub public_keys: Vec<PublicKeyInfo>,
 }
 
 impl Registration {
@@ -335,10 +375,12 @@ fn do_heartbeat(
     cfg: &AnnounceConfig,
     reg: &Registration,
     counts: &LiveCounts,
+    roster: Option<RosterPayload>,
 ) -> HeartbeatOutcome {
     let payload = HeartbeatPayload {
         player_count: counts.humans.load(Ordering::Relaxed),
         bot_count: counts.bots.load(Ordering::Relaxed),
+        roster,
     };
     let request = agent
         .post(&cfg.heartbeat_url(&reg.id))
@@ -358,6 +400,56 @@ fn do_heartbeat(
             tracing::warn!(error = %e, room_id = %reg.id, "Heartbeat: manager unreachable");
             HeartbeatOutcome::Transient
         }
+    }
+}
+
+/// Outcome of delivering one result batch.
+enum ReportOutcome {
+    /// Applied, or the manager already had it: forget the batch.
+    Delivered,
+    /// Manager down or the room unknown: keep the batch, resend unchanged.
+    Retry,
+    /// The manager refuses this batch for good (malformed): drop it.
+    Rejected,
+}
+
+fn do_report(
+    agent: &ureq::Agent,
+    cfg: &AnnounceConfig,
+    reg: &Registration,
+    batch: &crate::ranked::Batch,
+) -> ReportOutcome {
+    let request = agent
+        .post(&cfg.results_url(&reg.id))
+        .header("Authorization", reg.authorization());
+    match request.send_json(batch) {
+        Ok(_) => ReportOutcome::Delivered,
+        Err(ureq::Error::StatusCode(400)) => {
+            tracing::error!(
+                seq = batch.seq,
+                "Manager rejected a result batch; dropping it"
+            );
+            ReportOutcome::Rejected
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, seq = batch.seq, "Result delivery failed; will retry");
+            ReportOutcome::Retry
+        }
+    }
+}
+
+/// The next heartbeat's roster: current players, and the tickets of those not
+/// yet reported under this registration (`sent` remembers them).
+fn roster_payload(ranked: &RankedState, sent: &mut HashSet<String>) -> RosterPayload {
+    let roster = ranked.roster();
+    let tickets = roster
+        .iter()
+        .filter(|entry| !sent.contains(&entry.ticket))
+        .map(|entry| entry.ticket.clone())
+        .collect();
+    RosterPayload {
+        humans: roster.into_iter().map(|e| e.account_id).collect(),
+        tickets,
     }
 }
 
@@ -497,6 +589,7 @@ pub fn spawn_announcer(
     cfg: AnnounceConfig,
     counts: Arc<LiveCounts>,
     handle: Arc<AnnounceHandle>,
+    ranked: Option<Arc<RankedState>>,
 ) -> JoinHandle<()> {
     std::thread::spawn(move || {
         debug_assert!(HEARTBEAT_PERIOD * 4 < EVICTION_BUDGET);
@@ -541,11 +634,38 @@ pub fn spawn_announcer(
                 std::thread::sleep(RETRY_DELAY);
             };
             tracing::info!(room_id = %reg.id, "Registered with manager");
+            if let Some(ranked) = &ranked {
+                match &reg.key_id {
+                    Some(key_id) => {
+                        let keys = reg
+                            .public_keys
+                            .iter()
+                            .filter_map(|k| TicketKey::from_hex(&k.kid, &k.public_key))
+                            .collect();
+                        ranked.configure(key_id.clone(), keys);
+                        tracing::info!(%key_id, "Registered as a ranked server");
+                    }
+                    None => tracing::error!(
+                        "RANKED_KEY is set but the manager did not register us as ranked; \
+                         players cannot join until it does"
+                    ),
+                }
+            }
+            // Tickets reported under this registration. Presence state is per
+            // room id, so a fresh registration starts from nothing.
+            let mut reported_tickets: HashSet<String> = HashSet::new();
 
             // Immediate heartbeat, then every 2s.
             loop {
-                match do_heartbeat(&agent, &cfg, &reg, &counts) {
-                    HeartbeatOutcome::Ok | HeartbeatOutcome::Transient => {}
+                let roster = ranked
+                    .as_ref()
+                    .map(|r| roster_payload(r, &mut reported_tickets));
+                let sent_tickets = roster.as_ref().map(|r| r.tickets.clone());
+                match do_heartbeat(&agent, &cfg, &reg, &counts, roster) {
+                    HeartbeatOutcome::Ok => {
+                        reported_tickets.extend(sent_tickets.into_iter().flatten());
+                    }
+                    HeartbeatOutcome::Transient => {}
                     HeartbeatOutcome::NotFound => {
                         tracing::warn!("Manager lost our room — re-registering");
                         break;
@@ -555,6 +675,16 @@ pub fn spawn_announcer(
                         // until the old entry expires, which the retry loop reports.
                         std::thread::sleep(RETRY_DELAY);
                         break;
+                    }
+                }
+                if let Some(ranked) = &ranked
+                    && let Some(batch) = ranked.next_batch()
+                {
+                    match do_report(&agent, &cfg, &reg, &batch) {
+                        ReportOutcome::Delivered | ReportOutcome::Rejected => {
+                            ranked.acknowledge(batch.seq)
+                        }
+                        ReportOutcome::Retry => {}
                     }
                 }
                 if counts.web_open() != advertised_web {
@@ -703,6 +833,7 @@ mod tests {
             allow_loopback_announce: false,
             web_port: None,
             cert_hash: None,
+            ranked_key: None,
         };
         let value = serde_json::to_value(cfg.register_payload(false)).unwrap();
         let obj = value.as_object().unwrap();
@@ -757,6 +888,7 @@ mod tests {
         let payload = HeartbeatPayload {
             player_count: 3,
             bot_count: 5,
+            roster: None,
         };
         let value = serde_json::to_value(payload).unwrap();
         let obj = value.as_object().unwrap();
@@ -858,6 +990,8 @@ mod tests {
         let reg = Registration {
             id: "r1".into(),
             token: "t".into(),
+            key_id: None,
+            public_keys: Vec::new(),
         };
         assert!(handle.begin_register());
         assert!(handle.finish_register(&cfg, Some(&reg)));
