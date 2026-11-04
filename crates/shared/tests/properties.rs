@@ -1,6 +1,6 @@
 //! Property tests for the shared sim: random arenas, riders and turn scripts
 //! driven through the real `simulate_players` system, checked against
-//! invariants from `docs/core-gameplay-mechanics.md` with an independent
+//! invariants from `docs/specs/core-gameplay-mechanics.md` with an independent
 //! geometric oracle (no reuse of `physics::nearest` / `ray_hit`).
 
 use bevy_ecs::prelude::*;

@@ -1,17 +1,10 @@
 # Netcode and operations backlog
 
-Status: updated 2026-11-02. This file lists only what is **open**. What is
-implemented, how it works and the measured numbers are in
-`docs/netcode-design.md`; the headless harness is `crates/nettest`
-(`cargo test -p tron-zero-nettest`; arrival measurements with
+Status: updated 2026-11-04 (each item re-checked against the code). This file
+lists only what is **open**. What is implemented, how it works and the measured
+numbers are in `docs/specs/netcode-design.md`; the headless harness is
+`crates/nettest` (`cargo test -p tron-zero-nettest`; arrival measurements with
 `cargo test -p tron-zero-nettest --test measure -- --ignored --nocapture`).
-
-Done and verified, for orientation (details in the design doc): one-shot turn
-delivery (sequenced commands, redundant per-tick batches, intended-tick
-execution with a 12-tick late window, coalesced acks), hello handshake with
-protocol fingerprint and capacity, no replication before admission, per-link
-abuse budgets, rejection delivery under loss, autoconnect/quit races, and the
-announcer/manager token flow.
 
 ## Needs a decision from JH
 
@@ -30,12 +23,12 @@ announcer/manager token flow.
 
 ## Open: transport and loss
 
-- [ ] **Unauthenticated, unencrypted raw UDP.** Any address that sends a
-  packet becomes a link; spoofed-source floods are only bounded (32 unadmitted
-  links, 5 s hello timeout, no replication, one tiny ack per frame). Planned:
-  switch to Lightyear's netcode transport with connect tokens (issued by the
-  manager) and then WebTransport for browsers. Server authority is not a
-  substitute for authenticated sessions.
+- [ ] **Unauthenticated, unencrypted raw UDP (desktop path).** Any address that
+  sends a packet becomes a link; spoofed-source floods are only bounded (32
+  unadmitted links, 5 s hello timeout, no replication, one tiny ack per frame).
+  Planned: Lightyear's netcode transport with connect tokens issued by the
+  manager. The browser path already runs over WebTransport. Server authority is
+  not a substitute for authenticated sessions.
 - [ ] **Burst loss and outages over 400 ms.** A command is repeated for at
   most 48 ticks (400 ms) and the outbox holds 16, so a longer outage loses
   turns (rejected or never seen, never invented). The conditioner drops
@@ -54,9 +47,9 @@ announcer/manager token flow.
 
 ## Open: gameplay and fairness
 
-- [ ] **Bot self-trapping.** About 95% of bot deaths in `bot_arena` traces are
-  `own_trail`; the brain boxes itself in. Tuning the strategies changes the
-  `bot_arena` goldens (bless after intent).
+- [ ] **Bot self-trapping.** 22 of the 23 deaths in the `bot_arena` and
+  `bot_arena8` goldens are `own_trail`; the brain boxes itself in. Tuning the
+  strategies changes those goldens (bless after intent).
 - [ ] Collision fairness (`crates/shared/src/systems/player.rs`): simultaneous
   newly grown trail crossings and head-to-head movement are not swept against
   each other; behaviour with missing/stale opponent history is "omit that
@@ -66,27 +59,22 @@ announcer/manager token flow.
   tick, applied/rejected and rollback range (the server `TurnLog` and harness
   traces exist; client side and rollback ranges do not); RTT/jitter/loss,
   correction and bandwidth metrics.
-- [ ] Presentation and capacity: (render smoothing exists: see
-  `docs/netcode-design.md`; its feel under real jitter and loss is unmeasured;
-  opponent trail tails still step at snapshot rate); profile `Trail` replication size, rollback cost and brute-force
-  collision scans at the intended player count; server tick-time percentiles
-  against the 8.33 ms budget; declared player cap, bandwidth and correction
-  targets.
+- [ ] Presentation and capacity: render smoothing exists (see
+  `docs/specs/netcode-design.md`), but its feel under real jitter and loss is
+  unmeasured and opponent trail tails still step at snapshot rate. Still to do:
+  profile `Trail` replication size, rollback cost and brute-force collision
+  scans at the intended player count; server tick-time percentiles against the
+  8.33 ms budget; declared player cap, bandwidth and correction targets.
 
 ## Open: UI, deployment and operations
 
 - [ ] **In-game UI never run by a human.** Menu, settings/rebinding, server
   browser, HUD, death overlay, quit and autoconnect are covered by unit tests
-  and nettest only. The manual checks in `docs/dev.md` still need a person at
+  and nettest only. The manual checks in `docs/guides/dev.md` still need a person at
   the window.
-- [x] **Linux SIGTERM unregister** verified on the GCE container
-  (`systemctl stop` logs "Unregistered from manager"; the room disappears).
-- [x] **Manager image built and deployed** to Cloud Run (2026-11-02).
-- [ ] Document the supported deployment topology (UDP firewall, diagnostics
-  collection, operational limits) before public hosting; today only the
-  friends-on-my-PC recipe exists (`docs/release.md`).
-- [ ] WASM client: not wired. Room listing works in a browser, Connect is
-  disabled there until WebTransport exists.
+- [ ] Deployment recipes exist (`docs/guides/release.md`, `deploy/gce/`), but
+  diagnostics collection and operational limits are not documented for public
+  hosting.
 
 ## Candidate tooling (not adopted)
 

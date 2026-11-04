@@ -24,8 +24,8 @@ manually (Space/Enter).
 - **`shared/` (lib)** — the simulation core and wire protocol. Pure Bevy ECS: no rendering, no wall clock. Both sides run `simulate_players` at **120 Hz** (`TICK_HZ`). `physics.rs` (`step_rider`, pure), `constants.rs` (gameplay numbers), `systems/` (turn → sense → move → rubber; order is load-bearing), `trail/`, `spawn.rs`, `protocol.rs` (components, messages, channels, `PROTOCOL_ID`, turn constants), `components/`.
 - **`bots/` (lib)** — bot brain over a `WorldSnapshot` (sensing, memory, forecast, territory, strategies, Elo knobs). Deterministic: no `rand`, no wall clock. Shared by the server and the lab.
 - **`server/` (lib + bin)** — headless authoritative server. `add_core` (lib.rs) wires Lightyear and the chain `handle_respawns → apply_turn_commands → simulate_players`; `main.rs` adds bots, logging and the announcer. Modules: `admission` (hello handshake, capacity), `session` (heartbeat/leave/lease), `turns` (sequenced turn commands, acks), `budget` (per-link abuse limits), `systems` (connect/disconnect, arena, respawn queue), `announce` (manager HTTP), `bot/` (ECS glue).
-- **`client/` (lib + bin)** — desktop client (UDP) and browser client (wasm32, WebTransport; `platform.rs` holds the target splits, build with `web/build.ps1` or `web/build.sh`, design in `docs/web.md`). `connection` (lifecycle, readiness, autoconnect, quit), `input/` (keyboard queue, `TurnOutbox` redundant delivery), `menu`/`settings`/`browser`/`config` (UI, key bindings, room list, persisted preferences), `sim` (latency simulator), `render/` (arena, trails, riders, camera, HUD, death, bot debug).
-- **`lab/` (lib + bin)** — headless deterministic scenario runner over the real `simulate_players`. TOML scenarios in `crates/lab/scenarios/` (goldens `*.golden.jsonl`); JSONL trace + PNG output. **This is how an agent "plays" the game**: edit a scenario, re-run from tick 0, read trace and PNG. See `docs/dev.md` § Lab.
+- **`client/` (lib + bin)** — desktop client (UDP) and browser client (wasm32, WebTransport; `platform.rs` holds the target splits, build with `web/build.ps1` or `web/build.sh`, design in `docs/specs/web.md`). `connection` (lifecycle, readiness, autoconnect, quit), `input/` (keyboard queue, `TurnOutbox` redundant delivery), `menu`/`settings`/`browser`/`config` (UI, key bindings, room list, persisted preferences), `sim` (latency simulator), `render/` (arena, trails, riders, camera, HUD, death, bot debug).
+- **`lab/` (lib + bin)** — headless deterministic scenario runner over the real `simulate_players`. TOML scenarios in `crates/lab/scenarios/` (goldens `*.golden.jsonl`); JSONL trace + PNG output. **This is how an agent "plays" the game**: edit a scenario, re-run from tick 0, read trace and PNG. See `docs/guides/dev.md` § Lab.
 - **`nettest/` (lib + tests)** — real server and client(s) in one process over loopback UDP with a link conditioner; scripted key presses, trace assertions (`tests/turns.rs`, `session.rs`) and arrival measurements (`measure.rs`, `--ignored`). Uses wall-clock time, so a failure should be re-run alone before it is believed.
 - **`server-manager/` (Bun/TypeScript)** — in-memory lobby service. API, env vars and deployment in its README; `bun run typecheck`.
 
@@ -37,13 +37,13 @@ Forward-only authoritative server, immediate local prediction, client reconcilia
 - **Session:** the first message is a `SessionHello { protocol, name }`; the server admits (sanitized unique name) or rejects (`VersionMismatch`, `ServerFull`). Nothing replicates to a link before admission. Heartbeats, leave and respawn travel on ordered-reliable channels (`SessionChannel`, `RespawnChannel`); respawns are server-applied and tagged by `LifeGeneration`.
 - **Hardening:** per-link `LinkBudget`, capped unadmitted links, `PROTOCOL_ID` = hand-bumped `PROTOCOL_VERSION` + fingerprint of every sim constant (a physics retune changes it by itself; a *logic* change with the same constants needs a manual bump).
 
-Implemented contract and measurements: `docs/netcode-design.md`. Open items: `NETWORK.md`.
+Implemented contract and measurements: `docs/specs/netcode-design.md`. Open items: `NETWORK.md`.
 
-## Gameplay invariants (`docs/core-gameplay-mechanics.md` is normative)
+## Gameplay invariants (`docs/specs/core-gameplay-mechanics.md` is normative)
 
 120 ticks/s, base speed 360 u/s, 2000x2000 arena, one turn per tick, trail cap `TRAIL_MAX_LENGTH` (2400), rubber max 120 with cubic-in-cruise-speed drain and slow regen, Zeno-style slowdown within 12 units of a front obstacle, capped inertial speed (`MAX_SPEED_MULT` 2.0) fed by grinding within `SLIDE_DISTANCE` of others' trails (own trail never grinds; arena walls pay 0.4x), deterministic spawn/safe-respawn search, manual human respawn only. Sim arithmetic uses `+ - * /` only (no `powi`/`exp`) so client and server stay bit-identical.
 
-## Dev loops (details in `docs/dev.md`)
+## Dev loops (details in `docs/guides/dev.md`)
 
 - `cargo test -p tron-zero-shared` — sim core (unit, property, rollback); fast.
 - `cargo test -p tron-zero-lab` — mechanics + golden traces; bless intended changes with `LAB_BLESS=1`.
@@ -55,13 +55,13 @@ Implemented contract and measurements: `docs/netcode-design.md`. Open items: `NE
 
 ## Doc map
 
-- `docs/core-gameplay-mechanics.md` — gameplay rules, respect at all times.
-- `docs/netcode-design.md` — implemented netcode contract and measurements.
+- `docs/specs/core-gameplay-mechanics.md` — gameplay rules, respect at all times.
+- `docs/specs/netcode-design.md` — implemented netcode contract and measurements.
 - `NETWORK.md` — open netcode/ops backlog.
-- `docs/run.md` — which commands to start for each way of running the game (local, web, prod lobby, GCP, release); start here.
-- `docs/dev.md` — dev loop, env vars, lab, smoke checks. `docs/building.md` — prod builds, ports and env. `docs/release.md` — releases and hosting for friends.
+- `docs/guides/run.md` — which commands to start for each way of running the game (local, web, prod lobby, GCP, release); start here.
+- `docs/guides/dev.md` — dev loop, env vars, lab, smoke checks. `docs/guides/building.md` — prod builds, ports and env. `docs/guides/release.md` — releases and hosting for friends.
 - `server-manager/README.md` — lobby API and Cloud Run deployment.
-- `docs/web.md` — browser client and WebTransport decisions; `web/README.md` — build, serve, deploy.
+- `docs/specs/web.md` — browser client and WebTransport decisions; `web/README.md` — build, serve, deploy.
 - `deploy/gce/` — game server VM (Container-Optimized OS) on GCP; image via `cloudbuild.server.yaml`.
 - `PLAN.md` — original rewrite plan; **current code wins** (see its top note). `EXPLORATION.md` (Armagetron ideas), `BOT-AI-*.md` (bot research) — not committed work. `STYLE.md` — enforced style (fmt + clippy `-D warnings`).
 

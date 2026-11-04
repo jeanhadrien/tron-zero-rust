@@ -539,7 +539,7 @@ justifies an index; consider the JS spatial-query work first. Swept collision
 for simultaneously growing trails/head-to-head movement is a correctness
 prerequisite for richer geometry, not something a faster index solves.
 **L** if an index/topology engine is needed.
-Sources: [grid API][grid], [topology-police caveats][settings], [current collision limitations](docs/core-gameplay-mechanics.md).
+Sources: [grid API][grid], [topology-police caveats][settings], [current collision limitations](docs/specs/core-gameplay-mechanics.md).
 
 ### 38. Bounded lag forgiveness and network observability
 
@@ -604,7 +604,7 @@ high-risk experiments, not prerequisites for that sequence.
   manager/transport architecture. Protocol-version compatibility and historical
   client workarounds are background context, not an automatic porting backlog.
 - **No default physics retuning:** this document adds ideas, not changes to the
-  mechanics required by `docs\core-gameplay-mechanics.md`.
+  mechanics required by `docs\specs\core-gameplay-mechanics.md`.
 
 ## Upstream source references
 

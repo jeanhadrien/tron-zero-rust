@@ -1,7 +1,7 @@
 # Production Build
 
 Status: updated 2026-11-02. Shipping builds and runtime configuration. Dev
-builds live in `docs/dev.md`; releases and hosting for friends in `docs/release.md`.
+builds live in `docs/guides/dev.md`; releases and hosting for friends in `docs/guides/release.md`.
 
 ## Ports and configuration
 
@@ -31,7 +31,7 @@ Client (`tron-zero-client`): `MANAGER_URL` (runtime) / `TRONZERO_MANAGER_URL`
 (build time; the release workflow bakes in the production lobby),
 `TRON_CONFIG_FILE`, `TRON_AUTOCONNECT=host:port`, `TRON_SIM_LATENCY_MS`,
 `TRON_SIM_JITTER_MS`, `TRON_SIM_LOSS_PCT`, `TRON_BOT_DEBUG`. Semantics are in
-`docs/dev.md`. Settings live in `client.json` under the platform config dir.
+`docs/guides/dev.md`. Settings live in `client.json` under the platform config dir.
 
 Manager (`server-manager/`): `PORT` (3001; `MANAGER_PORT` fallback), `HOST`,
 `LOG_LEVEL`, `TRUST_PROXY`, `REGISTER_LIMIT_PER_MIN`; see its README. The
@@ -98,7 +98,7 @@ Output: `target/release/tron-zero-client.exe`. Distribute the `.exe` alongside a
 ## Client - WASM (web)
 
 The browser client plays over WebTransport against rooms that announce a
-`webPort` and `certHash` (see `docs/web.md`); build, serve and deploy steps are
+`webPort` and `certHash` (see `docs/specs/web.md`); build, serve and deploy steps are
 in `web/README.md`.
 
 ```

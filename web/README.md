@@ -1,7 +1,7 @@
 # Web client
 
 The browser build of the game: `wasm32-unknown-unknown` + `wasm-bindgen`,
-WebGL2 rendering, WebTransport to the server. Design: `docs/web.md`.
+WebGL2 rendering, WebTransport to the server. Design: `docs/specs/web.md`.
 
 ## Build
 
@@ -28,7 +28,7 @@ Fat LTO makes the `wasm-release` profile slow (tens of minutes, lots of RAM).
 For iteration: `CARGO_PROFILE=release ./web/build.sh` (or
 `-CargoProfile release` with the PowerShell script).
 
-`wasm-opt` is off by default (see `docs/building.md` for the measurement); opt in
+`wasm-opt` is off by default (see `docs/guides/building.md` for the measurement); opt in
 with `WASM_OPT=1` / `-WasmOpt` (needs binaryen).
 
 ## Serve locally

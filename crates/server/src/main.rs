@@ -8,7 +8,7 @@ use tron_zero_server::{add_core, add_web, admission, announce, bot, systems, web
 /// only once per iteration, so this bounds the polling latency added to every
 /// message: 1 ms is 0.12 of a tick, in exchange for an idle cost of about 1-2%
 /// of a core, where the flat-out loop burned 100%+ (measured in
-/// `docs/netcode-design.md`). Waiting a full tick (8.3 ms) saves nothing
+/// `docs/specs/netcode-design.md`). Waiting a full tick (8.3 ms) saves nothing
 /// measurable and adds up to a tick of latency each way.
 const LOOP_WAIT: std::time::Duration = std::time::Duration::from_millis(1);
 

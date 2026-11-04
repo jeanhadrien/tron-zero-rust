@@ -6,7 +6,7 @@ implement. It merges (a) an audit of the current Rust bots and the unported JS
 bot stack, and (b) online research into game-AI techniques, papers, and the
 Rust/Bevy ecosystem.
 
-> `docs/core-gameplay-mechanics.md` remains normative. Nothing here proposes
+> `docs/specs/core-gameplay-mechanics.md` remains normative. Nothing here proposes
 > changing the simulation contract; bots only emit ordinary player inputs.
 
 ## 0. Current state (grounding)

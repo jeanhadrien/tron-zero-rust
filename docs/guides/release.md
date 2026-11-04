@@ -2,8 +2,8 @@
 
 Status: updated 2026-11-02.
 
-How a build reaches your friends. Dev loop lives in `docs/dev.md`, manual
-prod builds in `docs/building.md`.
+How a build reaches your friends. Dev loop lives in `docs/guides/dev.md`, manual
+prod builds in `docs/guides/building.md`.
 
 ## Ship a client build
 
@@ -43,7 +43,7 @@ machine, so it must be reachable from the internet:
    cargo run --release -p tron-zero-server
    ```
    The full variable list (`PORT`, `MAX_PLAYERS`, `ADVERTISED_PORT`, ...) is in
-   `docs/building.md`. The transport is not authenticated or encrypted yet, so
+   `docs/guides/building.md`. The transport is not authenticated or encrypted yet, so
    treat a public server as a friends-only convenience.
 4. Sanity: `curl https://server-manager.tronzero.dev/api/rooms` should list
    your room with the public host. Friends Refresh in-game and Connect.

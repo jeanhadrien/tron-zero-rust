@@ -77,7 +77,7 @@ To let **friends** join a server on your PC instead: forward UDP 5000 and
 5001 on your router to this PC, then start the server with
 `MANAGER_URL=https://server-manager.tronzero.dev`,
 `ADVERTISED_HOST=<your public IP>` and `SERVER_NAME=<name>` (no
-`ALLOW_LOOPBACK_ANNOUNCE`). More in `docs/release.md`.
+`ALLOW_LOOPBACK_ANNOUNCE`). More in `docs/guides/release.md`.
 
 ### 5. The production server on GCP
 
@@ -96,9 +96,9 @@ update): `deploy/gce/README.md`.
 Push `main`; release-please opens or updates the `chore: release main` PR.
 Merging it tags `client-v*` and runs `.github/workflows/deploy.yml`: Windows
 zip on the Release, web build to Pages. Rebuild without a new version:
-`gh workflow run deploy.yml --ref main`. Details: `docs/release.md`.
+`gh workflow run deploy.yml --ref main`. Details: `docs/guides/release.md`.
 
 ### 7. Without any window
 
-- Mechanics, bots: `cargo test -p tron-zero-lab`, scenarios in `crates/lab/scenarios/` (`docs/dev.md` § Lab).
+- Mechanics, bots: `cargo test -p tron-zero-lab`, scenarios in `crates/lab/scenarios/` (`docs/guides/dev.md` § Lab).
 - Netcode over real UDP/WebTransport: `cargo test -p tron-zero-nettest`.

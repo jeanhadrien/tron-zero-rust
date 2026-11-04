@@ -2,7 +2,7 @@
 
 Status: updated 2026-11-02.
 
-Day-to-day development on Windows. Builds run natively on Windows for fast iteration and a visible game window. Which commands to start for which setup (web client, prod lobby, GCP): `docs/run.md`.
+Day-to-day development on Windows. Builds run natively on Windows for fast iteration and a visible game window. Which commands to start for which setup (web client, prod lobby, GCP): `docs/guides/run.md`.
 
 ## Prerequisites (one-time)
 
@@ -64,7 +64,7 @@ If a build mysteriously rebuilds from scratch, you probably touched the repo fro
 - `tron-zero-nettest` — lib + tests, real server and clients over loopback UDP (see below).
 - `server-manager/` — Bun/TypeScript lobby service (see its README).
 
-The WASM web client target (`wasm32-unknown-unknown`) is not set up yet — see `docs/building.md`.
+The WASM web client target (`wasm32-unknown-unknown`) is not set up yet — see `docs/guides/building.md`.
 
 ## One-click local test (`play-local.bat`)
 
@@ -128,7 +128,7 @@ Then start the Rust server (`MANAGER_URL` defaults to `http://localhost:3001`)
 and open the client's Rooms screen. The server registers, heartbeats every 2 s
 and re-registers on a 404; without the manager it retries every 5 s and the
 client still lists any server it detects on this machine. Server env vars (`MANAGER_URL`,
-`ADVERTISED_HOST`, `ALLOW_LOOPBACK_ANNOUNCE`, ...) are in `docs/building.md`;
+`ADVERTISED_HOST`, `ALLOW_LOOPBACK_ANNOUNCE`, ...) are in `docs/guides/building.md`;
 the API and the announce protocol are in `server-manager/README.md`.
 
 `dev-cloud.bat [name]` starts a local server that announces itself to the
@@ -150,7 +150,7 @@ cargo test -p tron-zero-nettest --test measure -- --ignored --nocapture   # arri
 
 It uses wall-clock timing and an unseeded conditioner, so a failure should be
 re-run alone before treating it as real. Results and the contract it checks are
-in `docs/netcode-design.md`.
+in `docs/specs/netcode-design.md`.
 
 ## Lab (headless scenarios)
 
@@ -216,7 +216,7 @@ offline (never during play). A second local server needs its own `PORT` and
 `WEB_PORT` (e.g. `PORT=5002 WEB_PORT=5012`); 5001 is the default WebTransport
 port and never answers. Servers found there also appear first under
 **Browse Servers**. The browser build cannot probe UDP, so it lists localhost
-only on a local dev host with `?TRON_CERT_DIGEST=` (see `docs/run.md`). Full rooms show
+only on a local dev host with `?TRON_CERT_DIGEST=` (see `docs/guides/run.md`). Full rooms show
 a disabled **Full** button. **Quit game** leaves the server first (so the rider
 is removed at once) and then exits; the window close button does the same.
 
