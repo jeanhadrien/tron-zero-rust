@@ -75,6 +75,42 @@ impl BotBuild {
             knobs: elo.knobs(personality),
         }
     }
+
+    /// Stable identity of this build in the rating pool: `bot:<personality>:<skill>`.
+    /// Every instance of the build shares one rating. The skill is a hidden
+    /// input; the measured rating is what the pool reports.
+    pub fn rating_id(&self) -> String {
+        format!("bot:{}:{}", self.personality.label(), self.elo.0)
+    }
+}
+
+/// Rating range the skill knob is remapped onto for a bot's first rating.
+const INITIAL_RATING_RANGE: (f32, f32) = (800.0, 2500.0);
+
+impl Elo {
+    /// Starting rating for a new bot identity: the skill knob mapped linearly
+    /// (monotone) from the anchor range onto `INITIAL_RATING_RANGE`.
+    /// Measurement corrects it over time.
+    pub fn initial_rating(self) -> u32 {
+        let (lo, hi) = (ELO_ANCHORS[0] as f32, ELO_ANCHORS[4] as f32);
+        let t = ((self.0 as f32 - lo) / (hi - lo)).clamp(0.0, 1.0);
+        let (from, to) = INITIAL_RATING_RANGE;
+        (from + (to - from) * t).round() as u32
+    }
+}
+
+impl Personality {
+    /// Lowercase name used in rating ids and logs.
+    pub fn label(self) -> &'static str {
+        match self {
+            Personality::Survivalist => "survivalist",
+            Personality::Trapper => "trapper",
+            Personality::Adaptive => "adaptive",
+            Personality::Territorialist => "territorialist",
+            Personality::Duelist => "duelist",
+            Personality::Roamer => "roamer",
+        }
+    }
 }
 
 impl Elo {
