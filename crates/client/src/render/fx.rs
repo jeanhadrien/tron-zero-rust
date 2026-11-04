@@ -1,11 +1,12 @@
 //! Render-only particles and one-shot effects, drawn as gizmos.
 //!
 //! Nothing here touches the simulation: effects are triggered by watching what
-//! riders look like (alive or not, speed multiplier) and are never replicated.
+//! riders look like (alive or not, sliding) and are never replicated.
 //!
 //! * **Derez**: a rider dies, its color bursts into streaks and a ring.
 //! * **Rezz**: a rider appears, a ring collapses onto it.
-//! * **Sparks**: a rider running above base speed (grinding) sheds sparks.
+//! * **Sparks**: a rider grinding (`IsSliding`: a side sensor within reach of a
+//!   wall or another rider's trail) sheds sparks.
 //!
 //! Effects can be switched off ([`FxSettings`]); the theme scales how many
 //! particles each effect makes.
@@ -13,7 +14,7 @@
 use bevy::color::Mix;
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
-use shared::{Direction, IsAlive, Player, PlayerColor, SpeedMult};
+use shared::{Direction, IsAlive, IsSliding, Player, PlayerColor, SpeedMult};
 
 use super::smooth::{RenderSet, Rendered};
 use crate::theme::Theme;
@@ -25,10 +26,9 @@ const MAX_STEP_SECS: f32 = 0.1;
 /// Fraction of velocity kept per second.
 const DRAG_PER_SEC: f32 = 0.05;
 
-/// Speed multiplier above which a rider counts as grinding.
-const GRIND_THRESHOLD: f32 = 1.05;
-/// Sparks per second at a speed multiplier of 2.0 (scales linearly from 1.0).
-const SPARKS_PER_SEC: f32 = 60.0;
+/// Sparks per second while grinding at base speed; scales with the speed
+/// multiplier, so a boosted rider throws more.
+const SPARKS_PER_SEC: f32 = 30.0;
 
 /// Streaks in a derez burst, before the theme's scale.
 const DEREZ_STREAKS: f32 = 22.0;
@@ -196,6 +196,7 @@ fn emit_fx(
             &Direction,
             &PlayerColor,
             &IsAlive,
+            &IsSliding,
             &SpeedMult,
         ),
         With<Player>,
@@ -203,7 +204,7 @@ fn emit_fx(
     mut fx: ResMut<Fx>,
 ) {
     let dt = time.delta_secs().min(MAX_STEP_SECS);
-    for (entity, rendered, dir, color, alive, speed) in &riders {
+    for (entity, rendered, dir, color, alive, sliding, speed) in &riders {
         let was_alive = fx.seen.insert(entity, alive.0);
         if !settings.enabled {
             continue;
@@ -214,8 +215,8 @@ fn emit_fx(
             (None | Some(false), true) => fx.rezz(rendered.head, color),
             _ => {}
         }
-        if alive.0 && speed.0 > GRIND_THRESHOLD {
-            let expected = SPARKS_PER_SEC * (speed.0 - 1.0) * dt * theme.fx_scale;
+        if alive.0 && sliding.0 {
+            let expected = SPARKS_PER_SEC * speed.0 * dt * theme.fx_scale;
             let mut count = expected.floor() as u32;
             if fx.random() < expected.fract() {
                 count += 1;
