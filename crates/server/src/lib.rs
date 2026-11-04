@@ -8,6 +8,7 @@ pub mod admission;
 pub mod announce;
 pub mod bot;
 pub mod budget;
+pub mod elimination;
 pub mod probe;
 pub mod session;
 pub mod systems;
@@ -72,12 +73,18 @@ pub fn add_core(app: &mut App, port: u16) {
     // (FixedPreUpdate) and overwrites its native-input fallback for human
     // riders, so only sequenced turn commands can turn a human.
     app.insert_resource(shared::SimulationRole::Server);
+    // Only the server collects deaths: simulate_players re-runs on client
+    // rollback, so a client must never hold a DeathLog.
+    app.init_resource::<shared::DeathLog>();
+    app.init_resource::<elimination::Eliminations>();
     app.add_systems(
         FixedUpdate,
         (
             systems::handle_respawns,
             turns::apply_turn_commands,
             shared::simulate_players,
+            // Reads the end-of-tick state before anything is despawned.
+            elimination::resolve_deaths,
         )
             .chain(),
     );
