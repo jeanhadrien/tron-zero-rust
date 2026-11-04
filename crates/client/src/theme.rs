@@ -220,22 +220,22 @@ impl Theme {
         }
     }
 
-    /// Centered dialog frame (menu + death prompt).
-    pub fn panel_frame(&self) -> egui::Frame {
+    fn frame(&self, radius: u8, margin: i8) -> egui::Frame {
         egui::Frame::default()
             .fill(self.panel())
             .stroke(egui::Stroke::new(1.0, self.panel_edge.egui()))
-            .corner_radius(egui::CornerRadius::same(self.panel_radius))
-            .inner_margin(egui::Margin::same(28))
+            .corner_radius(egui::CornerRadius::same(radius))
+            .inner_margin(egui::Margin::same(margin))
+    }
+
+    /// Centered dialog frame (menu + death prompt).
+    pub fn panel_frame(&self) -> egui::Frame {
+        self.frame(self.panel_radius, 28)
     }
 
     /// Smaller sibling for the HUD meter cards.
     pub fn card_frame(&self) -> egui::Frame {
-        egui::Frame::default()
-            .fill(self.panel())
-            .stroke(egui::Stroke::new(1.0, self.panel_edge.egui()))
-            .corner_radius(egui::CornerRadius::same(self.card_radius))
-            .inner_margin(egui::Margin::same(16))
+        self.frame(self.card_radius, 16)
     }
 
     /// Make this theme the egui-wide style: every widget, in every overlay,
@@ -331,6 +331,23 @@ mod tests {
         assert_eq!(theme.rubber_color(0.21), theme.warn.egui());
         assert_eq!(theme.rubber_color(0.2), theme.danger.egui());
         assert_eq!(theme.rubber_color(0.0), theme.danger.egui());
+    }
+
+    #[test]
+    fn egui_style_comes_from_the_theme() {
+        for id in ThemeId::ALL {
+            let theme = Theme::from_id(id);
+            let ctx = egui::Context::default();
+            theme.apply_to_egui(&ctx);
+            let visuals = ctx.global_style().visuals.clone();
+            assert_eq!(visuals.widgets.inactive.bg_fill, theme.button.egui());
+            assert_eq!(visuals.widgets.hovered.bg_fill, theme.button_hover.egui());
+            assert_eq!(visuals.window_fill, theme.panel());
+            assert_eq!(
+                visuals.widgets.inactive.corner_radius,
+                egui::CornerRadius::same(theme.widget_radius)
+            );
+        }
     }
 
     #[test]

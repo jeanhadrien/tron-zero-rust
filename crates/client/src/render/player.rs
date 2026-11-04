@@ -7,6 +7,11 @@ use super::layers::Z_LABEL;
 use super::smooth::Rendered;
 use crate::theme::Theme;
 
+/// Radius of the circle drawn for a lightcycle, in world units.
+pub(super) const RIDER_RADIUS: f32 = 14.0;
+/// Trail points closer than this to the previous one are dropped before
+/// drawing: a zero-length segment gives a line joint no direction.
+const MIN_SEGMENT: f32 = 0.01;
 /// World-space Y offset of the name label above the rider.
 const NAME_Y_OFFSET: f32 = 26.0;
 /// World-space font size; small relative to the 14-unit rider radius.
@@ -33,8 +38,21 @@ pub fn draw_trails(
             theme.dead_trail.bevy()
         };
         // One strip, not loose segments, so the corners get joints.
-        gizmos.linestrip_2d(rendered.trail.iter().copied(), trail_color);
+        gizmos.linestrip_2d(without_degenerate_segments(&rendered.trail), trail_color);
     }
+}
+
+/// The trail points, minus any that sit on top of the previous one (right
+/// after a turn the head can coincide with the corner).
+fn without_degenerate_segments(points: &[Vec2]) -> impl Iterator<Item = Vec2> + '_ {
+    let mut last: Option<Vec2> = None;
+    points.iter().copied().filter(move |&point| {
+        let keep = last.is_none_or(|prev| prev.distance(point) >= MIN_SEGMENT);
+        if keep {
+            last = Some(point);
+        }
+        keep
+    })
 }
 
 /// Draw every lightcycle: a filled circle plus a short heading line.
@@ -50,7 +68,7 @@ pub fn draw_players(
         } else {
             theme.dead_rider.bevy()
         };
-        gizmos.circle_2d(head, 14.0, body).resolution(24);
+        gizmos.circle_2d(head, RIDER_RADIUS, body).resolution(24);
         if alive.0 {
             gizmos.line_2d(head, head + rendered.heading(dir.0) * 28.0, body);
         } else {
@@ -143,5 +161,30 @@ pub fn sync_name_labels(
     // Despawn labels whose rider is gone (disconnect / bot cycle).
     for (_, leftover) in by_rider {
         commands.entity(leftover).despawn();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn coincident_points_are_dropped_but_corners_stay() {
+        let points = [
+            Vec2::new(0.0, 0.0),
+            Vec2::new(100.0, 0.0),
+            Vec2::new(100.0, 0.0),
+            Vec2::new(100.0, 50.0),
+            Vec2::new(100.0, 50.0),
+        ];
+        let kept: Vec<Vec2> = without_degenerate_segments(&points).collect();
+        assert_eq!(
+            kept,
+            vec![
+                Vec2::new(0.0, 0.0),
+                Vec2::new(100.0, 0.0),
+                Vec2::new(100.0, 50.0)
+            ]
+        );
     }
 }

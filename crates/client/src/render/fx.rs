@@ -16,6 +16,7 @@ use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 use shared::{Direction, IsAlive, IsSliding, Player, PlayerColor, SpeedMult};
 
+use super::player::RIDER_RADIUS;
 use super::smooth::{RenderSet, Rendered};
 use crate::theme::Theme;
 
@@ -32,7 +33,9 @@ const SPARKS_PER_SEC: f32 = 30.0;
 
 /// Streaks in a derez burst, before the theme's scale.
 const DEREZ_STREAKS: f32 = 22.0;
-const RING_RADIUS_RIDER: f32 = 14.0;
+/// A rider first seen with less trail than this has just spawned (as opposed
+/// to one already racing when we connected): only those get a rezz ring.
+const FRESH_SPAWN_TRAIL: f32 = 100.0;
 const RING_RADIUS_WIDE: f32 = 80.0;
 
 /// Player toggle for all effects (reduced-motion option).
@@ -133,7 +136,7 @@ impl Fx {
             life: 0.45,
             color,
             shape: Shape::Ring {
-                from: RING_RADIUS_RIDER,
+                from: RIDER_RADIUS,
                 to: RING_RADIUS_WIDE,
             },
         });
@@ -149,7 +152,7 @@ impl Fx {
             color,
             shape: Shape::Ring {
                 from: RING_RADIUS_WIDE,
-                to: RING_RADIUS_RIDER,
+                to: RIDER_RADIUS,
             },
         });
     }
@@ -183,6 +186,13 @@ fn step_particles(particles: &mut Vec<Particle>, dt: f32) {
     particles.retain(|particle| particle.age < particle.life);
 }
 
+fn trail_length(points: &[Vec2]) -> f32 {
+    points
+        .windows(2)
+        .map(|pair| pair[0].distance(pair[1]))
+        .sum()
+}
+
 /// Spot deaths, spawns and grinding, and make the matching particles.
 #[allow(clippy::type_complexity)]
 fn emit_fx(
@@ -212,7 +222,10 @@ fn emit_fx(
         let color = Color::srgb_u32(color.0);
         match (was_alive, alive.0) {
             (Some(true), false) => fx.derez(rendered.head, color, theme.fx_scale),
-            (None | Some(false), true) => fx.rezz(rendered.head, color),
+            (Some(false), true) => fx.rezz(rendered.head, color),
+            (None, true) if trail_length(&rendered.trail) < FRESH_SPAWN_TRAIL => {
+                fx.rezz(rendered.head, color)
+            }
             _ => {}
         }
         if alive.0 && sliding.0 {
@@ -269,6 +282,7 @@ pub fn add_fx(app: &mut App) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bevy::ecs::system::RunSystemOnce;
 
     fn streak(life: f32) -> Particle {
         Particle {
@@ -299,6 +313,89 @@ mod tests {
             fx.derez(Vec2::ZERO, Color::WHITE, 2.0);
         }
         assert_eq!(fx.particles.len(), MAX_PARTICLES);
+    }
+
+    fn rider(trail: Vec<Vec2>, alive: bool) -> impl Bundle {
+        (
+            Player,
+            Rendered {
+                head: Vec2::ZERO,
+                trail,
+            },
+            Direction(Vec2::X),
+            PlayerColor(0xff0000),
+            IsAlive(alive),
+            IsSliding(false),
+            SpeedMult(1.0),
+        )
+    }
+
+    fn fx_world() -> World {
+        let mut world = World::new();
+        world.init_resource::<Time>();
+        world.init_resource::<Fx>();
+        world.init_resource::<FxSettings>();
+        world.init_resource::<Theme>();
+        world
+    }
+
+    fn particles(world: &World) -> usize {
+        world.resource::<Fx>().particles.len()
+    }
+
+    fn long_trail() -> Vec<Vec2> {
+        vec![Vec2::new(-500.0, 0.0), Vec2::ZERO]
+    }
+
+    #[test]
+    fn a_death_bursts_once_and_a_known_respawn_rezzes() {
+        let mut world = fx_world();
+        let entity = world.spawn(rider(long_trail(), true)).id();
+        world.run_system_once(emit_fx).unwrap();
+        assert_eq!(particles(&world), 0, "already racing when first seen");
+
+        world.entity_mut(entity).insert(IsAlive(false));
+        world.run_system_once(emit_fx).unwrap();
+        assert_eq!(particles(&world), DEREZ_STREAKS as usize + 1);
+        world.run_system_once(emit_fx).unwrap();
+        assert_eq!(particles(&world), DEREZ_STREAKS as usize + 1, "only once");
+
+        world.entity_mut(entity).insert(IsAlive(true));
+        world.run_system_once(emit_fx).unwrap();
+        assert_eq!(particles(&world), DEREZ_STREAKS as usize + 2, "rezz ring");
+    }
+
+    #[test]
+    fn only_a_fresh_spawn_rezzes_on_first_sight() {
+        let mut world = fx_world();
+        world.spawn(rider(vec![Vec2::ZERO], true));
+        world.run_system_once(emit_fx).unwrap();
+        assert_eq!(particles(&world), 1);
+    }
+
+    #[test]
+    fn disabled_effects_stay_silent_and_do_not_burst_on_re_enable() {
+        let mut world = fx_world();
+        world.resource_mut::<FxSettings>().enabled = false;
+        let entity = world.spawn(rider(long_trail(), true)).id();
+        world.run_system_once(emit_fx).unwrap();
+        world.entity_mut(entity).insert(IsAlive(false));
+        world.run_system_once(emit_fx).unwrap();
+        assert_eq!(particles(&world), 0);
+        world.resource_mut::<FxSettings>().enabled = true;
+        world.run_system_once(emit_fx).unwrap();
+        assert_eq!(particles(&world), 0, "the death was already seen");
+    }
+
+    #[test]
+    fn despawned_riders_are_forgotten() {
+        let mut world = fx_world();
+        let entity = world.spawn(rider(long_trail(), true)).id();
+        world.run_system_once(emit_fx).unwrap();
+        assert_eq!(world.resource::<Fx>().seen.len(), 1);
+        world.despawn(entity);
+        world.run_system_once(emit_fx).unwrap();
+        assert!(world.resource::<Fx>().seen.is_empty());
     }
 
     #[test]

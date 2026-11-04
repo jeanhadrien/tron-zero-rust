@@ -529,7 +529,13 @@ pub fn menu_ui(
         UiAction::RemoveKey(side, index) => {
             rebind.error = bindings.remove_key(side, index).err().map(str::to_owned);
         }
-        UiAction::SetTheme(id) => *theme = Theme::from_id(id),
+        UiAction::SetTheme(id) => {
+            // Skip a re-click on the active theme: replacing the resource
+            // would re-apply the style and rewrite the config for nothing.
+            if theme.id != id {
+                *theme = Theme::from_id(id);
+            }
+        }
         UiAction::SetEffects(enabled) => fx.enabled = enabled,
         UiAction::ResetBindings => {
             bindings.reset();

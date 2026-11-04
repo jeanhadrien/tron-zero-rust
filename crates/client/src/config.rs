@@ -31,9 +31,20 @@ pub struct SavedConfig {
     /// Lobby manager base URL; the `MANAGER_URL` env var still wins.
     pub manager_url: Option<String>,
     /// Selected visual theme; `None` (or an unknown name) means the default.
+    #[serde(deserialize_with = "lenient_theme")]
     pub theme: Option<ThemeId>,
     /// Particle effects on or off; `None` means on.
     pub effects: Option<bool>,
+}
+
+/// A theme name this build does not know (saved by another version, or typed
+/// by hand) reads as "not set" instead of failing the whole file, which would
+/// throw away the name and key bindings too.
+fn lenient_theme<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<ThemeId>, D::Error> {
+    let raw = Option::<serde_json::Value>::deserialize(deserializer)?;
+    Ok(raw.and_then(|value| serde_json::from_value(value).ok()))
 }
 
 impl SavedConfig {
@@ -251,6 +262,16 @@ mod tests {
         assert_eq!(loaded.name().0, "Neo");
         assert_eq!(loaded.bindings(), bindings);
         let _ = std::fs::remove_dir_all(path.parent().unwrap().parent().unwrap());
+    }
+
+    #[test]
+    fn an_unknown_theme_keeps_the_rest_of_the_file() {
+        let text = r#"{ "player_name": "Neo", "theme": "FromTheFuture", "effects": false }"#;
+        let config: SavedConfig = serde_json::from_str(text).unwrap();
+        assert_eq!(config.theme, None);
+        assert_eq!(config.theme().id, ThemeId::default());
+        assert_eq!(config.name().0, "Neo");
+        assert_eq!(config.effects, Some(false));
     }
 
     #[test]
