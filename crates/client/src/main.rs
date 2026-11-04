@@ -98,7 +98,7 @@ fn main() {
 
     // Rendering.
     app.insert_resource(render::DebugOverlay::from_env());
-    app.add_systems(Startup, render::setup_camera);
+    app.add_systems(Startup, (render::setup_camera, render::spawn_grid));
     render::add_smoothing(&mut app);
     app.add_systems(
         Update,

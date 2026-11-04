@@ -3,12 +3,11 @@
 use bevy::camera::ScalingMode;
 use bevy::prelude::*;
 
+use super::layers::{CAMERA_FAR, CAMERA_Z};
 use super::smooth::{OwnRider, Rendered};
 
 /// Vertical world-units visible in the follow camera.
 const CAMERA_VIEW_HEIGHT: f32 = 800.0;
-/// Camera distance from the 2D plane.
-const CAMERA_Z: f32 = 999.0;
 /// Duration of the camera glide after the rider respawns somewhere else.
 const RESPAWN_EASE_SECS: f32 = 0.2;
 
@@ -20,6 +19,7 @@ pub fn setup_camera(mut commands: Commands) {
             scaling_mode: ScalingMode::FixedVertical {
                 viewport_height: CAMERA_VIEW_HEIGHT,
             },
+            far: CAMERA_FAR,
             ..OrthographicProjection::default_2d()
         }),
         Transform::from_xyz(0.0, 0.0, CAMERA_Z),

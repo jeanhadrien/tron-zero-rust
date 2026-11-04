@@ -3,10 +3,11 @@ pub mod camera;
 pub mod death;
 pub mod debug;
 pub mod hud;
+pub mod layers;
 pub mod player;
 pub mod smooth;
 
-pub use arena::draw_arena;
+pub use arena::{draw_arena, spawn_grid};
 pub use camera::{follow_player, setup_camera};
 pub use death::death_ui;
 pub use debug::{DebugOverlay, debug_panel_ui, draw_bot_debug};

@@ -3,6 +3,7 @@
 use bevy::prelude::*;
 use shared::{Direction, DisplayName, IsAlive, Player, PlayerColor};
 
+use super::layers::Z_LABEL;
 use super::smooth::Rendered;
 
 /// World-space Y offset of the name label above the rider.
@@ -103,7 +104,7 @@ pub fn sync_name_labels(
                 name.0.as_str()
             }
         });
-        let translation = Vec3::new(rendered.head.x, rendered.head.y + NAME_Y_OFFSET, 10.0);
+        let translation = Vec3::new(rendered.head.x, rendered.head.y + NAME_Y_OFFSET, Z_LABEL);
         let tint = TextColor(Color::srgb_u32(color.0));
         let visibility = if alive.0 {
             Visibility::Visible
