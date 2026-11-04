@@ -106,6 +106,31 @@ pub fn nearest(
         .fold(f32::INFINITY, f32::min)
 }
 
+/// Nearest obstacle along a ray: its distance and its owner (`None` for an
+/// arena wall). The distance is the same `min` fold as `nearest`, so it is
+/// bit-identical. On an exact distance tie a foreign trail wins over the
+/// rider's own trail, which wins over a wall; foreign trails tie-break on the
+/// lowest owner bits. That keeps the killer deterministic on both sides.
+fn nearest_contact(
+    obstacles: &[Segment],
+    owner: Option<u64>,
+    origin: Vec2,
+    direction: Vec2,
+) -> (f32, Option<u64>) {
+    let priority = |segment_owner: Option<u64>| match segment_owner {
+        Some(bits) if Some(bits) != owner => (0, bits),
+        Some(bits) => (1, bits),
+        None => (2, 0),
+    };
+    let mut best = (f32::INFINITY, None);
+    for (hit, segment) in contacts(obstacles, owner, origin, direction, false) {
+        if hit < best.0 || (hit == best.0 && priority(segment.owner) < priority(best.1)) {
+            best = (hit, segment.owner);
+        }
+    }
+    best
+}
+
 /// Grind strength in `0..=1` for a side ray: 1 touching an obstacle, falling
 /// linearly to 0 at `SLIDE_DISTANCE`. Grinding rewards risk near *other*
 /// riders' trails, so:
@@ -150,6 +175,10 @@ pub struct StepOutcome {
     pub sliding: bool,
     pub colliding: bool,
     pub died: bool,
+    /// Owner of the nearest obstacle ahead this tick (`None` = arena wall;
+    /// the rider's own bits = its own trail). Rubber only drains against this
+    /// contact, so on a death it is the cause. Meaningless when nothing is ahead.
+    pub front_owner: Option<u64>,
 }
 
 /// Turn → sense → move → rubber for one rider against immutable start-of-tick
@@ -183,7 +212,7 @@ pub(crate) fn step_rider(
     }
     let origin = position;
     let heading = direction;
-    let front = nearest(obstacles, owner, origin, heading, false);
+    let (front, front_owner) = nearest_contact(obstacles, owner, origin, heading);
     let cruise = target_speed;
     let normal_step = BASE_SPEED * cruise * TICK_SECS;
     let colliding = front < SLOW_DOWN_DISTANCE;
@@ -213,6 +242,7 @@ pub(crate) fn step_rider(
             sliding: false,
             colliding: false,
             died: true,
+            front_owner,
         };
     }
     // Inertia: cruise speed chases a grind-dependent goal at bounded rates.
@@ -242,6 +272,50 @@ pub(crate) fn step_rider(
         sliding,
         colliding,
         died: false,
+        front_owner,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn segment(a: Vec2, b: Vec2, owner: Option<u64>) -> Segment {
+        Segment {
+            a,
+            b,
+            owner,
+            from_head: 5,
+        }
+    }
+
+    /// The owner-aware search must report exactly the distance `nearest` does.
+    #[test]
+    fn nearest_contact_distance_matches_nearest() {
+        let obstacles = [
+            segment(Vec2::new(50.0, -100.0), Vec2::new(50.0, 100.0), Some(7)),
+            segment(Vec2::new(30.0, -100.0), Vec2::new(30.0, 100.0), None),
+            segment(Vec2::new(90.0, -100.0), Vec2::new(90.0, 100.0), Some(9)),
+        ];
+        let (distance, owner) = nearest_contact(&obstacles, Some(1), Vec2::ZERO, Vec2::X);
+        assert_eq!(
+            distance.to_bits(),
+            nearest(&obstacles, Some(1), Vec2::ZERO, Vec2::X, false).to_bits()
+        );
+        assert_eq!(owner, None);
+    }
+
+    /// At an exact distance tie a foreign trail beats a wall and the rider's
+    /// own trail; between foreign trails the lowest owner bits win.
+    #[test]
+    fn nearest_contact_breaks_ties_toward_foreign_trails() {
+        let wall = segment(Vec2::new(40.0, -100.0), Vec2::new(40.0, 100.0), None);
+        let own = segment(Vec2::new(40.0, -100.0), Vec2::new(40.0, 100.0), Some(1));
+        let foreign_high = segment(Vec2::new(40.0, -100.0), Vec2::new(40.0, 100.0), Some(9));
+        let foreign_low = segment(Vec2::new(40.0, -100.0), Vec2::new(40.0, 100.0), Some(3));
+        let obstacles = [wall, own, foreign_high, foreign_low];
+        let (_, owner) = nearest_contact(&obstacles, Some(1), Vec2::ZERO, Vec2::X);
+        assert_eq!(owner, Some(3));
     }
 }
 

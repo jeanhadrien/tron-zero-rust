@@ -53,6 +53,37 @@ pub struct ObstaclePlayer {
 type ObstacleQuery<'w, 's> = Query<'w, 's, ObstaclePlayer, With<Player>>;
 type CycleQuery<'w, 's> = Query<'w, 's, Cycle, With<Player>>;
 
+/// What a rider died against: the owner of the contact it was draining on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DeathCause {
+    Wall,
+    OwnTrail,
+    /// Another rider's trail; that rider gets the kill.
+    Trail(Entity),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DeathRecord {
+    pub tick: Option<u32>,
+    pub victim: Entity,
+    pub cause: DeathCause,
+}
+
+/// Deaths in simulation order, filled by `simulate_players` when present.
+/// Only the server inserts it: the system re-runs during client rollback, so
+/// a client must never accumulate (or replicate) these. The consumer drains it
+/// every tick.
+#[derive(Resource, Default, Debug)]
+pub struct DeathLog(pub Vec<DeathRecord>);
+
+fn death_cause(victim: Entity, front_owner: Option<u64>) -> DeathCause {
+    match front_owner {
+        None => DeathCause::Wall,
+        Some(bits) if bits == victim.to_bits() => DeathCause::OwnTrail,
+        Some(bits) => DeathCause::Trail(Entity::from_bits(bits)),
+    }
+}
+
 /// Turns, sensing, rubber, speed and trails are one tick transaction.
 /// On clients only Predicted players advance; interpolated opponents remain
 /// obstacles. Lightyear 0.28 keeps confirmed histories on the same entity,
@@ -62,6 +93,7 @@ pub fn simulate_players(
     arena: Query<&WallSegments, With<Arena>>,
     timeline: Option<Res<LocalTimeline>>,
     mut players: ParamSet<(ObstacleQuery, CycleQuery)>,
+    mut deaths: Option<ResMut<DeathLog>>,
 ) {
     let tick = timeline.map(|t| t.tick() - 1);
     let mut obstacles = Vec::new();
@@ -147,6 +179,13 @@ pub fn simulate_players(
         *player.trail = step.trail;
         player.direction.0 = outcome.direction;
         if outcome.died {
+            if let Some(deaths) = deaths.as_mut() {
+                deaths.0.push(DeathRecord {
+                    tick: tick.map(|t| t.0),
+                    victim: player.entity,
+                    cause: death_cause(player.entity, outcome.front_owner),
+                });
+            }
             disable(&mut player);
             continue;
         }
