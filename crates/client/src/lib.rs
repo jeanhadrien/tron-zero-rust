@@ -8,6 +8,7 @@ pub mod browser;
 pub mod config;
 pub mod connection;
 pub mod input;
+pub mod local_scan;
 pub mod menu;
 pub mod platform;
 pub mod render;

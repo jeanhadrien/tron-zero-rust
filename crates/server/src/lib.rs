@@ -8,6 +8,7 @@ pub mod admission;
 pub mod announce;
 pub mod bot;
 pub mod budget;
+pub mod probe;
 pub mod session;
 pub mod systems;
 pub mod turns;
@@ -15,8 +16,9 @@ pub mod web;
 
 use bevy::prelude::*;
 use core::time::Duration;
-use lightyear::prelude::MessageSystems;
 use lightyear::prelude::server::*;
+use lightyear::prelude::{LinkSystems, MessageSystems};
+use lightyear_transport::plugin::TransportSystems;
 
 /// Everything a server needs except bots, the manager announcer and logging:
 /// Lightyear, protocol, connection lifecycle, respawns, turns and simulation.
@@ -39,6 +41,13 @@ pub fn add_core(app: &mut App, port: u16) {
     app.init_resource::<systems::PendingRespawns>();
     // main.rs inserts the configured cap first; the default only serves tests.
     app.init_resource::<admission::MaxPlayers>();
+    // Discovery probes are answered before the transport parses them as packets.
+    app.add_systems(
+        PreUpdate,
+        probe::answer_probes
+            .after(LinkSystems::Receive)
+            .before(TransportSystems::Receive),
+    );
     app.add_systems(
         PreUpdate,
         (

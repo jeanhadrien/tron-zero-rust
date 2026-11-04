@@ -9,6 +9,7 @@ pub mod constants;
 pub mod math;
 pub mod physics;
 pub mod polyline;
+pub mod probe;
 pub mod protocol;
 pub mod spawn;
 pub mod systems;

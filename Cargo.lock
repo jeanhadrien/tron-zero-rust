@@ -7714,6 +7714,7 @@ dependencies = [
  "ctrlc",
  "lightyear",
  "lightyear_aeronet",
+ "lightyear_transport",
  "rand 0.10.2",
  "serde",
  "serde_json",

@@ -6,6 +6,7 @@ use bevy_egui::{EguiContexts, egui};
 use crate::browser::{self, BrowserRow, BrowserState, FetchStatus, ManagerConfig};
 use crate::connection::{AutoConnect, ConnectionPhase, Endpoint, IDLE_STATUS, Session};
 use crate::input::PendingInput;
+use crate::local_scan::LocalServers;
 use crate::settings::{
     MAX_KEYS_PER_SIDE, PlayerName, RebindState, TurnBindings, TurnSide, key_label,
 };
@@ -43,10 +44,12 @@ impl MenuState {
     }
 }
 
-// Caption for the primary button; kept pure for tests.
-pub fn primary_caption(phase: ConnectionPhase) -> &'static str {
+// Caption for the primary button; kept pure for tests. `local_found`: a server
+// answered on this machine, so there is something to connect to while offline.
+pub fn primary_caption(phase: ConnectionPhase, local_found: bool) -> &'static str {
     match phase {
-        ConnectionPhase::Offline => "Connect to Localhost",
+        ConnectionPhase::Offline if local_found => "Connect to Localhost",
+        ConnectionPhase::Offline => "No local server found",
         ConnectionPhase::Connecting | ConnectionPhase::Synchronizing => "Cancel",
         ConnectionPhase::Playing => "Resume",
         ConnectionPhase::Disconnecting => "Disconnecting...",
@@ -89,7 +92,7 @@ pub fn menu_controls(
 // Deferred UI action so binding lists can be read while drawing their buttons.
 enum UiAction {
     None,
-    Connect,
+    Connect(Endpoint),
     CancelConnect,
     Resume,
     Disconnect,
@@ -139,13 +142,10 @@ fn main_screen(
     phase: ConnectionPhase,
     status: &str,
     name_edit: &mut String,
+    local: Option<&Endpoint>,
     action: &mut UiAction,
 ) {
     heading(ui, "TRON ZERO", 34.0);
-    ui.label(
-        egui::RichText::new(format!("LOCALHOST\n127.0.0.1:{}", browser::LOCAL_PLAY_PORT))
-            .size(20.0),
-    );
     body_label(ui, status, 16.0);
     ui.separator();
     ui.horizontal(|ui| {
@@ -158,15 +158,23 @@ fn main_screen(
                 .desired_width(f32::INFINITY),
         );
     });
-    let primary = ui.add_enabled_ui(phase != ConnectionPhase::Disconnecting, |ui| {
-        theme::action_button(ui, primary_caption(phase))
+    let primary_enabled = match phase {
+        ConnectionPhase::Disconnecting => false,
+        ConnectionPhase::Offline => local.is_some(),
+        _ => true,
+    };
+    let primary = ui.add_enabled_ui(primary_enabled, |ui| {
+        theme::action_button(ui, primary_caption(phase, local.is_some()))
     });
     if primary.inner.clicked() {
-        action.set_once(match phase {
-            ConnectionPhase::Offline => UiAction::Connect,
-            ConnectionPhase::Connecting | ConnectionPhase::Synchronizing => UiAction::CancelConnect,
-            ConnectionPhase::Playing => UiAction::Resume,
-            ConnectionPhase::Disconnecting => UiAction::None,
+        action.set_once(match (phase, local) {
+            (ConnectionPhase::Offline, Some(endpoint)) => UiAction::Connect(endpoint.clone()),
+            (ConnectionPhase::Offline, None) => UiAction::None,
+            (ConnectionPhase::Connecting | ConnectionPhase::Synchronizing, _) => {
+                UiAction::CancelConnect
+            }
+            (ConnectionPhase::Playing, _) => UiAction::Resume,
+            (ConnectionPhase::Disconnecting, _) => UiAction::None,
         });
     }
     if phase == ConnectionPhase::Playing && theme::action_button(ui, "Disconnect").clicked() {
@@ -241,6 +249,7 @@ fn settings_screen(
 fn rooms_screen(
     ui: &mut egui::Ui,
     browser: &BrowserState,
+    rows: &[BrowserRow],
     config: &ManagerConfig,
     phase: ConnectionPhase,
     now: f64,
@@ -281,19 +290,18 @@ fn rooms_screen(
     egui::ScrollArea::vertical()
         .max_height(320.0)
         .show(ui, |ui| {
-            if browser.status == FetchStatus::Loaded && browser.rows.iter().all(|row| row.is_local)
-            {
+            if browser.status == FetchStatus::Loaded && rows.iter().all(|row| row.is_local) {
                 // Local-only rows mean either an empty manager or one holding
-                // just our own server (deduped above): say which, so
-                // registration reads as success.
+                // just our own server (deduped): say which, so registration
+                // reads as success.
                 let empty = if browser.manager_total == 0 {
                     "No rooms found. Start a server or check the manager URL."
                 } else {
-                    "Your server is registered - connect via Localhost below."
+                    "Your server is registered - it is listed above as Localhost."
                 };
                 body_label(ui, empty, 14.0);
             }
-            for row in &browser.rows {
+            for row in rows {
                 room_card(ui, row, phase, action);
             }
         });
@@ -362,6 +370,7 @@ pub fn menu_ui(
     mut rebind: ResMut<RebindState>,
     mut browser: ResMut<BrowserState>,
     config: Res<ManagerConfig>,
+    servers: Res<LocalServers>,
     time: Res<Time<Real>>,
 ) {
     if !menu.open {
@@ -376,6 +385,13 @@ pub fn menu_ui(
     let status = session.status.clone();
     let now = time.elapsed_secs_f64();
     let mut action = UiAction::None;
+    let local_rows = browser::local_rows(&servers);
+    let local_endpoint = local_rows.iter().find_map(|row| row.endpoint.clone());
+    let rows = if screen == MenuScreen::Rooms {
+        browser::merge_rows(local_rows, &browser.rows)
+    } else {
+        Vec::new()
+    };
     // Edited on a copy so the resource is only marked changed (and saved)
     // when the text really differs.
     let mut name_edit = player_name.0.clone();
@@ -395,12 +411,17 @@ pub fn menu_ui(
                 ui.set_min_width(404.0);
                 theme::theme_panel(ui);
                 ui.vertical_centered(|ui| match screen {
-                    MenuScreen::Main => {
-                        main_screen(ui, phase, &status, &mut name_edit, &mut action)
-                    }
+                    MenuScreen::Main => main_screen(
+                        ui,
+                        phase,
+                        &status,
+                        &mut name_edit,
+                        local_endpoint.as_ref(),
+                        &mut action,
+                    ),
                     MenuScreen::Settings => settings_screen(ui, &bindings, &rebind, &mut action),
                     MenuScreen::Rooms => {
-                        rooms_screen(ui, &browser, &config, phase, now, &mut action)
+                        rooms_screen(ui, &browser, &rows, &config, phase, now, &mut action)
                     }
                 });
             });
@@ -417,13 +438,9 @@ pub fn menu_ui(
     let join_name = sanitize_name(&player_name.0);
     match action {
         UiAction::None => {}
-        UiAction::Connect => {
+        UiAction::Connect(endpoint) => {
             menu.block_this_frame = true;
-            let local = browser::local_row();
-            match local.endpoint {
-                Some(endpoint) => session.connect(endpoint, &join_name, now, &mut commands),
-                None => session.status = local.problem.unwrap_or_default(),
-            }
+            session.connect(endpoint, &join_name, now, &mut commands);
         }
         UiAction::CancelConnect => {
             menu.block_this_frame = true;
@@ -496,14 +513,24 @@ mod tests {
     #[test]
     fn primary_captions_match_connection_phase() {
         assert_eq!(
-            primary_caption(ConnectionPhase::Offline),
+            primary_caption(ConnectionPhase::Offline, true),
             "Connect to Localhost"
         );
-        assert_eq!(primary_caption(ConnectionPhase::Connecting), "Cancel");
-        assert_eq!(primary_caption(ConnectionPhase::Synchronizing), "Cancel");
-        assert_eq!(primary_caption(ConnectionPhase::Playing), "Resume");
         assert_eq!(
-            primary_caption(ConnectionPhase::Disconnecting),
+            primary_caption(ConnectionPhase::Offline, false),
+            "No local server found"
+        );
+        assert_eq!(
+            primary_caption(ConnectionPhase::Connecting, false),
+            "Cancel"
+        );
+        assert_eq!(
+            primary_caption(ConnectionPhase::Synchronizing, false),
+            "Cancel"
+        );
+        assert_eq!(primary_caption(ConnectionPhase::Playing, false), "Resume");
+        assert_eq!(
+            primary_caption(ConnectionPhase::Disconnecting, false),
             "Disconnecting..."
         );
     }

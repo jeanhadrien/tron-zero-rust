@@ -9,7 +9,7 @@ use bevy_egui::{EguiPlugin, EguiPrimaryContextPass};
 use lightyear::prelude::*;
 use tron_zero_client::{
     add_input_and_prediction, add_network, attach_local_input, browser, config, connection, input,
-    menu, render, settings, sim,
+    local_scan, menu, render, settings, sim,
 };
 
 fn main() {
@@ -57,6 +57,8 @@ fn main() {
     app.init_resource::<connection::Session>();
     app.init_resource::<menu::MenuState>();
     app.init_resource::<browser::BrowserState>();
+    app.init_resource::<local_scan::LocalServers>();
+    app.add_systems(PreUpdate, local_scan::scan_local_servers);
     app.add_systems(Startup, browser::initial_refresh);
     app.add_systems(PreUpdate, browser::poll_browser_fetch);
     app.init_resource::<settings::RebindState>();

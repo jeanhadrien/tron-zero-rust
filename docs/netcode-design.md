@@ -6,14 +6,23 @@ differ from the implementation described first, the implementation wins.
 
 ## Current Rust implementation
 
-The client starts disconnected and connects on request: to localhost
-(`127.0.0.1:5000`), to a room from the server browser (rooms come from the
+The client starts disconnected and connects on request: to a server detected on localhost
+(`127.0.0.1:5000-5003`, see below), to a room from the server browser (rooms come from the
 `server-manager` lobby; connecting uses the same entry point), or on startup
 with `TRON_AUTOCONNECT`. Menu visibility is separate from the connection
 lifecycle: opening the overlay captures fresh gameplay input but does not stop
 simulation or networking.
 `crates\client\src\connection.rs` owns connect, readiness, timeout, and teardown;
 `menu.rs` owns the overlay and `browser.rs` the room list.
+
+Local discovery (`client/local_scan.rs`, `shared/probe.rs`, `server/probe.rs`):
+while the menu is open and offline the client sends a 32-byte probe datagram
+(`0xFF 'T' 'Z' '?'`, version, nonce) from a fresh loopback socket to each local
+port every 1.5 s. The server sees it as the first payload of a new raw-UDP link,
+answers with a 14-byte reply (protocol id, human count, capacity, nonce) and
+closes the link in the same frame, before the transport parses it. The request
+is never smaller than the reply, so a spoofed source cannot use it to amplify.
+Old servers ignore it, so it needs no `PROTOCOL_VERSION` bump.
 
 Raw UDP's local `Connected` marker does not prove a remote server is present.
 An application heartbeat runs every second, with a 5-second liveness timeout

@@ -18,7 +18,7 @@ use crate::settings::PlayerName;
 const CONNECT_TIMEOUT_SECS: f64 = 10.0;
 /// Longest a quit waits for the leave to flush before exiting anyway.
 const QUIT_GRACE_SECS: f64 = 2.0;
-pub const IDLE_STATUS: &str = "Not connected. Connect to Localhost or browse servers.";
+pub const IDLE_STATUS: &str = "Not connected. Browse servers or start a local one.";
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum ConnectionPhase {

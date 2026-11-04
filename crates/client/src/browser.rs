@@ -1,11 +1,11 @@
-//! Server browser: room list from `server-manager/` plus a pinned localhost row.
+//! Server browser: room list from `server-manager/` plus rows for servers
+//! detected on this machine.
 //!
-//! No UDP probing: "automatic local detection" is just a pinned
-//! `127.0.0.1:5000` row that is always first and always connectable. Probing
-//! would mean opening a socket per candidate and guessing from timeouts;
-//! the manager's heartbeats already prove liveness, and stale entries sink
-//! via the `last_heartbeat` sort. The local server's absence surfaces through
-//! the existing `Session` timeout strings, not through new machinery.
+//! Local rows come from `local_scan` (a probe answered by the server), so a
+//! localhost entry exists only while a server is actually there. Manager rows
+//! are never probed; the manager's heartbeats already prove liveness, and stale
+//! entries sink via the `last_heartbeat` sort. A manager room that points at a
+//! detected local server is hidden so the local row wins (`merge_rows`).
 //!
 //! Fetch uses `ehttp` (egui's fetch lib): one API on native and wasm, no
 //! async runtime, no threads or channels of our own. `request_refresh` fires
@@ -26,16 +26,12 @@ use bevy::prelude::*;
 use serde::Deserialize;
 
 use crate::connection::Endpoint;
+use crate::local_scan::{LocalServer, LocalServers};
 
-const LOCAL_PORT: u16 = 5000;
 const LOCAL_WEB_PORT: u16 = 5001;
-const LOCAL_ID: &str = "local";
 
 /// Whether this build dials rooms over WebTransport (the browser) rather than UDP.
 const WEB: bool = cfg!(target_family = "wasm");
-
-/// Port of the pinned localhost server for this build's transport.
-pub const LOCAL_PLAY_PORT: u16 = if WEB { LOCAL_WEB_PORT } else { LOCAL_PORT };
 
 // One room as served by `GET /api/rooms` (see `server-manager/src/room.ts`).
 // `secure` is deliberately absent: serde drops unknown fields, so omitting
@@ -65,7 +61,7 @@ pub struct RoomInfo {
 }
 
 impl RoomInfo {
-    // `max_players == 0` means "unknown" (the pinned local row): never full.
+    // `max_players == 0` means "unknown": never full.
     pub fn is_full(&self) -> bool {
         self.max_players > 0 && self.player_count >= self.max_players
     }
@@ -91,33 +87,78 @@ impl BrowserRow {
     }
 }
 
-// The pinned first row: needs no manager and no DNS. In the browser it dials
-// the local WebTransport port and needs the dev server's certificate digest
-// from the `TRON_CERT_DIGEST` query parameter (the server logs it at startup).
-pub fn local_row() -> BrowserRow {
-    let digest = crate::platform::env_var("TRON_CERT_DIGEST").filter(|d| !d.trim().is_empty());
-    let problem = (WEB && digest.is_none())
-        .then(|| "Add ?TRON_CERT_DIGEST=<server certificate hash> to the page URL.".to_owned());
+// Rows for servers on this machine. Native builds list what `local_scan`
+// found. The browser cannot probe, so it offers the dev server on the local
+// WebTransport port only when the page is served from a local dev host with the
+// server's certificate digest in `?TRON_CERT_DIGEST=` (the server logs it at
+// startup); `env_var` yields nothing elsewhere.
+pub fn local_rows(servers: &LocalServers) -> Vec<BrowserRow> {
+    if WEB {
+        let digest = crate::platform::env_var("TRON_CERT_DIGEST").filter(|d| !d.trim().is_empty());
+        return digest.into_iter().map(web_local_row).collect();
+    }
+    servers.found().iter().map(native_local_row).collect()
+}
+
+fn local_room(port: u16, web_port: Option<u16>, cert_hash: Option<String>) -> RoomInfo {
+    RoomInfo {
+        id: format!("local-{port}"),
+        host: Ipv4Addr::LOCALHOST.to_string(),
+        port,
+        web_port,
+        cert_hash,
+        display_name: "Localhost".into(),
+        player_count: 0,
+        max_players: 0,
+        bot_count: 0,
+        last_heartbeat: 0,
+    }
+}
+
+fn native_local_row(server: &LocalServer) -> BrowserRow {
+    let mut room = local_room(server.port, None, None);
+    room.player_count = u32::from(server.reply.players);
+    room.max_players = u32::from(server.reply.max_players);
+    let compatible = server.reply.compatible();
     BrowserRow {
-        room: RoomInfo {
-            id: LOCAL_ID.into(),
-            host: Ipv4Addr::LOCALHOST.to_string(),
-            port: LOCAL_PORT,
-            web_port: Some(LOCAL_WEB_PORT),
-            cert_hash: digest.clone(),
-            display_name: "Localhost (built-in)".into(),
-            player_count: 0,
-            max_players: 0,
-            bot_count: 0,
-            last_heartbeat: 0,
-        },
-        endpoint: problem.is_none().then(|| Endpoint {
-            addr: SocketAddr::from((Ipv4Addr::LOCALHOST, LOCAL_PLAY_PORT)),
-            cert_digest: if WEB { digest } else { None },
-        }),
-        problem,
+        room,
+        endpoint: compatible.then(|| server.addr().into()),
+        problem: (!compatible).then(|| "Incompatible game version: update the client.".to_owned()),
         is_local: true,
     }
+}
+
+fn web_local_row(digest: String) -> BrowserRow {
+    BrowserRow {
+        room: local_room(5000, Some(LOCAL_WEB_PORT), Some(digest.clone())),
+        endpoint: Some(Endpoint {
+            addr: SocketAddr::from((Ipv4Addr::LOCALHOST, LOCAL_WEB_PORT)),
+            cert_digest: Some(digest),
+        }),
+        problem: None,
+        is_local: true,
+    }
+}
+
+// Local rows first, then manager rows; a manager room that resolves to a
+// detected local server is dropped so the local row wins and never duplicates.
+pub fn merge_rows(local: Vec<BrowserRow>, manager: &[BrowserRow]) -> Vec<BrowserRow> {
+    let local_addrs: Vec<SocketAddr> = local
+        .iter()
+        .filter_map(|row| row.endpoint.as_ref().map(|endpoint| endpoint.addr))
+        .collect();
+    let mut rows = local;
+    rows.extend(
+        manager
+            .iter()
+            .filter(|row| {
+                row.endpoint
+                    .as_ref()
+                    .is_none_or(|endpoint| !local_addrs.contains(&endpoint.addr))
+            })
+            .cloned(),
+    );
+    rows
 }
 
 // Trailing slashes would double up in rooms_url(); surrounding whitespace
@@ -228,30 +269,22 @@ fn web_endpoint(room: &RoomInfo) -> (Option<Endpoint>, Option<String>) {
     )
 }
 
-// Local row first, then manager rooms; a manager entry pointing at the local
-// server is dropped so the pinned row wins and never duplicates. The browser
-// lists only rooms that announce a `webPort`.
+// Manager rooms as rows, busiest first. The browser lists only rooms that
+// announce a `webPort`.
 fn build_rows(rooms: Vec<RoomInfo>) -> Vec<BrowserRow> {
-    let local = local_row();
-    let local_addr = local.endpoint.as_ref().map(|endpoint| endpoint.addr);
-    let mut rows = vec![local];
-    for room in sort_manager_rows(rooms) {
-        if WEB && room.web_port.is_none() {
-            continue;
-        }
-        let (endpoint, problem) = resolve_room(&room);
-        let addr = endpoint.as_ref().map(|endpoint| endpoint.addr);
-        if addr.is_some() && addr == local_addr {
-            continue;
-        }
-        rows.push(BrowserRow {
-            room,
-            endpoint,
-            problem,
-            is_local: false,
-        });
-    }
-    rows
+    sort_manager_rows(rooms)
+        .into_iter()
+        .filter(|room| !(WEB && room.web_port.is_none()))
+        .map(|room| {
+            let (endpoint, problem) = resolve_room(&room);
+            BrowserRow {
+                room,
+                endpoint,
+                problem,
+                is_local: false,
+            }
+        })
+        .collect()
 }
 
 #[derive(Debug, Clone, Resource)]
@@ -311,22 +344,21 @@ struct FetchOutcome {
 
 #[derive(Resource)]
 pub struct BrowserState {
+    /// Manager rooms only; combine with [`local_rows`] via [`merge_rows`].
     pub rows: Vec<BrowserRow>,
     pub status: FetchStatus,
     pub error: Option<String>,
     pub last_updated: Option<f64>,
-    // Raw manager room count before local-duplicate filtering; lets the UI
-    // tell "manager empty" apart from "only our own server registered".
+    // Raw manager room count; lets the UI tell "manager empty" apart from
+    // "only our own server registered".
     pub manager_total: usize,
     pending: Option<FetchSlot>,
 }
 
 impl Default for BrowserState {
-    // Local row only: usable before the first refresh and when the manager
-    // is unreachable.
     fn default() -> Self {
         Self {
-            rows: vec![local_row()],
+            rows: Vec::new(),
             status: FetchStatus::Loaded,
             error: None,
             last_updated: None,
@@ -480,38 +512,83 @@ mod tests {
         assert_eq!(parse_rooms(body).unwrap()[0].host, "127.0.0.1");
     }
 
+    fn local_server(port: u16) -> LocalServers {
+        LocalServers::with_server(
+            port,
+            shared::probe::ProbeReply {
+                protocol: shared::protocol::PROTOCOL_ID,
+                players: 2,
+                max_players: 10,
+            },
+        )
+    }
+
     #[test]
-    fn local_row_stays_first_and_manager_rows_are_ordered() {
+    fn manager_rows_are_ordered_and_there_is_no_local_row_without_a_server() {
         let rows = build_rows(vec![
             room("quiet", 1, 9),
             room("busy-stale", 5, 1),
             room("busy-fresh", 5, 2),
         ]);
-        assert_eq!(rows.len(), 4);
-        assert!(rows[0].is_local);
-        assert!(rows[0].endpoint.is_some());
-        let ids: Vec<&str> = rows[1..].iter().map(|row| row.room.id.as_str()).collect();
+        let ids: Vec<&str> = rows.iter().map(|row| row.room.id.as_str()).collect();
         assert_eq!(ids, ["busy-fresh", "busy-stale", "quiet"]);
+        assert!(local_rows(&LocalServers::default()).is_empty());
+        assert!(BrowserState::default().rows.is_empty());
     }
 
+    #[cfg(not(target_family = "wasm"))]
+    #[test]
+    fn detected_server_gets_a_connectable_local_row_first() {
+        let local = local_rows(&local_server(5002));
+        assert_eq!(local.len(), 1);
+        assert!(local[0].is_local);
+        assert_eq!(local[0].room.player_count, 2);
+        assert_eq!(local[0].room.max_players, 10);
+        assert_eq!(
+            local[0].endpoint,
+            Some(SocketAddr::from((Ipv4Addr::LOCALHOST, 5002)).into())
+        );
+        let merged = merge_rows(local, &build_rows(vec![room("remote", 1, 1)]));
+        assert!(merged[0].is_local);
+        assert_eq!(merged[1].room.id, "remote");
+    }
+
+    #[cfg(not(target_family = "wasm"))]
+    #[test]
+    fn server_from_another_build_is_listed_but_not_connectable() {
+        let servers = LocalServers::with_server(
+            5000,
+            shared::probe::ProbeReply {
+                protocol: shared::protocol::PROTOCOL_ID.wrapping_add(1),
+                players: 0,
+                max_players: 10,
+            },
+        );
+        let rows = local_rows(&servers);
+        assert!(rows[0].endpoint.is_none());
+        assert!(rows[0].problem.is_some());
+    }
+
+    #[cfg(not(target_family = "wasm"))]
     #[test]
     fn manager_row_pointing_at_local_server_is_dropped() {
         let mut dup = room("dup", 9, 9);
         dup.host = "127.0.0.1".into();
-        dup.port = LOCAL_PORT;
-        let rows = build_rows(vec![dup]);
-        assert_eq!(rows.len(), 1);
-        assert!(rows[0].is_local);
+        dup.port = 5002;
+        let manager = build_rows(vec![dup.clone()]);
+        let merged = merge_rows(local_rows(&local_server(5002)), &manager);
+        assert_eq!(merged.len(), 1);
+        assert!(merged[0].is_local);
+        // Without a detected local server the manager row is shown normally.
+        let merged = merge_rows(Vec::new(), &manager);
+        assert_eq!(merged.len(), 1);
+        assert!(!merged[0].is_local);
     }
 
     #[test]
-    fn own_server_only_still_counts_as_registered() {
-        let mut dup = room("dup", 9, 9);
-        dup.host = "127.0.0.1".into();
-        dup.port = LOCAL_PORT;
+    fn manager_total_counts_rooms_before_dedup() {
         let mut state = BrowserState::default();
-        state.apply_rooms(vec![dup], 1.0);
-        assert!(state.rows.iter().all(|row| row.is_local));
+        state.apply_rooms(vec![room("a", 1, 1)], 1.0);
         assert_eq!(state.manager_total, 1);
         state.apply_rooms(vec![], 2.0);
         assert_eq!(state.manager_total, 0);
@@ -521,12 +598,12 @@ mod tests {
     fn fetch_error_keeps_stale_rows() {
         let mut state = BrowserState::default();
         state.apply_rooms(vec![room("a", 2, 3)], 1.0);
-        assert_eq!(state.rows.len(), 2);
+        assert_eq!(state.rows.len(), 1);
         state.apply_error(http_status_error(500));
         assert_eq!(state.status, FetchStatus::Failed);
         assert_eq!(state.error.as_deref(), Some("Manager returned 500"));
-        assert_eq!(state.rows.len(), 2);
-        assert_eq!(state.rows[1].room.id, "a");
+        assert_eq!(state.rows.len(), 1);
+        assert_eq!(state.rows[0].room.id, "a");
     }
 
     #[test]
@@ -554,7 +631,7 @@ mod tests {
     fn full_rooms_are_detected_but_unknown_capacity_is_not() {
         assert!(!room("a", 7, 0).is_full());
         assert!(room("a", 8, 0).is_full());
-        assert!(!local_row().room.is_full());
+        assert!(!local_room(5000, None, None).is_full());
     }
 
     #[test]

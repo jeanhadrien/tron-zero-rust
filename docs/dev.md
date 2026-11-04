@@ -127,7 +127,7 @@ bun run dev          # listens on :3001 (PORT to override)
 Then start the Rust server (`MANAGER_URL` defaults to `http://localhost:3001`)
 and open the client's Rooms screen. The server registers, heartbeats every 2 s
 and re-registers on a 404; without the manager it retries every 5 s and the
-client still shows its pinned localhost row. Server env vars (`MANAGER_URL`,
+client still lists any server it detects on this machine. Server env vars (`MANAGER_URL`,
 `ADVERTISED_HOST`, `ALLOW_LOOPBACK_ANNOUNCE`, ...) are in `docs/building.md`;
 the API and the announce protocol are in `server-manager/README.md`.
 
@@ -209,7 +209,14 @@ scenario; a scenario without a golden fails). After an intended behaviour change
 The client starts disconnected, with a menu over an empty grid (unless
 `TRON_AUTOCONNECT` is set, see above). Type a **Name** (16 characters max,
 saved), start the server separately, then click **Connect to Localhost** to
-join `127.0.0.1:5000`, or pick a room under **Browse Servers**. Full rooms show
+join it, or pick a room under **Browse Servers**. The button is disabled
+("No local server found") until a server answers a probe on `127.0.0.1`
+ports 5000-5003; the menu re-probes about every 1.5 s while it is open and
+offline (never during play). A second local server needs its own `PORT` and
+`WEB_PORT` (e.g. `PORT=5002 WEB_PORT=5012`); 5001 is the default WebTransport
+port and never answers. Servers found there also appear first under
+**Browse Servers**. The browser build cannot probe UDP, so it lists localhost
+only on a local dev host with `?TRON_CERT_DIGEST=` (see `docs/run.md`). Full rooms show
 a disabled **Full** button. **Quit game** leaves the server first (so the rider
 is removed at once) and then exits; the window close button does the same.
 
@@ -234,7 +241,7 @@ ignoring case and spaces).
   Client logs record these transitions; the server logs its first valid heartbeat.
 - Connecting/synchronizing offers **Cancel**. An attempt times out after
   10 seconds; an established session stops after 5 seconds without a heartbeat
-  reply. Errors remain visible, and **Connect to Localhost** retries explicitly.
+  reply. Errors remain visible, and connecting again is an explicit click.
 - **Escape** toggles the translucent overlay during play. **Resume** or Enter
   closes it. The live session and camera continue behind it: your rider keeps
   moving and can die. This is not a pause or invulnerability mode.

@@ -14,6 +14,8 @@ lightyear = { workspace = true, features = ["udp", "raw_connection", "input_nati
 aeronet_io = "0.21"
 aeronet_webtransport = { version = "0.21", features = ["server"] }
 lightyear_aeronet = "0.28"
+# Direct dep only to order the probe hook before the transport parses packets (`probe.rs`).
+lightyear_transport = "0.28"
 time = "0.3"
 tokio = { version = "1", features = ["rt"] }
 rand.workspace = true

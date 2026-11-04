@@ -273,3 +273,35 @@ fn rejection_survives_packet_loss() {
         "the server closes the refused links"
     );
 }
+
+#[test]
+fn discovery_probe_is_answered_without_leaving_a_link() {
+    use shared::probe::{PROBE_REPLY_LEN, decode_reply, encode_request};
+
+    let _guard = serial();
+    let mut net = Net::new(Impairment::NONE);
+    let socket = std::net::UdpSocket::bind("127.0.0.1:0").expect("bind");
+    socket
+        .set_read_timeout(Some(Duration::from_millis(5)))
+        .expect("timeout");
+    let nonce = [7, 1, 2, 3];
+    socket
+        .send_to(&encode_request(nonce), ("127.0.0.1", net.port()))
+        .expect("send");
+
+    let mut buf = [0u8; 64];
+    let mut reply = None;
+    net.run_until(WAIT, |_| {
+        if let Ok((len, _)) = socket.recv_from(&mut buf) {
+            assert_eq!(len, PROBE_REPLY_LEN);
+            reply = decode_reply(&buf[..len], nonce);
+        }
+        reply.is_some()
+    });
+    let reply = reply.expect("the server answers the probe");
+    assert!(reply.compatible());
+    assert_eq!(reply.players, 0);
+
+    net.run_server_ticks(30);
+    assert_eq!(net.server.link_count(), 0, "a probe leaves no link behind");
+}
