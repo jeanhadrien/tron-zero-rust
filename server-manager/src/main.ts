@@ -5,6 +5,11 @@ import { Logger } from './logger';
 import { registerRoom, removeRoom, getRoom, getAllRooms, evictStale, findByEndpoint, isAuthorized, isFull, MAX_ROOMS } from './roomStore';
 import { rateLimit } from './rateLimit';
 import type { RegisterPayload, RegisterResponse, RoomEntry } from './room';
+import { authenticate, createAccount, sanitizeName } from './accounts';
+import { checkRankedKey, forgetRankedRoom, getRankedRoom, markRanked, pruneRankedRooms, recordRoster } from './ranked';
+import { issueTicket, publicKeys } from './tickets';
+import { applyResults, parseResults } from './results';
+import { store } from './store';
 
 const HEARTBEAT_INTERVAL = 30_000; // servers should heartbeat every 30s
 const EVICT_GRACE = 10_000; // extra grace period => 40s idle eviction
@@ -26,10 +31,23 @@ const app = express();
 // Behind Cloud Run / a load balancer req.ip is the proxy unless told how many hops
 // to trust (the Dockerfile sets 1). Default 0: never trust X-Forwarded-For.
 app.set('trust proxy', Number(process.env.TRUST_PROXY) || 0);
-// Read-only CORS: browsers may list rooms but not mutate them (non-GET preflights
-// fail). Game servers are not browsers and need no CORS.
+// Account routes are called by the web client with a bearer credential, so they
+// get an origin allow-list (WEB_ORIGINS, comma-separated; empty = no browser
+// origin). Registered before the global CORS so their preflight is answered here.
+const webOrigins = (process.env.WEB_ORIGINS ?? '').split(',').map((o) => o.trim()).filter(Boolean);
+const accountCors = cors({
+  origin: webOrigins,
+  methods: ['GET', 'POST'],
+  allowedHeaders: ['Authorization', 'Content-Type'],
+});
+app.use(['/api/accounts', '/api/tickets', '/api/me'], accountCors);
+// Everything else is read-only for browsers: they may list rooms but not mutate
+// them (non-GET preflights fail). Game servers are not browsers and need no CORS.
 app.use(cors({ methods: ['GET'] }));
-app.use(express.json({ limit: '16kb' }));
+// Result batches are larger than any other body; they get their own limit.
+const smallJson = express.json({ limit: '16kb' });
+const resultsJson = express.json({ limit: '256kb' });
+app.use((req, res, next) => (req.path.endsWith('/results') ? resultsJson : smallJson)(req, res, next));
 
 app.get('/health', (_req, res) => {
   res.json({ ok: true, uptime: Math.floor((Date.now() - startedAt) / 1000) });
@@ -54,6 +72,7 @@ function parseRegister(raw: unknown): RegisterPayload | string {
   if (b.secure != null && typeof b.secure !== 'boolean') return 'Invalid secure';
   if (b.webPort != null && !isInt(b.webPort, 1, 65535)) return 'Invalid webPort';
   if (b.certHash != null && (typeof b.certHash !== 'string' || !CERT_HASH.test(b.certHash))) return 'Invalid certHash';
+  if (b.rankedKey != null && (typeof b.rankedKey !== 'string' || b.rankedKey.length > 200)) return 'Invalid rankedKey';
   return {
     host: b.host,
     port: b.port,
@@ -62,6 +81,7 @@ function parseRegister(raw: unknown): RegisterPayload | string {
     ...(b.secure != null && { secure: b.secure }),
     ...(b.webPort != null && { webPort: b.webPort }),
     ...(typeof b.certHash === 'string' && { certHash: b.certHash.toLowerCase() }),
+    ...(typeof b.rankedKey === 'string' && { rankedKey: b.rankedKey }),
   };
 }
 
@@ -72,7 +92,7 @@ function bearerToken(header: string | undefined): string | undefined {
 
 // Register a new game room. Re-registering a live host:port only works with that
 // room's token (restart/re-register); otherwise 409, so nobody can evict a room.
-app.post('/api/rooms', rateLimit(REGISTER_LIMIT, 60_000), (req, res) => {
+app.post('/api/rooms', rateLimit(REGISTER_LIMIT, 60_000), async (req, res) => {
   const body = parseRegister(req.body);
   if (typeof body === 'string') {
     logger.warn('Register rejected:', body);
@@ -91,11 +111,28 @@ app.post('/api/rooms', rateLimit(REGISTER_LIMIT, 60_000), (req, res) => {
     return;
   }
 
+  // A ranked key is checked before anything is created, so a bad key leaves no room behind.
+  const key = body.rankedKey ? await checkRankedKey(body.rankedKey) : undefined;
+  if (key && !key.ok) {
+    logger.warn(`Register rejected: ${key.reason} (ip=${req.ip})`);
+    res.status(403).json({ error: key.reason });
+    return;
+  }
+
   const id = randomUUID();
   const token = randomBytes(32).toString('hex');
   const entry = registerRoom(body, id, token);
-  logger.info(`Room registered — id=${id} name="${body.displayName}" host=${body.host}:${body.port}`);
+  if (key?.ok) {
+    markRanked(id, key.keyId, key.official);
+    entry.ranked = true;
+    entry.official = key.official;
+  }
   const response: RegisterResponse = { ...entry, token };
+  if (key?.ok) {
+    response.keyId = key.keyId;
+    response.publicKeys = publicKeys();
+  }
+  logger.info(`Room registered — id=${id} name="${body.displayName}" host=${body.host}:${body.port} ranked=${!!key}`);
   res.json(response);
 });
 
@@ -118,6 +155,16 @@ function authorizedRoom(req: express.Request<{ id: string }>, res: express.Respo
 const isCount = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
 const clampCount = (v: number, max: number): number => Math.min(Math.max(Math.trunc(v), 0), max);
 
+const MAX_ROSTER = 1_000;
+
+// Lenient on purpose: a malformed roster only means nobody is proven present.
+function parseRoster(raw: unknown): { humans: string[]; tickets: string[] } | undefined {
+  const r = (raw && typeof raw === 'object' ? raw : undefined) as Record<string, unknown> | undefined;
+  const strings = (v: unknown): string[] =>
+    Array.isArray(v) ? v.filter((s): s is string => typeof s === 'string').slice(0, MAX_ROSTER) : [];
+  return r ? { humans: strings(r.humans), tickets: strings(r.tickets) } : undefined;
+}
+
 // Heartbeat from a game room
 app.post('/api/rooms/:id/heartbeat', (req, res) => {
   const room = authorizedRoom(req, res);
@@ -132,6 +179,11 @@ app.post('/api/rooms/:id/heartbeat', (req, res) => {
     res.status(400).json({ error: 'Invalid botCount' });
     return;
   }
+  const ranked = getRankedRoom(req.params.id);
+  if (ranked) {
+    const roster = parseRoster((req.body as { roster?: unknown } | undefined)?.roster);
+    if (roster) recordRoster(ranked, roster);
+  }
   if (playerCount != null) room.playerCount = clampCount(playerCount, room.maxPlayers);
   if (botCount != null) room.botCount = clampCount(botCount, MAX_BOTS_LIMIT);
   room.lastHeartbeat = Date.now();
@@ -142,6 +194,7 @@ app.post('/api/rooms/:id/heartbeat', (req, res) => {
 app.delete('/api/rooms/:id', (req, res) => {
   if (getRoom(req.params.id) && !authorizedRoom(req, res)) return;
   const existed = removeRoom(req.params.id);
+  forgetRankedRoom(req.params.id);
   logger.info(`Room unregistered — id=${req.params.id} existed=${existed}`);
   res.json({ ok: true, existed });
 });
@@ -151,6 +204,84 @@ app.get('/api/rooms', (_req, res) => {
   const rooms = getAllRooms();
   logger.debug(`Listed ${rooms.length} room(s)`);
   res.json(rooms);
+});
+
+// --- Accounts, tickets, ratings -------------------------------------------
+
+// Anonymous account on first launch. The credential is shown once.
+app.post('/api/accounts', rateLimit(10, 60_000), async (req, res) => {
+  const displayName = sanitizeName((req.body as { displayName?: unknown } | undefined)?.displayName);
+  const account = await createAccount(displayName);
+  logger.info(`Account created — id=${account.id}`);
+  res.json({ id: account.id, credential: account.credential });
+});
+
+// Join ticket for a ranked room. The latest display name travels with the request.
+app.post('/api/tickets', rateLimit(60, 60_000), async (req, res) => {
+  const account = await authenticate(bearerToken(req.header('authorization')));
+  if (!account) {
+    res.status(401).json({ error: 'Invalid or missing account credential' });
+    return;
+  }
+  const body = (req.body ?? {}) as { roomId?: unknown; displayName?: unknown };
+  const room = typeof body.roomId === 'string' ? getRoom(body.roomId) : undefined;
+  const ranked = room && getRankedRoom(room.entry.id);
+  if (!room || !ranked) {
+    res.status(404).json({ error: 'Ranked room not found' });
+    return;
+  }
+  const displayName = sanitizeName(body.displayName ?? account.displayName);
+  if (displayName !== account.displayName) await store.setDisplayName(account.id, displayName);
+  const ticket = issueTicket({ accountId: account.id, displayName, serverKeyId: ranked.keyId, roomId: room.entry.id });
+  res.json({ ticket: ticket.toString('base64') });
+});
+
+// Verification keys for game servers (they also get them at register).
+app.get('/api/keys', (_req, res) => {
+  res.json(publicKeys());
+});
+
+// The caller's own rating and rank.
+app.get('/api/me', async (req, res) => {
+  const account = await authenticate(bearerToken(req.header('authorization')));
+  if (!account) {
+    res.status(401).json({ error: 'Invalid or missing account credential' });
+    return;
+  }
+  const rating = await store.rating(`acct:${account.id}`);
+  if (!rating) {
+    res.status(404).json({ error: 'No rating' });
+    return;
+  }
+  const rank = rating.eligible ? (await store.countEligibleAbove(rating.rating)) + 1 : null;
+  res.json({ id: rating.id, displayName: rating.displayName, rating: Math.round(rating.rating), ratedEvents: rating.ratedEvents, rank });
+});
+
+const MAX_LEADERBOARD = 100;
+
+app.get('/api/leaderboard', async (req, res) => {
+  const limit = Math.min(Math.max(Number(req.query.limit) || 50, 1), MAX_LEADERBOARD);
+  const rows = await store.leaderboard(limit);
+  res.json(rows.map((r, i) => ({ rank: i + 1, id: r.id, kind: r.kind, displayName: r.displayName, rating: Math.round(r.rating) })));
+});
+
+// Elimination results from a ranked room (room token auth, like heartbeats).
+app.post('/api/rooms/:id/results', async (req, res) => {
+  const room = authorizedRoom(req, res);
+  if (!room) return;
+  const ranked = getRankedRoom(req.params.id);
+  if (!ranked) {
+    res.status(403).json({ error: 'Room is not ranked' });
+    return;
+  }
+  const body = parseResults(req.body);
+  if (typeof body === 'string') {
+    res.status(400).json({ error: body });
+    return;
+  }
+  const outcome = await applyResults(store, ranked, body);
+  if (!outcome.duplicate) logger.debug(`Results — room=${req.params.id} applied=${outcome.applied} skipped=${outcome.skipped}`);
+  res.json({ ok: true, ...outcome });
 });
 
 // Malformed JSON bodies etc. => JSON error instead of an HTML stack page.
@@ -163,6 +294,7 @@ app.use((err: { status?: number; statusCode?: number }, _req: express.Request, r
 // Periodic eviction of stale rooms
 const evictionInterval = setInterval(() => {
   const removed = evictStale(HEARTBEAT_INTERVAL + EVICT_GRACE);
+  pruneRankedRooms(new Set(getAllRooms().map((room) => room.id)));
   if (removed > 0) {
     logger.warn(`Evicted ${removed} stale room(s)`);
   }
