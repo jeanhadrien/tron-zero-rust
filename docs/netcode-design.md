@@ -105,9 +105,24 @@ is a "connection" as soon as one packet arrives (see `NETWORK.md`). Lightyear
   histories sampled at or before the preceding simulation tick. Opponents with
   unavailable history are omitted until history is available. Locally predicted
   obstacles use their live start-of-tick state.
-- Position, direction, alive state and trails use step interpolation to keep
-  corners and trail heads coherent. Smooth visual interpolation is not yet
-  implemented.
+- Direction and alive state use step interpolation; `Position` too (the
+  rendered head and the debug overlays read the render pose instead). Opponent
+  `Trail`s use `shared::polyline::interpolate_trail`: the head slides along the
+  newer trail from where the older head was; when the older head is not on it
+  (death, respawn) the trail steps at `t = 1` like the other components.
+- Render smoothing is client-only and never writes sim components
+  (`client/src/render/smooth.rs`). Each rider gets a `Rendered` pose (head +
+  trail) built in `Update` (`RenderSet::State`, after Lightyear's interpolation,
+  before every draw system and the camera). The own rider's head interpolates
+  between the last two ticks by `Time<Fixed>::overstep_fraction()` (one tick of
+  visual delay, no extrapolation). A rollback is measured at its end: the
+  predicted head of the tick the rollback reached versus the corrected head of
+  the same tick, along the trail. That distance becomes a lag (capped) the
+  drawn head trails by; it decays once per frame (about 100 ms). It snaps if the
+  predicted head is no longer on the trail or was ahead of the corrected head,
+  and on life/alive change and first sight; a timeline resync only drops the
+  lag. The camera follows the render head, easing for 0.2 s only after a large
+  respawn jump.
 - Human respawn uses a dedicated ordered-reliable `RespawnChannel`:
   `RespawnRequest { generation }` is sent client → server and a
   `RespawnReply { generation, outcome }` is returned to that connection.

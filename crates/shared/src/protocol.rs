@@ -397,10 +397,12 @@ pub fn register_protocol(app: &mut App) {
     app.component::<IsColliding>().replicate().predict();
     app.component::<ShouldHandleDeath>().replicate().predict();
     app.component::<LifeGeneration>().replicate().predict();
+    // Render-only smoothing: the head slides along the trail between snapshots.
+    // Collision reads `ConfirmedHistory<Trail>`, not this interpolated value.
     app.component::<Trail>()
         .replicate()
         .predict()
-        .add_interpolation_with(step);
+        .add_interpolation_with(interpolate_trail_component);
 
     // --- Replicated-only (no prediction needed) ---
     app.component::<BotDebug>().replicate();
@@ -420,7 +422,11 @@ pub fn register_protocol(app: &mut App) {
     // transmitting the value. Both sides add it manually on their entity.
 }
 
-// Discrete snapshots keep cardinal turns and trail heads on the same tick.
+fn interpolate_trail_component(start: Trail, end: Trail, t: f32) -> Trail {
+    Trail(crate::polyline::interpolate_trail(&start.0, &end.0, t))
+}
+
+// Discrete snapshots keep cardinal turns on the tick they happened.
 fn step<T>(start: T, end: T, t: f32) -> T {
     if t >= 1.0 { end } else { start }
 }

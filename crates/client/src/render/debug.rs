@@ -11,11 +11,13 @@ use lightyear::prelude::input::native::InputMarker;
 use lightyear::prelude::{Client, Connected, Controlled, ControlledBy, Predicted};
 use shared::{
     ARENA_WIDTH, BASE_SPEED, BotDebug, Direction, DisplayName, IsAlive, Player, PlayerInput,
-    Position, TICK_SECS,
+    TICK_SECS,
 };
 
 use crate::connection::{ConnectionPhase, Session};
 use crate::menu::MenuState;
+
+use super::smooth::Rendered;
 
 /// Env var gating the overlay (mirrors the server writer).
 pub const BOT_DEBUG_ENV: &str = "TRON_BOT_DEBUG";
@@ -144,9 +146,9 @@ type DebugBot = (With<Player>, With<BotDebug>);
 #[allow(clippy::type_complexity)]
 pub fn draw_bot_debug(
     overlay: Res<DebugOverlay>,
-    locals: Query<(&Position, Option<&ControlledBy>), LocalRider>,
+    locals: Query<(&Rendered, Option<&ControlledBy>), LocalRider>,
     clients: Query<Entity, (With<Client>, With<Connected>)>,
-    bots: Query<(Entity, &Position, &Direction, &BotDebug, &IsAlive), DebugBot>,
+    bots: Query<(Entity, &Rendered, &Direction, &BotDebug, &IsAlive), DebugBot>,
     camera: Query<&Transform, With<Camera2d>>,
     mut gizmos: Gizmos,
 ) {
@@ -157,7 +159,7 @@ pub fn draw_bot_debug(
     let alive: Vec<(Entity, Vec2)> = bots
         .iter()
         .filter(|(_, _, _, _, alive)| alive.0)
-        .map(|(entity, pos, _, _, _)| (entity, pos.0))
+        .map(|(entity, pos, _, _, _)| (entity, pos.head))
         .collect();
     let Some(selected) = select_debug_bot(anchor, &alive) else {
         return;
@@ -165,17 +167,17 @@ pub fn draw_bot_debug(
     let Ok((_, pos, dir, dbg, _)) = bots.get(selected) else {
         return;
     };
-    draw_rays(&mut gizmos, pos.0, dir.0, dbg);
-    draw_enemy_link(&mut gizmos, pos.0, dbg);
-    draw_rings(&mut gizmos, pos.0, dbg);
-    draw_forks(&mut gizmos, pos.0, dir.0, dbg);
-    draw_cells(&mut gizmos, pos.0, dbg);
-    draw_ray_cells(&mut gizmos, pos.0, dir.0, dbg);
+    draw_rays(&mut gizmos, pos.head, dir.0, dbg);
+    draw_enemy_link(&mut gizmos, pos.head, dbg);
+    draw_rings(&mut gizmos, pos.head, dbg);
+    draw_forks(&mut gizmos, pos.head, dir.0, dbg);
+    draw_cells(&mut gizmos, pos.head, dbg);
+    draw_ray_cells(&mut gizmos, pos.head, dir.0, dbg);
 }
 
 /// Resolve the selection anchor: local rider, else camera centre, else origin.
 fn debug_anchor(
-    locals: &Query<(&Position, Option<&ControlledBy>), LocalRider>,
+    locals: &Query<(&Rendered, Option<&ControlledBy>), LocalRider>,
     clients: &Query<Entity, (With<Client>, With<Connected>)>,
     camera: &Query<&Transform, With<Camera2d>>,
 ) -> Vec2 {
@@ -183,7 +185,7 @@ fn debug_anchor(
         locals
             .iter()
             .find(|(_, owner)| owner.is_none_or(|owner| owner.owner == client))
-            .map(|(pos, _)| pos.0)
+            .map(|(pos, _)| pos.head)
     });
     if let Some(pos) = local {
         return pos;
@@ -327,9 +329,9 @@ pub fn debug_panel_ui(
     overlay: Res<DebugOverlay>,
     session: Res<Session>,
     menu: Res<MenuState>,
-    locals: Query<(&Position, Option<&ControlledBy>), LocalRider>,
+    locals: Query<(&Rendered, Option<&ControlledBy>), LocalRider>,
     clients: Query<Entity, (With<Client>, With<Connected>)>,
-    bots: Query<(Entity, &Position, &BotDebug, Option<&DisplayName>, &IsAlive), DebugBot>,
+    bots: Query<(Entity, &Rendered, &BotDebug, Option<&DisplayName>, &IsAlive), DebugBot>,
     camera: Query<&Transform, With<Camera2d>>,
 ) {
     if !overlay.enabled || menu.open || session.phase != ConnectionPhase::Playing {
@@ -342,7 +344,7 @@ pub fn debug_panel_ui(
     let alive: Vec<(Entity, Vec2)> = bots
         .iter()
         .filter(|(_, _, _, _, alive)| alive.0)
-        .map(|(entity, pos, _, _, _)| (entity, pos.0))
+        .map(|(entity, pos, _, _, _)| (entity, pos.head))
         .collect();
     let selected = select_debug_bot(anchor, &alive).and_then(|e| bots.get(e).ok());
     egui::Area::new("bot_debug_panel".into())

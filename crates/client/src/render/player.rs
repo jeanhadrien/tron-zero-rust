@@ -1,7 +1,9 @@
 //! Lightcycle + trail rendering.
 
 use bevy::prelude::*;
-use shared::{Direction, DisplayName, IsAlive, Player, PlayerColor, Position, Trail};
+use shared::{Direction, DisplayName, IsAlive, Player, PlayerColor};
+
+use super::smooth::Rendered;
 
 /// World-space Y offset of the name label above the rider.
 const NAME_Y_OFFSET: f32 = 26.0;
@@ -16,21 +18,19 @@ pub struct NameLabel {
     rider: Entity,
 }
 
-/// Draw trail line segments for every player.
-///
-/// Geometry, including the active head, comes from one replicated snapshot.
+/// Draw trail line segments for every player, from the smoothed render pose.
 pub fn draw_trails(
-    players: Query<(&Trail, &PlayerColor, &IsAlive), With<Player>>,
+    players: Query<(&Rendered, &PlayerColor, &IsAlive), With<Player>>,
     mut gizmos: Gizmos,
 ) {
-    for (trail, color, alive) in &players {
+    for (rendered, color, alive) in &players {
         let trail_color = if alive.0 {
             Color::srgb_u32(color.0)
         } else {
             Color::srgb(0.3, 0.3, 0.3)
         };
 
-        for window in trail.0.windows(2) {
+        for window in rendered.trail.windows(2) {
             gizmos.line_2d(window[0], window[1], trail_color);
         }
     }
@@ -38,23 +38,24 @@ pub fn draw_trails(
 
 /// Draw every lightcycle: a filled circle plus a short heading line.
 pub fn draw_players(
-    players: Query<(&Position, &Direction, &PlayerColor, &IsAlive), With<Player>>,
+    players: Query<(&Rendered, &Direction, &PlayerColor, &IsAlive), With<Player>>,
     mut gizmos: Gizmos,
 ) {
-    for (pos, dir, color, alive) in &players {
+    for (rendered, dir, color, alive) in &players {
+        let head = rendered.head;
         let body = if alive.0 {
             Color::srgb_u32(color.0)
         } else {
             Color::srgb(1.0, 0.15, 0.15)
         };
-        gizmos.circle_2d(pos.0, 14.0, body).resolution(24);
+        gizmos.circle_2d(head, 14.0, body).resolution(24);
         if alive.0 {
-            gizmos.line_2d(pos.0, pos.0 + dir.0 * 28.0, body);
+            gizmos.line_2d(head, head + rendered.heading(dir.0) * 28.0, body);
         } else {
-            gizmos.line_2d(pos.0 - Vec2::splat(18.0), pos.0 + Vec2::splat(18.0), body);
+            gizmos.line_2d(head - Vec2::splat(18.0), head + Vec2::splat(18.0), body);
             gizmos.line_2d(
-                pos.0 + Vec2::new(-18.0, 18.0),
-                pos.0 + Vec2::new(18.0, -18.0),
+                head + Vec2::new(-18.0, 18.0),
+                head + Vec2::new(18.0, -18.0),
                 body,
             );
         }
@@ -73,7 +74,7 @@ pub fn sync_name_labels(
         (
             Entity,
             Option<&DisplayName>,
-            &Position,
+            &Rendered,
             &PlayerColor,
             &IsAlive,
         ),
@@ -94,7 +95,7 @@ pub fn sync_name_labels(
         by_rider.insert(label.rider, entity);
     }
 
-    for (rider, name, pos, color, alive) in &riders {
+    for (rider, name, rendered, color, alive) in &riders {
         let text = name.map_or(FALLBACK_NAME, |name| {
             if name.0.is_empty() {
                 FALLBACK_NAME
@@ -102,7 +103,7 @@ pub fn sync_name_labels(
                 name.0.as_str()
             }
         });
-        let translation = Vec3::new(pos.0.x, pos.0.y + NAME_Y_OFFSET, 10.0);
+        let translation = Vec3::new(rendered.head.x, rendered.head.y + NAME_Y_OFFSET, 10.0);
         let tint = TextColor(Color::srgb_u32(color.0));
         let visibility = if alive.0 {
             Visibility::Visible

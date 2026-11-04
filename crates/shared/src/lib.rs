@@ -8,6 +8,7 @@ pub mod components;
 pub mod constants;
 pub mod math;
 pub mod physics;
+pub mod polyline;
 pub mod protocol;
 pub mod spawn;
 pub mod systems;

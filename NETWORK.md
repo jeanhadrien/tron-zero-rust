@@ -66,8 +66,9 @@ announcer/manager token flow.
   tick, applied/rejected and rollback range (the server `TurnLog` and harness
   traces exist; client side and rollback ranges do not); RTT/jitter/loss,
   correction and bandwidth metrics.
-- [ ] Presentation and capacity: render smoothing separate from collision
-  state; profile `Trail` replication size, rollback cost and brute-force
+- [ ] Presentation and capacity: (render smoothing exists: see
+  `docs/netcode-design.md`; its feel under real jitter and loss is unmeasured;
+  opponent trail tails still step at snapshot rate); profile `Trail` replication size, rollback cost and brute-force
   collision scans at the intended player count; server tick-time percentiles
   against the 8.33 ms budget; declared player cap, bandwidth and correction
   targets.

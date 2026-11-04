@@ -2,20 +2,15 @@
 
 use bevy::camera::ScalingMode;
 use bevy::prelude::*;
-use lightyear::prelude::Predicted;
-use lightyear::prelude::input::native::InputMarker;
-use shared::{Player, PlayerInput, Position};
+
+use super::smooth::{OwnRider, Rendered};
 
 /// Vertical world-units visible in the follow camera.
 const CAMERA_VIEW_HEIGHT: f32 = 800.0;
 /// Camera distance from the 2D plane.
 const CAMERA_Z: f32 = 999.0;
-
-type LocalPlayer = (
-    With<Player>,
-    With<InputMarker<PlayerInput>>,
-    With<Predicted>,
-);
+/// Duration of the camera glide after the rider respawns somewhere else.
+const RESPAWN_EASE_SECS: f32 = 0.2;
 
 /// Spawn a 2D orthographic follow camera centred on the origin.
 pub fn setup_camera(mut commands: Commands) {
@@ -31,22 +26,46 @@ pub fn setup_camera(mut commands: Commands) {
     ));
 }
 
-/// Hard-snap the camera to the local player's position each frame.
-/// Smooth interpolation is planned for the polish phase.
+/// Glide in progress after a respawn teleport.
+#[derive(Default)]
+pub struct RespawnEase {
+    from: Vec2,
+    left: f32,
+}
+
+/// Lock the camera to the local rider's render head (the same value the body
+/// is drawn at, so it never jitters against it). Only a respawn teleport is
+/// eased; death, resync and first sight snap.
 pub fn follow_player(
-    player: Query<&Position, LocalPlayer>,
+    time: Res<Time>,
+    player: Query<(&Rendered, &OwnRider)>,
     mut camera: Query<&mut Transform, With<Camera2d>>,
+    mut ease: Local<RespawnEase>,
 ) {
-    if player.is_empty() {
-        for mut transform in &mut camera {
-            transform.translation.x = 0.0;
-            transform.translation.y = 0.0;
+    let (target, teleported) = match player.single() {
+        Ok((rendered, own)) => (rendered.head, own.teleported()),
+        Err(_) => (Vec2::ZERO, false),
+    };
+    for mut transform in &mut camera {
+        let shown = transform.translation.truncate();
+        if teleported {
+            *ease = RespawnEase {
+                from: shown,
+                left: RESPAWN_EASE_SECS,
+            };
         }
+        let at = if ease.left > 0.0 {
+            ease.left = (ease.left - time.delta_secs()).max(0.0);
+            let progress = 1.0 - ease.left / RESPAWN_EASE_SECS;
+            ease.from.lerp(target, smoothstep(progress))
+        } else {
+            target
+        };
+        transform.translation.x = at.x;
+        transform.translation.y = at.y;
     }
-    for pos in &player {
-        for mut transform in &mut camera {
-            transform.translation.x = pos.0.x;
-            transform.translation.y = pos.0.y;
-        }
-    }
+}
+
+fn smoothstep(t: f32) -> f32 {
+    t * t * (3.0 - 2.0 * t)
 }

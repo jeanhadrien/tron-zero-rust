@@ -99,6 +99,7 @@ fn main() {
     // Rendering.
     app.insert_resource(render::DebugOverlay::from_env());
     app.add_systems(Startup, render::setup_camera);
+    render::add_smoothing(&mut app);
     app.add_systems(
         Update,
         (
@@ -108,7 +109,8 @@ fn main() {
             render::draw_players,
             render::sync_name_labels,
             render::follow_player,
-        ),
+        )
+            .in_set(render::RenderSet::Draw),
     );
 
     app.run();
