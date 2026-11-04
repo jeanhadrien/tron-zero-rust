@@ -95,6 +95,23 @@ answers the question:
 The user may have `cargo watch` running (`dev-watch.bat`); a "Blocking waiting
 for file lock" message means you are sharing `target/` with it.
 
+### Test loop
+
+Builds, not edits, dominate iteration time here. Keep the loop tight:
+
+- Run the narrowest test that covers the change first
+  (`cargo test -p tron-zero-shared polyline`), and the broad suites once,
+  at the end.
+- Don't pipe long cargo commands into `grep`/`tail`: it hides progress and
+  lock waits, and a command moved to the background shows an empty output
+  until it ends. Run long builds in the background with their full output
+  and read the summary when they finish.
+- `tron-zero-nettest` takes about two minutes and binds real ports: run it
+  once, alone, at the end, and never start a second copy while one runs
+  (overlapping runs fail spuriously).
+- Line endings are LF everywhere except `*.bat` (`.gitattributes`); edit
+  with the Edit tool rather than ad-hoc rewrite scripts.
+
 ## Generic Rust Development
 
 Below are generic Rust gotchas that can help you. Don't get too caught up in those.
