@@ -53,6 +53,91 @@ jobs:
           Compress-Archive -Path target/release/tron-zero-client.exe -DestinationPath $zip
           gh release upload "$TAG" "$zip" --clobber
 
+  # The game server rides the same release as the client: a protocol change
+  # (PROTOCOL_ID) must reach both together. Auth is keyless (Workload Identity);
+  # one-time IAM setup is deploy/gce/grant-ci.sh. Rolling out stops and starts
+  # the VM, which drops live games and changes its ephemeral IP (the server
+  # re-registers by itself).
+  server:
+    name: Build the game server image and roll it out to GCE
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      id-token: write
+    concurrency:
+      group: server-deploy
+      cancel-in-progress: false
+    env:
+      PROJECT: tron-zero-js
+      ZONE: europe-west1-b
+      VM: tron-zero-eu
+      MANAGER_URL: ${{ vars.MANAGER_URL != '' && vars.MANAGER_URL || 'https://server-manager.tronzero.dev' }}
+      IMAGE_REPO: europe-west1-docker.pkg.dev/tron-zero-js/tron/tron-zero-server
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve release tag
+        id: ref
+        run: |
+          git fetch --tags --force
+          tag="$(git tag --list 'client-v*' --sort=-v:refname | head -n1)"
+          if [ -z "$tag" ]; then echo "No client-v* tag found" >&2; exit 1; fi
+          git checkout "$tag"
+          echo "sha=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/335435262909/locations/global/workloadIdentityPools/github/providers/github-provider
+          service_account: github-deploy@tron-zero-js.iam.gserviceaccount.com
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Let Docker push to Artifact Registry
+        run: gcloud auth configure-docker europe-west1-docker.pkg.dev --quiet
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push the image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.server
+          push: true
+          tags: ${{ env.IMAGE_REPO }}:${{ steps.ref.outputs.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # The unit pulls whatever `tron-image` says at every start.
+      - name: Point the VM at the new image and restart it
+        run: |
+          gcloud compute instances add-metadata "$VM" --zone "$ZONE" --project "$PROJECT" \
+            --metadata "tron-image=$IMAGE_REPO:${{ steps.ref.outputs.sha }}"
+          gcloud compute instances stop "$VM" --zone "$ZONE" --project "$PROJECT"
+          gcloud compute instances start "$VM" --zone "$ZONE" --project "$PROJECT"
+
+      # The room must come back as an official ranked one on the VM's new IP.
+      - name: Wait for the server to register as official
+        run: |
+          ip="$(gcloud compute instances describe "$VM" --zone "$ZONE" --project "$PROJECT" \
+            --format='value(networkInterfaces[0].accessConfigs[0].natIP)')"
+          for _ in $(seq 1 60); do
+            if curl -fsS "$MANAGER_URL/api/rooms" | jq -e --arg ip "$ip" \
+              'any(.[]; .host == $ip and .ranked == true and .official == true)' >/dev/null; then
+              echo "Registered as official at $ip"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "The server did not register as an official ranked room at $ip within 5 minutes" >&2
+          exit 1
+
   client-web:
     name: Build web client and deploy to GitHub Pages (play.tronzero.dev)
     runs-on: ubuntu-latest

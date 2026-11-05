@@ -34,6 +34,19 @@ The advertised host is the VM's ephemeral external IP, read at every service
 start, so no reserved static IP is billed. The IP changes when the VM is
 stopped and started; the server re-registers with the new one.
 
+## Deploy from CI
+
+The `server` job in `.github/workflows/deploy.yml` runs on every release (with the client
+builds): it builds `Dockerfile.server` on the runner (layers cached in the Actions cache),
+pushes `tron-zero-server:<sha of the client-v* tag>`, sets the VM's `tron-image` metadata,
+stops and starts the VM (live games are dropped, the ephemeral IP changes), then waits for
+the room to reappear as `ranked` and `official` in the manager, failing the job otherwise.
+Auth is keyless: GitHub's OIDC token is exchanged through the `github` Workload Identity
+pool for `github-deploy`. One-time setup: `deploy/gce/grant-ci.sh` (allows this repository
+on the pool, and gives `github-deploy` `compute.instanceAdmin.v1` on the VM only). The manual
+route above still works. A manual run of the workflow (`workflow_dispatch`) redeploys the
+latest `client-v*` tag.
+
 ## Official ranked status (no secret)
 
 The unit starts the server with `RANKED_IDENTITY=gcp`: at every registration it asks
