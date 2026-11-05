@@ -8,6 +8,7 @@ pub mod admission;
 pub mod announce;
 pub mod bot;
 pub mod budget;
+pub mod chat;
 pub mod elimination;
 pub mod probe;
 pub mod ranked;
@@ -55,6 +56,7 @@ pub fn add_core(app: &mut App, port: u16) {
         (
             systems::collect_respawn_requests,
             turns::collect_turn_commands,
+            chat::collect_chat,
             session::receive_session_requests,
             admission::handle_hello,
             admission::discard_late_handshakes.after(admission::handle_hello),

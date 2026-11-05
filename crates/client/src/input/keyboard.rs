@@ -32,6 +32,7 @@
 
 use std::collections::VecDeque;
 
+use crate::chat::ChatState;
 use crate::menu::MenuState;
 use crate::settings::{RebindState, TurnBindings};
 use bevy::ecs::message::MessageReader;
@@ -114,6 +115,7 @@ pub fn buffer_keyboard_input(
     mut bindings: ResMut<TurnBindings>,
     mut rebind: ResMut<RebindState>,
     menu: Res<MenuState>,
+    chat: Res<ChatState>,
     clients: Query<
         (Entity, Has<Rollback>),
         (With<Client>, With<Connected>, With<IsSynced<InputTimeline>>),
@@ -180,7 +182,7 @@ pub fn buffer_keyboard_input(
         key_events.clear();
         return;
     }
-    if menu.captures_input() {
+    if menu.captures_input() || chat.captures_input() {
         pending.0.clear();
         key_events.clear();
         return;
@@ -208,7 +210,7 @@ pub fn buffer_keyboard_input(
                     generation: life.0,
                 });
             }
-        } else if matches!(key, KeyCode::Space | KeyCode::Enter | KeyCode::NumpadEnter)
+        } else if key == KeyCode::Space
             && !rollback
             && !alive.0
             && respawn.pending_generation.is_none()
@@ -298,6 +300,7 @@ pub fn read_keyboard(
     mut turn_seq: ResMut<TurnSeq>,
     mut outbox: ResMut<TurnOutbox>,
     menu: Res<MenuState>,
+    chat: Res<ChatState>,
     mut players: Query<
         (
             Entity,
@@ -322,7 +325,7 @@ pub fn read_keyboard(
         return;
     };
     lifecycle.observe(Some((entity, life.map(|l| l.0))), &mut pending);
-    if menu.captures_input() {
+    if menu.captures_input() || chat.captures_input() {
         pending.0.clear();
     }
     // Always set the value for this tick so lightyear can buffer it and
@@ -370,6 +373,7 @@ mod tests {
         world.init_resource::<TurnAckState>();
         world.init_resource::<TurnOutbox>();
         world.init_resource::<RespawnUi>();
+        world.init_resource::<ChatState>();
         world.insert_resource(MenuState {
             open: false,
             block_this_frame: false,
@@ -623,7 +627,8 @@ mod tests {
 
     #[test]
     fn respawn_key_requests_only_when_dead_and_never_resets_local_rider() {
-        for key_code in [KeyCode::Space, KeyCode::Enter, KeyCode::NumpadEnter] {
+        {
+            let key_code = KeyCode::Space;
             let (mut world, client, player) = setup();
             world.init_resource::<Messages<KeyboardInput>>();
             world
@@ -716,6 +721,41 @@ mod tests {
             world.get::<ActionState<PlayerInput>>(player).unwrap().0,
             PlayerInput::None
         );
+    }
+
+    #[test]
+    fn enter_is_the_chat_key_and_never_requests_respawn() {
+        let (mut world, client, player) = setup();
+        world.init_resource::<Messages<KeyboardInput>>();
+        world
+            .entity_mut(client)
+            .insert(MessageSender::<RespawnRequest>::default());
+        world
+            .entity_mut(player)
+            .insert((IsAlive(false), LifeGeneration(4)));
+        for key_code in [KeyCode::Enter, KeyCode::NumpadEnter] {
+            press(&mut world, key_code);
+        }
+        world.run_system_once(buffer_keyboard_input).unwrap();
+        assert!(world.resource::<RespawnUi>().pending_generation.is_none());
+    }
+
+    #[test]
+    fn typing_in_chat_swallows_turn_and_respawn_keys() {
+        let (mut world, client, player) = setup();
+        world.init_resource::<Messages<KeyboardInput>>();
+        world
+            .entity_mut(client)
+            .insert(MessageSender::<RespawnRequest>::default());
+        world
+            .entity_mut(player)
+            .insert((IsAlive(false), LifeGeneration(4)));
+        world.resource_mut::<ChatState>().typing = true;
+        press(&mut world, KeyCode::Space);
+        press(&mut world, KeyCode::ArrowLeft);
+        world.run_system_once(buffer_keyboard_input).unwrap();
+        assert!(world.resource::<RespawnUi>().pending_generation.is_none());
+        assert!(world.resource::<PendingInput>().0.is_empty());
     }
 
     #[test]

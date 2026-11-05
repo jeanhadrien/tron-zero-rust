@@ -61,7 +61,7 @@ Verified in Chromium (Claude desktop browser pane): a room announcing
 works for local testing. The server certificate is ECDSA P-256, <= 14 days, which
 is what `serverCertificateHashes` requires. Session/browse/turn flow: join via the
 room list, or `?TRON_AUTOCONNECT=127.0.0.1:5001&TRON_CERT_DIGEST=<hash>`.
-Keyboard: arrows turn, Space/Enter respawns.
+Keyboard: arrows turn, Space respawns, Enter opens the chat box (Enter sends, Esc cancels).
 
 ## Deploy
 

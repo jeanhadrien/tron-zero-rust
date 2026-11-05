@@ -64,7 +64,8 @@ the release profile, no logging below `info` on web.
   **unverified**; reloading the page is the reliable way back. Accepted for
   now: a backgrounded lightcycle is dead anyway.
 - **Keyboard.** The canvas takes focus and the page prevents default on
-  arrows/space so the page doesn't scroll.
+  arrows/space so the page doesn't scroll. Chat text is read from the key
+  events' `text` (no IME; mobile on-screen keyboards are untested).
 - **Mixed content.** The page is HTTPS, the manager is HTTPS, WebTransport is
   HTTPS by construction. Nothing plain-HTTP is reachable from the page.
 

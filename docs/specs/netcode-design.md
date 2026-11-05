@@ -62,7 +62,15 @@ zero-width), exotic whitespace is normalized, and de-duplication compares a
 case- and space-folded `name_key`.
 Each link also has a `LinkBudget` (`budget.rs`) counting messages that a
 well-behaved client sends rarely: turn batches, rejected turns, session and
-respawn requests, in one-second windows. A link over its allowance is closed.
+respawn requests, chat messages, in one-second windows. A link over its
+allowance is closed.
+Chat (`server/chat.rs`) uses an ordered-reliable `ChatChannel`: the client sends
+`ChatSend { text }`, the server sanitizes it (`sanitize_chat`: no control or
+invisible format characters, collapsed whitespace, 160 chars), labels it with
+the name of the link's rider (never client-supplied) and broadcasts a
+`ChatLine { name, text }` to every admitted link. A soft per-link leaky bucket
+(burst 4, 1 message/s) silently drops excess messages; only a flood far above
+a human rate (`Meter::ChatMessages`) closes the link.
 This is basic lifecycle handling and abuse bounding, not authenticated
 admission or a replacement for the hardening tracked in `NETWORK.md`.
 

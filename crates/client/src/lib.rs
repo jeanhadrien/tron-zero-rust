@@ -6,6 +6,7 @@
 
 pub mod account;
 pub mod browser;
+pub mod chat;
 pub mod config;
 pub mod connection;
 pub mod input;
@@ -40,9 +41,12 @@ pub fn add_input_and_prediction(app: &mut App) {
     app.init_resource::<input::TurnAckState>();
     app.init_resource::<input::TurnOutbox>();
     app.init_resource::<input::RespawnUi>();
+    app.init_resource::<chat::ChatState>();
+    app.init_resource::<chat::ChatLog>();
     app.add_systems(
         PreUpdate,
         (
+            chat::receive_chat,
             input::receive_respawn_replies,
             input::receive_turn_acks,
             input::buffer_keyboard_input,

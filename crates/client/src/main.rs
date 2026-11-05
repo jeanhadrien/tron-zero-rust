@@ -8,7 +8,7 @@ use bevy::window::WindowCloseRequested;
 use bevy_egui::{EguiPlugin, EguiPrimaryContextPass};
 use lightyear::prelude::*;
 use tron_zero_client::{
-    account, add_input_and_prediction, add_network, attach_local_input, browser, config,
+    account, add_input_and_prediction, add_network, attach_local_input, browser, chat, config,
     connection, input, local_scan, menu, render, settings, sim, theme,
 };
 
@@ -79,6 +79,8 @@ fn main() {
             attach_local_input,
             connection::monitor_connection,
             menu::menu_controls,
+            // After the menu so Escape cancels an open chat box first.
+            chat::chat_controls,
         )
             .chain()
             .after(bevy::input::InputSystems)
@@ -98,6 +100,7 @@ fn main() {
                 render::status_badge_ui,
                 render::death_ui,
                 render::debug_panel_ui,
+                chat::chat_ui,
                 menu::menu_ui,
             ),
         )

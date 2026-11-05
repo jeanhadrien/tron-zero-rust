@@ -7,7 +7,7 @@ arena game. Players ride continuously-moving lightcycles on a 2D arena, leave
 collidable trails behind them, boost by grinding close to *other* riders'
 trails, and survive via a "rubber" buffer that drains when stuck facing an
 obstacle and regenerates in open space. Death clears the trail; humans respawn
-manually (Space/Enter).
+manually (Space). Enter opens the player chat.
 
 ## Tech stack
 
@@ -34,7 +34,7 @@ manually (Space/Enter).
 Forward-only authoritative server, immediate local prediction, client reconciliation only — no server rewind. Own rider is `Predicted`; opponents and bots are step-interpolated. A trail is one replicated+predicted `Trail(Vec<Vec2>)` component, **not** child entities (this deliberately diverges from `PLAN.md`).
 
 - **Turns** are sequenced commands (`TurnCommand { seq, direction, generation, tick }`), not Lightyear inputs: every undecided command is resent in each tick's unreliable `TurnBatch` (<= 16 commands, repeated for 48 ticks), the server decides each seq once, executes it at its intended tick, within a 12-tick late window, or rejects it with a reason, and acks cumulatively. Lightyear's native `PlayerInput` only feeds client prediction; the server overwrites it for humans.
-- **Session:** the first message is a `SessionHello { protocol, name }`; the server admits (sanitized unique name) or rejects (`VersionMismatch`, `ServerFull`). Nothing replicates to a link before admission. Heartbeats, leave and respawn travel on ordered-reliable channels (`SessionChannel`, `RespawnChannel`); respawns are server-applied and tagged by `LifeGeneration`.
+- **Session:** the first message is a `SessionHello { protocol, name }`; the server admits (sanitized unique name) or rejects (`VersionMismatch`, `ServerFull`). Nothing replicates to a link before admission. Heartbeats, leave and respawn travel on ordered-reliable channels (`SessionChannel`, `RespawnChannel`); respawns are server-applied and tagged by `LifeGeneration`. Chat (`ChatSend`/`ChatLine` on `ChatChannel`) is sanitized and labelled with the sender's name by the server, then broadcast.
 - **Hardening:** per-link `LinkBudget`, capped unadmitted links, `PROTOCOL_ID` = hand-bumped `PROTOCOL_VERSION` + fingerprint of every sim constant (a physics retune changes it by itself; a *logic* change with the same constants needs a manual bump).
 
 Implemented contract and measurements: `docs/specs/netcode-design.md`. Open items: `NETWORK.md`.

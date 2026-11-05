@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 /// handling, anything in `simulate_players`) are NOT captured by the constant
 /// fingerprint and REQUIRE a manual bump here: otherwise mixed builds connect
 /// fine and then silently mispredict.
-pub const PROTOCOL_VERSION: u32 = 4;
+pub const PROTOCOL_VERSION: u32 = 5;
 
 /// Name and value of every constant the client and server must agree on to
 /// simulate identically (`constants.rs` in full, plus the turn timing rules).
@@ -205,6 +205,56 @@ pub fn sanitize_name(raw: &str) -> String {
         name.to_owned()
     }
 }
+
+/// Longest accepted chat message, in characters.
+pub const MAX_CHAT_CHARS: usize = 160;
+/// Raw messages longer than this many bytes are rejected before any
+/// processing, so a hostile peer cannot make the server scan megabytes.
+const MAX_CHAT_RAW_BYTES: usize = MAX_CHAT_CHARS * 8;
+
+/// Whether `c` may appear in a chat message: anything printable, so accents,
+/// symbols and other scripts pass, but control and invisible format characters
+/// (bidi overrides, zero-width marks) do not.
+pub fn is_chat_char(c: char) -> bool {
+    !c.is_control() && !is_format_char(c)
+}
+
+/// Normalize a chat message: drop the characters [`is_chat_char`] refuses,
+/// turn exotic whitespace into plain spaces and collapse runs of them, trim and
+/// cap the length. `None` when nothing is left (or the raw text is absurdly
+/// long), meaning the message should be dropped.
+pub fn sanitize_chat(raw: &str) -> Option<String> {
+    if raw.len() > MAX_CHAT_RAW_BYTES {
+        return None;
+    }
+    let mut cleaned = String::new();
+    for c in raw.chars().filter(|c| is_chat_char(*c)) {
+        let c = if c.is_whitespace() { ' ' } else { c };
+        if c != ' ' || !cleaned.ends_with(' ') {
+            cleaned.push(c);
+        }
+    }
+    let capped: String = cleaned.trim().chars().take(MAX_CHAT_CHARS).collect();
+    let text = capped.trim_end();
+    (!text.is_empty()).then(|| text.to_owned())
+}
+
+/// Client -> server: a line of chat. Carries no sender; the server derives it
+/// from the link, like turns and respawns.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChatSend {
+    pub text: String,
+}
+
+/// Server -> every admitted client: `name` said `text` (both sanitized).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChatLine {
+    pub name: String,
+    pub text: String,
+}
+
+/// Ordered-reliable channel for [`ChatSend`] and [`ChatLine`].
+pub struct ChatChannel;
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct RespawnRequest {
@@ -400,6 +450,15 @@ pub fn register_protocol(app: &mut App) {
     // stable, so an older peer still decodes the hello pair.
     app.register_message::<SessionTicket>()
         .add_direction(NetworkDirection::ClientToServer);
+    app.add_channel::<ChatChannel>(ChannelSettings {
+        mode: ChannelMode::OrderedReliable(ReliableSettings::default()),
+        ..Default::default()
+    })
+    .add_direction(NetworkDirection::Bidirectional);
+    app.register_message::<ChatSend>()
+        .add_direction(NetworkDirection::ClientToServer);
+    app.register_message::<ChatLine>()
+        .add_direction(NetworkDirection::ServerToClient);
     // --- Input ---
     app.add_plugins(InputPlugin::<PlayerInput>::default());
 
@@ -470,6 +529,22 @@ mod tests {
         assert_eq!(sanitize_name("\u{200B}\u{202E}"), DEFAULT_NAME);
         // Exotic spaces become one plain space.
         assert_eq!(sanitize_name("a\u{00A0}\u{3000} b"), "a b");
+    }
+
+    #[test]
+    fn sanitize_chat_cleans_and_drops_empty() {
+        assert_eq!(
+            sanitize_chat("  héllo \u{202E}wörld\n"),
+            Some("héllo wörld".into())
+        );
+        assert_eq!(sanitize_chat("\u{200B}\t \u{7}"), None);
+        assert_eq!(sanitize_chat(""), None);
+        let long = "a".repeat(MAX_CHAT_CHARS + 50);
+        assert_eq!(
+            sanitize_chat(&long).unwrap().chars().count(),
+            MAX_CHAT_CHARS
+        );
+        assert_eq!(sanitize_chat(&"a".repeat(MAX_CHAT_RAW_BYTES + 1)), None);
     }
 
     #[test]

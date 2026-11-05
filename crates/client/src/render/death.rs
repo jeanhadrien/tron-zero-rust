@@ -20,13 +20,11 @@ pub fn prompt(alive: bool, respawn: &RespawnUi) -> &'static str {
         "Respawn requested — waiting for server..."
     } else {
         match respawn.outcome {
-            Some(RespawnOutcome::NoSafeSpace) => {
-                "No safe spawn space. Press Space / Enter to retry."
-            }
+            Some(RespawnOutcome::NoSafeSpace) => "No safe spawn space. Press Space to retry.",
             Some(RespawnOutcome::NotEligible) => {
-                "Server has not confirmed eligibility. Press Space / Enter to retry."
+                "Server has not confirmed eligibility. Press Space to retry."
             }
-            _ => "Press Space / Enter to respawn",
+            _ => "Press Space to respawn",
         }
     }
 }
@@ -155,7 +153,7 @@ mod tests {
     #[test]
     fn prompt_tracks_dead_pending_rejected_and_alive_states() {
         let mut ui = RespawnUi::default();
-        assert!(prompt(false, &ui).contains("Space / Enter"));
+        assert!(prompt(false, &ui).contains("Press Space"));
         ui.pending_generation = Some(1);
         assert!(prompt(false, &ui).contains("waiting for server"));
         assert_eq!(prompt(true, &ui), "");

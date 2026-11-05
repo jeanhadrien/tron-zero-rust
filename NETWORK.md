@@ -71,6 +71,10 @@ numbers are in `docs/specs/netcode-design.md`; the headless harness is
 
 ## Open: UI, deployment and operations
 
+- [ ] **Chat moderation.** Chat has sanitizing and rate limits only: no mute
+  or block, no profanity filter, no per-IP limit, no history for late joiners,
+  no private or team channels.
+
 - [ ] **In-game UI never run by a human.** Menu, settings/rebinding, server
   browser, HUD, death overlay, quit and autoconnect are covered by unit tests
   and nettest only. The manual checks in `docs/guides/dev.md` still need a person at

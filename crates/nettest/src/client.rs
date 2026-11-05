@@ -11,7 +11,7 @@ use bevy::prelude::*;
 use glam::Vec2;
 use lightyear::prelude::input::native::InputMarker;
 use lightyear::prelude::*;
-use shared::protocol::{TurnBatch, TurnChannel};
+use shared::protocol::{ChatChannel, ChatSend, TurnBatch, TurnChannel};
 use shared::{
     ActionState, Direction, DisplayName, IsAlive, LifeGeneration, Player, PlayerId, PlayerInput,
     Position,
@@ -101,6 +101,7 @@ impl TestClient {
                 tc::menu::begin_input_frame,
                 tc::attach_local_input,
                 tc::connection::monitor_connection,
+                tc::chat::chat_controls,
             )
                 .chain()
                 .after(bevy::input::InputSystems)
@@ -344,6 +345,54 @@ impl TestClient {
             repeat: false,
             window: Entity::PLACEHOLDER,
         });
+    }
+
+    /// One physical key press of the chat box: `logical_key` plus the text it
+    /// would type, if any.
+    fn press_chat_key(&mut self, logical_key: Key, text: Option<&str>) {
+        self.app.world_mut().write_message(KeyboardInput {
+            key_code: KeyCode::Unidentified(bevy::input::keyboard::NativeKeyCode::Unidentified),
+            logical_key,
+            state: ButtonState::Pressed,
+            text: text.map(Into::into),
+            repeat: false,
+            window: Entity::PLACEHOLDER,
+        });
+    }
+
+    /// Type `text` into the chat box like a player: Enter, the characters one
+    /// key press at a time, Enter. Each press gets its own frame.
+    pub fn say(&mut self, text: &str) {
+        self.press_chat_key(Key::Enter, None);
+        self.app.update();
+        for c in text.chars() {
+            let typed = c.to_string();
+            self.press_chat_key(Key::Character(typed.as_str().into()), Some(&typed));
+            self.app.update();
+        }
+        self.press_chat_key(Key::Enter, None);
+        self.app.update();
+    }
+
+    /// Chat lines received so far as `name: text`, oldest first.
+    pub fn chat_lines(&self) -> Vec<String> {
+        self.app
+            .world()
+            .resource::<tc::chat::ChatLog>()
+            .0
+            .iter()
+            .map(|entry| format!("{}: {}", entry.name, entry.text))
+            .collect()
+    }
+
+    /// Cheat: put a hand-made chat message on the wire (what a modified client
+    /// would send).
+    pub fn send_raw_chat(&mut self, text: &str) {
+        let world = self.app.world_mut();
+        let mut senders = world.query_filtered::<&mut MessageSender<ChatSend>, With<Client>>();
+        for mut sender in senders.iter_mut(world) {
+            sender.send::<ChatChannel>(ChatSend { text: text.into() });
+        }
     }
 
     /// Open or close the in-game menu (which swallows turn keys).

@@ -6,6 +6,7 @@ use bevy_egui::{EguiContexts, egui};
 
 use crate::account::{Accounts, RankedJoin, Standing};
 use crate::browser::{self, BrowserRow, BrowserState, FetchStatus, ManagerConfig};
+use crate::chat::ChatState;
 use crate::connection::{AutoConnect, ConnectionPhase, Endpoint, IDLE_STATUS, Session};
 use crate::input::PendingInput;
 use crate::local_scan::LocalServers;
@@ -72,9 +73,11 @@ pub fn menu_controls(
     session: Res<Session>,
     mut rebind: ResMut<RebindState>,
     mut pending: ResMut<PendingInput>,
+    chat: Res<ChatState>,
 ) {
-    // Escape takes precedence over other same-frame actions.
-    if keys.just_pressed(KeyCode::Escape) {
+    // Escape takes precedence over other same-frame actions, except that it
+    // cancels an open chat box instead (see `chat_controls`).
+    if keys.just_pressed(KeyCode::Escape) && !chat.typing {
         if rebind.capturing.is_some() {
             rebind.capturing = None;
             rebind.error = None;
@@ -688,6 +691,7 @@ mod tests {
         });
         world.init_resource::<Session>();
         world.init_resource::<RebindState>();
+        world.init_resource::<ChatState>();
         world.init_resource::<Time<Real>>();
         world.init_resource::<ButtonInput<KeyCode>>();
         world.insert_resource(PendingInput(
