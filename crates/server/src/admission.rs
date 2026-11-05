@@ -292,7 +292,7 @@ mod tests {
     /// A ranked state that has registered and learned the test key.
     fn ranked_state() -> RankedState {
         use crate::ranked::testing::{SERVER, keys};
-        let state = RankedState::new("k.s".into());
+        let state = RankedState::new();
         state.configure(SERVER.into(), keys());
         state
     }
@@ -339,7 +339,7 @@ mod tests {
 
     #[test]
     fn ranked_join_before_registration_is_retryable_not_admitted() {
-        let unregistered = RankedState::new("k.s".into());
+        let unregistered = RankedState::new();
         let result = check_ticket(
             &unregistered,
             join("u1", "n1"),

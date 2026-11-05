@@ -60,9 +60,50 @@ pub struct AnnounceConfig {
     /// SHA-256 of the self-signed WebTransport certificate, lowercase hex
     /// without colons (`certHash`). `None` with a CA-issued certificate.
     pub cert_hash: Option<String>,
-    /// `RANKED_KEY` (`<keyId>.<secret>`): registers the room as ranked, so
-    /// players need join tickets and results move ratings.
-    pub ranked_key: Option<String>,
+    /// How we prove to the manager that this room is ranked, so players need
+    /// join tickets and results move ratings. `None`: a plain listed room.
+    pub ranked: Option<RankedCredential>,
+}
+
+/// The proof of rank presented at registration.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RankedCredential {
+    /// `RANKED_KEY` (`<keyId>.<secret>`): a secret issued by the operator.
+    Key(String),
+    /// `RANKED_IDENTITY=gcp`: the identity of the VM's service account, as an
+    /// ID token from the GCE metadata server, minted at every registration.
+    /// No secret is stored anywhere; the manager keeps an allowlist.
+    GcpIdentity,
+}
+
+impl RankedCredential {
+    /// `RANKED_IDENTITY` wins over `RANKED_KEY` when both are set.
+    fn from_env(get: &dyn Fn(&str) -> Option<String>) -> Option<Self> {
+        let key = get("RANKED_KEY")
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty());
+        let identity = get("RANKED_IDENTITY")
+            .map(|v| v.trim().to_ascii_lowercase())
+            .filter(|v| !v.is_empty());
+        match (identity.as_deref(), key) {
+            (Some("gcp"), key) => {
+                if key.is_some() {
+                    tracing::warn!(
+                        "RANKED_KEY and RANKED_IDENTITY are both set; using the identity"
+                    );
+                }
+                Some(Self::GcpIdentity)
+            }
+            (Some(other), key) => {
+                tracing::warn!(
+                    value = other,
+                    "Unknown RANKED_IDENTITY (supported: gcp); ignored"
+                );
+                key.map(Self::Key)
+            }
+            (None, key) => key.map(Self::Key),
+        }
+    }
 }
 
 impl AnnounceConfig {
@@ -134,9 +175,7 @@ impl AnnounceConfig {
             allow_loopback_announce,
             web_port: None,
             cert_hash: None,
-            ranked_key: get("RANKED_KEY")
-                .map(|v| v.trim().to_string())
-                .filter(|v| !v.is_empty()),
+            ranked: RankedCredential::from_env(get),
         }
     }
 
@@ -184,7 +223,9 @@ impl AnnounceConfig {
 
     /// `web_open`: the WebTransport listener is up, so browsers may be told
     /// about it. An announced-but-dead listener is a room nobody can join.
-    fn register_payload(&self, web_open: bool) -> RegisterPayload {
+    ///
+    /// `identity_token`: a freshly minted token, for [`RankedCredential::GcpIdentity`].
+    fn register_payload(&self, web_open: bool, identity_token: Option<String>) -> RegisterPayload {
         let (web_port, cert_hash) = if web_open {
             (self.web_port, self.cert_hash.clone())
         } else {
@@ -199,7 +240,11 @@ impl AnnounceConfig {
             max_players: self.max_players,
             web_port,
             cert_hash,
-            ranked_key: self.ranked_key.clone(),
+            ranked_key: match &self.ranked {
+                Some(RankedCredential::Key(key)) => Some(key.clone()),
+                _ => None,
+            },
+            identity_token,
         }
     }
 }
@@ -267,6 +312,9 @@ pub struct RegisterPayload {
     /// Presented once to register as ranked; the manager checks it.
     #[serde(rename = "rankedKey", skip_serializing_if = "Option::is_none")]
     pub ranked_key: Option<String>,
+    /// The keyless alternative to `rankedKey`: a platform ID token.
+    #[serde(rename = "identityToken", skip_serializing_if = "Option::is_none")]
+    pub identity_token: Option<String>,
 }
 
 // `botCount` is additive: managers that predate it ignore the field.
@@ -307,6 +355,11 @@ pub struct Registration {
     pub key_id: Option<String>,
     #[serde(rename = "publicKeys", default)]
     pub public_keys: Vec<PublicKeyInfo>,
+    /// The tier the manager gave us. Absent (false) from managers that predate it.
+    #[serde(default)]
+    pub ranked: bool,
+    #[serde(default)]
+    pub official: bool,
 }
 
 impl Registration {
@@ -322,10 +375,41 @@ fn agent() -> ureq::Agent {
         .into()
 }
 
+const GCE_IDENTITY_URL: &str =
+    "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/identity";
+
+/// An ID token for the VM's service account, with the manager as its audience
+/// (`IDENTITY_AUDIENCE` on the manager must equal `MANAGER_URL`). Valid for an
+/// hour, so it is minted for every registration, never cached.
+fn fetch_gce_identity(agent: &ureq::Agent, audience: &str) -> Result<String, ureq::Error> {
+    agent
+        .get(GCE_IDENTITY_URL)
+        .query("audience", audience)
+        .query("format", "full")
+        .header("Metadata-Flavor", "Google")
+        .call()?
+        .body_mut()
+        .read_to_string()
+}
+
 fn do_register(agent: &ureq::Agent, cfg: &AnnounceConfig, web_open: bool) -> Option<Registration> {
+    let identity_token = match cfg.ranked {
+        Some(RankedCredential::GcpIdentity) => match fetch_gce_identity(agent, &cfg.manager_url) {
+            Ok(token) => Some(token),
+            Err(e) => {
+                tracing::error!(
+                    error = %e,
+                    "Could not get an identity token from the GCE metadata server \
+                     (RANKED_IDENTITY=gcp only works on a Compute Engine VM)"
+                );
+                return None;
+            }
+        },
+        _ => None,
+    };
     match agent
         .post(&cfg.register_url())
-        .send_json(cfg.register_payload(web_open))
+        .send_json(cfg.register_payload(web_open, identity_token))
     {
         Ok(mut res) => match res.body_mut().read_json::<Registration>() {
             Ok(reg) if !reg.token.is_empty() => Some(reg),
@@ -345,6 +429,13 @@ fn do_register(agent: &ureq::Agent, cfg: &AnnounceConfig, web_open: bool) -> Opt
                 "Manager register refused (409): another room already holds this host:port. \
                  Either a previous run of this server has not expired yet (up to 40s), or two \
                  servers share ADVERTISED_HOST/ADVERTISED_PORT"
+            );
+            None
+        }
+        Err(ureq::Error::StatusCode(403)) => {
+            tracing::error!(
+                "Manager refused our ranked credential (403): the key is unknown or revoked, or \
+                 this identity is not on the manager's allowlist (its log has the reason)"
             );
             None
         }
@@ -643,11 +734,20 @@ pub fn spawn_announcer(
                             .filter_map(|k| TicketKey::from_hex(&k.kid, &k.public_key))
                             .collect();
                         ranked.configure(key_id.clone(), keys);
-                        tracing::info!(%key_id, "Registered as a ranked server");
+                        tracing::info!(%key_id, official = reg.official, "Registered as a ranked server");
+                        // The identity path is meant for the official fleet: say so
+                        // loudly when the manager only trusts it as a community server.
+                        if cfg.ranked == Some(RankedCredential::GcpIdentity) && !reg.official {
+                            tracing::warn!(
+                                "Our identity is trusted as a community server only: the \
+                                 manager will not place players here. Re-add it as official \
+                                 (scripts/add-identity.ts <email> official)"
+                            );
+                        }
                     }
                     None => tracing::error!(
-                        "RANKED_KEY is set but the manager did not register us as ranked; \
-                         players cannot join until it does"
+                        "A ranked credential is set but the manager did not register us as \
+                         ranked; players cannot join until it does"
                     ),
                 }
             }
@@ -833,9 +933,9 @@ mod tests {
             allow_loopback_announce: false,
             web_port: None,
             cert_hash: None,
-            ranked_key: None,
+            ranked: None,
         };
-        let value = serde_json::to_value(cfg.register_payload(false)).unwrap();
+        let value = serde_json::to_value(cfg.register_payload(false, None)).unwrap();
         let obj = value.as_object().unwrap();
         let keys: Vec<&str> = obj.keys().map(String::as_str).collect();
         assert_eq!(keys.len(), 4);
@@ -854,7 +954,7 @@ mod tests {
             advertised_secure: true,
             ..cfg.clone()
         };
-        let secure_value = serde_json::to_value(secure_cfg.register_payload(false)).unwrap();
+        let secure_value = serde_json::to_value(secure_cfg.register_payload(false, None)).unwrap();
         assert_eq!(secure_value["secure"], Value::Bool(true));
 
         // The web fields appear only when the WebTransport listener is on.
@@ -863,14 +963,66 @@ mod tests {
             cert_hash: Some("ab".repeat(32)),
             ..cfg
         };
-        let web_value = serde_json::to_value(web_cfg.register_payload(true)).unwrap();
+        let web_value = serde_json::to_value(web_cfg.register_payload(true, None)).unwrap();
         assert_eq!(web_value["webPort"], Value::Number(5001.into()));
         assert_eq!(web_value["certHash"], Value::String("ab".repeat(32)));
 
         // ...and only while the listener is actually open.
-        let closed_value = serde_json::to_value(web_cfg.register_payload(false)).unwrap();
+        let closed_value = serde_json::to_value(web_cfg.register_payload(false, None)).unwrap();
         assert!(closed_value.get("webPort").is_none());
         assert!(closed_value.get("certHash").is_none());
+    }
+
+    #[test]
+    fn ranked_credential_is_read_from_the_environment() {
+        let from = |pairs: &[(&str, &str)]| {
+            let m = map(pairs);
+            AnnounceConfig::from_map(&|k| m.get(k).cloned()).ranked
+        };
+        assert_eq!(from(&[]), None);
+        assert_eq!(
+            from(&[("RANKED_KEY", " k1.s ")]),
+            Some(RankedCredential::Key("k1.s".into()))
+        );
+        assert_eq!(
+            from(&[("RANKED_IDENTITY", "GCP")]),
+            Some(RankedCredential::GcpIdentity)
+        );
+        // The identity wins over a key; an unknown identity kind is ignored.
+        assert_eq!(
+            from(&[("RANKED_IDENTITY", "gcp"), ("RANKED_KEY", "k1.s")]),
+            Some(RankedCredential::GcpIdentity)
+        );
+        assert_eq!(
+            from(&[("RANKED_IDENTITY", "aws"), ("RANKED_KEY", "k1.s")]),
+            Some(RankedCredential::Key("k1.s".into()))
+        );
+    }
+
+    #[test]
+    fn register_payload_carries_only_the_chosen_credential() {
+        let m = map(&[("RANKED_KEY", "k1.s")]);
+        let key_cfg = AnnounceConfig::from_map(&|k| m.get(k).cloned());
+        let value = serde_json::to_value(key_cfg.register_payload(false, None)).unwrap();
+        assert_eq!(value["rankedKey"], Value::String("k1.s".into()));
+        assert!(value.get("identityToken").is_none());
+
+        let m = map(&[("RANKED_IDENTITY", "gcp")]);
+        let id_cfg = AnnounceConfig::from_map(&|k| m.get(k).cloned());
+        let value =
+            serde_json::to_value(id_cfg.register_payload(false, Some("a.b.c".into()))).unwrap();
+        assert_eq!(value["identityToken"], Value::String("a.b.c".into()));
+        assert!(value.get("rankedKey").is_none());
+    }
+
+    #[test]
+    fn registration_reports_the_tier_the_manager_gave() {
+        let plain = registration(r#"{"id":"a","token":"t"}"#);
+        assert!(!plain.ranked && !plain.official);
+        let official = registration(
+            r#"{"id":"a","token":"t","keyId":"gce:p:1","ranked":true,"official":true}"#,
+        );
+        assert!(official.ranked && official.official);
     }
 
     #[test]
@@ -992,6 +1144,8 @@ mod tests {
             token: "t".into(),
             key_id: None,
             public_keys: Vec::new(),
+            ranked: false,
+            official: false,
         };
         assert!(handle.begin_register());
         assert!(handle.finish_register(&cfg, Some(&reg)));

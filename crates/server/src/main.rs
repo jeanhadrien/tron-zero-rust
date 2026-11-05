@@ -56,11 +56,12 @@ fn main() {
         });
     }
 
-    // A server with a RANKED_KEY requires join tickets and reports results.
+    // A server with a ranked credential (RANKED_KEY or RANKED_IDENTITY) requires
+    // join tickets and reports results.
     let ranked_state = announce_cfg
-        .ranked_key
-        .clone()
-        .map(|key| Arc::new(ranked::RankedState::new(key)));
+        .ranked
+        .as_ref()
+        .map(|_| Arc::new(ranked::RankedState::new()));
 
     // Detached announcer thread; handle intentionally never joined.
     let _announcer = announce::spawn_announcer(

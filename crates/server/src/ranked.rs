@@ -164,13 +164,11 @@ struct Inner {
 /// Ranked state shared by Bevy (admission, roster, eliminations) and the
 /// announcer thread (registration keys, heartbeats, result delivery).
 pub struct RankedState {
-    /// `RANKED_KEY` as presented to the manager.
-    pub ranked_key: String,
     inner: Mutex<Inner>,
 }
 
 impl RankedState {
-    pub fn new(ranked_key: String) -> Self {
+    pub fn new() -> Self {
         let inner = Inner {
             // New per process: the manager resets its `seq` cursor with it.
             session: format!("{:016x}", rand::random::<u64>()),
@@ -178,7 +176,6 @@ impl RankedState {
             ..Inner::default()
         };
         Self {
-            ranked_key,
             inner: Mutex::new(inner),
         }
     }
@@ -186,7 +183,15 @@ impl RankedState {
     fn lock(&self) -> MutexGuard<'_, Inner> {
         self.inner.lock().unwrap_or_else(PoisonError::into_inner)
     }
+}
 
+impl Default for RankedState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl RankedState {
     /// Store what the manager's register response taught us.
     pub fn configure(&self, key_id: String, keys: Vec<TicketKey>) {
         let mut inner = self.lock();
@@ -334,7 +339,7 @@ mod tests {
 
     #[test]
     fn batches_are_resent_until_acknowledged() {
-        let state = RankedState::new("k.s".into());
+        let state = RankedState::new();
         assert!(state.next_batch().is_none());
         state.push_eliminations([Elimination::Mutual {
             tick: None,
