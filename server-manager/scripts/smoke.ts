@@ -24,6 +24,13 @@ const b = (await call('POST', '/api/accounts', { displayName: 'Bob' })).json;
 const bad = await call('POST', '/api/rooms', { host: 'h', port: 1, displayName: 'x', maxPlayers: 8, rankedKey: 'k1.wrong' });
 check('bad ranked key rejected', bad.status === 403, bad);
 
+const junk = await call('POST', '/api/rooms', { host: 'h', port: 1, displayName: 'x', maxPlayers: 8, identityToken: 'not.a.jwt' });
+check('unusable identity token rejected', junk.status === 403, junk);
+const both = await call('POST', '/api/rooms', { host: 'h', port: 1, displayName: 'x', maxPlayers: 8, rankedKey: 'k1.s3cret', identityToken: 'a.b.c' });
+check('key and token together rejected', both.status === 400, both);
+const plain = (await call('POST', '/api/rooms', { host: 'hp', port: 9, displayName: 'plain', maxPlayers: 8 })).json;
+check('plain room states its tier', plain.ranked === false && plain.official === false, plain);
+
 const room = (await call('POST', '/api/rooms', { host: 'h', port: 1, displayName: 'official', maxPlayers: 8, rankedKey: 'k1.s3cret' })).json;
 check('ranked register', room.ranked && room.official && room.keyId === 'k1' && room.publicKeys.length === 1, room);
 

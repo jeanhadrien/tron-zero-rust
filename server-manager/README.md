@@ -25,6 +25,8 @@ bun run typecheck
 | `STORE` | memory | `firestore` keeps accounts, ratings, ranked keys and batch cursors in Firestore (needs Application Default Credentials and `roles/datastore.user`); otherwise everything is lost on restart. |
 | `FIRESTORE_PROJECT` | from ADC | Project id for `STORE=firestore`. `FIRESTORE_EMULATOR_HOST` also works. |
 | `RANKED_KEYS` | none | Memory store only: comma-separated `keyId:secret:official` (`1`/`0`). With Firestore, issue keys with `STORE=firestore bun scripts/add-key.ts <keyId> [official]`. |
+| `IDENTITY_AUDIENCE` | none | Enables keyless ranked registration: the audience a game server's identity token must carry, i.e. the manager URL the servers use as `MANAGER_URL` (exactly, no trailing slash). Unset: identity tokens are refused. |
+| `TRUSTED_IDENTITIES` | none | Memory store only: comma-separated `serviceAccountEmail:official` (`1`/`0`). With Firestore, trust one with `STORE=firestore bun scripts/add-identity.ts <email> [official]`. |
 | `TICKET_SIGNING_KEY` | ephemeral | Ed25519 key that signs join tickets; unset generates a new one per start (tickets die with a restart). |
 | `TICKET_VERIFY_KEYS` | none | Extra Ed25519 public keys (raw hex, comma-separated) that are advertised to game servers and accepted when verifying tickets, never used to sign. Rotation: deploy once listing the new key's public half (servers re-register on a manager restart and learn it), then deploy with `TICKET_SIGNING_KEY` switched to the new key and the old public key listed until its tickets expire (60 s). `bun scripts/rotation.ts` checks the verification side. |
 | `WEB_ORIGINS` | none | Origins allowed to call `/api/accounts`, `/api/tickets` and `/api/me` from a browser. |
@@ -105,4 +107,18 @@ setup (APIs, database, leaderboard index, `roles/datastore.user`, the secret) an
 prints the deploy flags; it changes the project, so read it first. Then issue a key per
 ranked game server with `scripts/add-key.ts` and start the server with `RANKED_KEY`.
 `WEB_ORIGINS` must list the browser client's origin for sign-in from the web build.
+
+A server registers with one of two credentials (sending both is a `400`); a credential that
+is presented and fails is refused (`403`, reason in the manager log), never listed as a
+plain room:
+
+- **Ranked key** (`RANKED_KEY`): a secret from `add-key.ts`. Fits community servers.
+- **Platform identity** (`RANKED_IDENTITY=gcp`): the server sends an ID token from the GCE
+  metadata server and the manager checks Google's signature, `aud` = `IDENTITY_AUDIENCE`,
+  a verified email, and that the email is in the `trustedIdentities` collection
+  (`scripts/add-identity.ts`). No secret exists. If Google's keys cannot be fetched the
+  manager answers `503` and the server retries.
+
+`GET /api/rooms` states each room's tier (`ranked`, `official`). Only official rooms are
+chosen by `/api/play`.
 

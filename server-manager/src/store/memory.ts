@@ -1,4 +1,4 @@
-import type { AccountDoc, BatchCursor, RankedKeyDoc, RatingDoc, Store, Tx } from './types';
+import type { AccountDoc, BatchCursor, RankedKeyDoc, RatingDoc, Store, TrustedIdentityDoc, Tx } from './types';
 
 /** Process-local store. Everything is lost on restart. */
 export class MemoryStore implements Store {
@@ -9,8 +9,11 @@ export class MemoryStore implements Store {
   /** Serializes transactions, like a single writer would. */
   private queue: Promise<unknown> = Promise.resolve();
 
-  constructor(rankedKeys: RankedKeyDoc[] = []) {
+  private identities = new Map<string, TrustedIdentityDoc>();
+
+  constructor(rankedKeys: RankedKeyDoc[] = [], identities: TrustedIdentityDoc[] = []) {
     for (const key of rankedKeys) this.keys.set(key.id, key);
+    for (const identity of identities) this.identities.set(identity.id, identity);
   }
 
   transaction<T>(fn: (tx: Tx) => Promise<T>): Promise<T> {
@@ -56,6 +59,10 @@ export class MemoryStore implements Store {
 
   async rankedKey(id: string) {
     return this.keys.get(id);
+  }
+
+  async trustedIdentity(email: string) {
+    return this.identities.get(email);
   }
 
   async leaderboard(limit: number) {

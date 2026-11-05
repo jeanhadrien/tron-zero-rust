@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { Logger } from '../logger';
 import { MemoryStore } from './memory';
-import type { RankedKeyDoc, Store } from './types';
+import type { RankedKeyDoc, Store, TrustedIdentityDoc } from './types';
 
 const logger = new Logger('Store');
 
@@ -23,8 +23,24 @@ function rankedKeysFromEnv(): RankedKeyDoc[] {
     });
 }
 
+/**
+ * Trusted platform identities for the in-memory store, from `TRUSTED_IDENTITIES`:
+ * comma-separated `serviceAccountEmail:official` (official = 1 or 0).
+ */
+function trustedIdentitiesFromEnv(): TrustedIdentityDoc[] {
+  return (process.env.TRUSTED_IDENTITIES ?? '')
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+    .map((entry) => {
+      const [id, official] = entry.split(':');
+      return { id, official: official === '1', revoked: false };
+    });
+}
+
 // `STORE=firestore` selects Firestore (keys live in its `rankedKeys` collection,
-// see scripts/add-key.ts); otherwise everything is in memory and lost on restart.
+// see scripts/add-key.ts; identities in `trustedIdentities`, see
+// scripts/add-identity.ts); otherwise everything is in memory and lost on restart.
 async function openStore(): Promise<Store> {
   if (process.env.STORE === 'firestore') {
     const { FirestoreStore } = await import('./firestore');
@@ -32,7 +48,7 @@ async function openStore(): Promise<Store> {
     return new FirestoreStore();
   }
   logger.info('Using the in-memory store: ratings are lost on restart');
-  return new MemoryStore(rankedKeysFromEnv());
+  return new MemoryStore(rankedKeysFromEnv(), trustedIdentitiesFromEnv());
 }
 
 export const store: Store = await openStore();

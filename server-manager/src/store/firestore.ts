@@ -1,5 +1,5 @@
 import { Firestore, type DocumentReference } from '@google-cloud/firestore';
-import type { AccountDoc, BatchCursor, RankedKeyDoc, RatingDoc, Store, Tx } from './types';
+import type { AccountDoc, BatchCursor, RankedKeyDoc, RatingDoc, Store, TrustedIdentityDoc, Tx } from './types';
 
 /** How long a leaderboard page is served from memory. */
 const LEADERBOARD_CACHE_MS = 30_000;
@@ -87,6 +87,11 @@ export class FirestoreStore implements Store {
   async rankedKey(id: string): Promise<RankedKeyDoc | undefined> {
     const doc = await this.ref('rankedKeys', id).get();
     return doc.exists ? ({ ...(doc.data() as Omit<RankedKeyDoc, 'id'>), id } as RankedKeyDoc) : undefined;
+  }
+
+  async trustedIdentity(email: string): Promise<TrustedIdentityDoc | undefined> {
+    const doc = await this.ref('trustedIdentities', email).get();
+    return doc.exists ? ({ ...(doc.data() as Omit<TrustedIdentityDoc, 'id'>), id: email } as TrustedIdentityDoc) : undefined;
   }
 
   async leaderboard(limit: number): Promise<RatingDoc[]> {

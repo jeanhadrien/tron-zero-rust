@@ -31,6 +31,17 @@ export interface RankedKeyDoc {
   revoked: boolean;
 }
 
+/**
+ * A platform identity (the verified email of a cloud service account) allowed to
+ * register as a ranked server, an alternative to a ranked key.
+ */
+export interface TrustedIdentityDoc {
+  /** The service account email. */
+  id: string;
+  official: boolean;
+  revoked: boolean;
+}
+
 /** Last accepted result batch of one ranked key, for idempotent retries. */
 export interface BatchCursor {
   /** Random per game-server process: a restart resets `seq` without a clash. */
@@ -55,6 +66,7 @@ export interface Store {
   /** Keep the account's and its rating row's display name in step. */
   setDisplayName(accountId: string, displayName: string): Promise<void>;
   rankedKey(id: string): Promise<RankedKeyDoc | undefined>;
+  trustedIdentity(email: string): Promise<TrustedIdentityDoc | undefined>;
   /** Eligible players, best first. */
   leaderboard(limit: number): Promise<RatingDoc[]>;
   /** Eligible players rated strictly above `rating`. */

@@ -7,6 +7,7 @@ import { rateLimit } from './rateLimit';
 import type { RegisterPayload, RegisterResponse, RoomEntry } from './room';
 import { authenticate, createAccount, sanitizeName } from './accounts';
 import { checkRankedKey, forgetRankedRoom, getRankedRoom, markRanked, pruneRankedRooms, recordRoster } from './ranked';
+import { checkIdentityToken } from './identity';
 import { issueTicket, publicKeys } from './tickets';
 import { applyResults, parseResults } from './results';
 import { store } from './store';
@@ -76,6 +77,11 @@ function parseRegister(raw: unknown): RegisterPayload | string {
   if (b.webPort != null && !isInt(b.webPort, 1, 65535)) return 'Invalid webPort';
   if (b.certHash != null && (typeof b.certHash !== 'string' || !CERT_HASH.test(b.certHash))) return 'Invalid certHash';
   if (b.rankedKey != null && (typeof b.rankedKey !== 'string' || b.rankedKey.length > 200)) return 'Invalid rankedKey';
+  // An ID token is a JWT of about 1.5 KB; the express body limit (16 kb) bounds the rest.
+  if (b.identityToken != null && (typeof b.identityToken !== 'string' || b.identityToken.length > 8192)) {
+    return 'Invalid identityToken';
+  }
+  if (b.rankedKey != null && b.identityToken != null) return 'Send either rankedKey or identityToken, not both';
   return {
     host: b.host,
     port: b.port,
@@ -85,6 +91,7 @@ function parseRegister(raw: unknown): RegisterPayload | string {
     ...(b.webPort != null && { webPort: b.webPort }),
     ...(typeof b.certHash === 'string' && { certHash: b.certHash.toLowerCase() }),
     ...(typeof b.rankedKey === 'string' && { rankedKey: b.rankedKey }),
+    ...(typeof b.identityToken === 'string' && { identityToken: b.identityToken }),
   };
 }
 
@@ -114,22 +121,28 @@ app.post('/api/rooms', rateLimit(REGISTER_LIMIT, 60_000), async (req, res) => {
     return;
   }
 
-  // A ranked key is checked before anything is created, so a bad key leaves no room behind.
-  const key = body.rankedKey ? await checkRankedKey(body.rankedKey) : undefined;
+  // A credential is checked before anything is created, so a bad one leaves no room behind.
+  // One that is presented and fails is refused (403), never silently listed as a plain room:
+  // the server would then demand tickets nobody can get. If the check itself could not run
+  // (e.g. Google's keys unreachable), 503 makes the server retry.
+  const key = body.identityToken
+    ? await checkIdentityToken(body.identityToken)
+    : body.rankedKey
+      ? await checkRankedKey(body.rankedKey)
+      : undefined;
   if (key && !key.ok) {
     logger.warn(`Register rejected: ${key.reason} (ip=${req.ip})`);
-    res.status(403).json({ error: key.reason });
+    res.status(key.transient ? 503 : 403).json({ error: key.reason });
     return;
   }
 
   const id = randomUUID();
   const token = randomBytes(32).toString('hex');
   const entry = registerRoom(body, id, token);
-  if (key?.ok) {
-    markRanked(id, key.keyId, key.official);
-    entry.ranked = true;
-    entry.official = key.official;
-  }
+  // The tier is always explicit, so a room's absence from /api/play is visible in /api/rooms.
+  entry.ranked = !!key;
+  entry.official = !!key?.official;
+  if (key) markRanked(id, key.keyId, key.official);
   const response: RegisterResponse = { ...entry, token };
   if (key?.ok) {
     response.keyId = key.keyId;

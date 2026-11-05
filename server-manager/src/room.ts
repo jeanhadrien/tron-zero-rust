@@ -36,6 +36,7 @@ export interface RegisterPayload {
   displayName: string;
   maxPlayers: number;
   rankedKey?: string; // `<keyId>.<secret>`, presented once to register as ranked
+  identityToken?: string; // platform OIDC ID token, the keyless alternative to rankedKey
 }
 
 // POST /api/rooms/:id/heartbeat

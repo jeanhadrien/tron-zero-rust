@@ -36,7 +36,7 @@ export function pruneRankedRooms(liveRoomIds: Set<string>): void {
 
 export type KeyCheck =
   | { ok: true; keyId: string; official: boolean }
-  | { ok: false; reason: string };
+  | { ok: false; reason: string; /** The check could not run (retry later), as opposed to failing. */ transient?: boolean };
 
 /** Validate a presented `<keyId>.<secret>` against the stored ranked keys. */
 export async function checkRankedKey(presented: string): Promise<KeyCheck> {
