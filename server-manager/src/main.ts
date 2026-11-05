@@ -43,7 +43,7 @@ const accountCors = cors({
   methods: ['GET', 'POST'],
   allowedHeaders: ['Authorization', 'Content-Type'],
 });
-app.use(['/api/accounts', '/api/tickets', '/api/me'], accountCors);
+app.use(['/api/accounts', '/api/tickets', '/api/me', '/api/play'], accountCors);
 // Everything else is read-only for browsers: they may list rooms but not mutate
 // them (non-GET preflights fail). Game servers are not browsers and need no CORS.
 app.use(cors({ methods: ['GET'] }));

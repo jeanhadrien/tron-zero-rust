@@ -12,6 +12,7 @@ use shared::protocol::{
 };
 use std::collections::HashMap;
 
+use crate::budget::{LinkBudget, Meter};
 use crate::ranked::{AccountId, RankedMode, RankedState, TicketClaims, now_ms, verify_ticket};
 use crate::session::SessionLease;
 use crate::systems::{Human, spawn_human};
@@ -41,6 +42,8 @@ pub const MAX_UNADMITTED_LINKS: usize = 32;
 #[derive(Component, Default)]
 pub struct AwaitingHello {
     waited_secs: f64,
+    /// The newest ticket received so far; it is read when the hello arrives.
+    ticket: Option<SessionTicket>,
 }
 
 /// A join that passed every check.
@@ -169,6 +172,7 @@ pub fn handle_hello(
             &RemoteId,
             &mut AwaitingHello,
             &mut SessionLease,
+            &mut LinkBudget,
             &mut MessageReceiver<SessionHello>,
             &mut MessageReceiver<SessionTicket>,
             &mut MessageSender<HelloReply>,
@@ -185,14 +189,28 @@ pub fn handle_hello(
     let mut human_count = humans.iter().count();
     let mut taken: Vec<String> = names.iter().map(|name| name.0.clone()).collect();
     let mut connected: Vec<String> = accounts.iter().map(|a| a.id.clone()).collect();
-    for (link, remote, mut waiting, mut lease, mut receiver, mut tickets, mut sender) in
+    let now = time.elapsed_secs_f64();
+    for (link, remote, mut waiting, mut lease, mut budget, mut receiver, mut tickets, mut sender) in
         &mut pending
     {
         if lease.is_closing() {
             continue;
         }
         waiting.waited_secs += time.delta_secs_f64();
-        let Some(hello) = receiver.receive().next() else {
+        // Everything that arrived is counted and taken out of the receivers, so
+        // a flood is dropped instead of buffered. The newest ticket waits for
+        // its hello, which may land in a later tick.
+        let hellos: Vec<_> = receiver.receive().collect();
+        let sent: Vec<_> = tickets.receive().collect();
+        if !budget.spend(Meter::Handshake, (hellos.len() + sent.len()) as u32, now) {
+            warn!(?link, "Handshake message flood; closing the link");
+            lease.close();
+            continue;
+        }
+        if let Some(newest) = sent.into_iter().last() {
+            waiting.ticket = Some(newest);
+        }
+        let Some(hello) = hellos.into_iter().next() else {
             if waiting.waited_secs >= SESSION_TIMEOUT_SECS {
                 warn!(?link, "Client never sent a hello; closing");
                 lease.close();
@@ -201,7 +219,7 @@ pub fn handle_hello(
         };
         // Sent right before the hello on the same ordered channel, so it is
         // here already; an unranked server never looks at it.
-        let ticket = tickets.receive().next();
+        let ticket = waiting.ticket.take();
         let verify = || match &ranked {
             None => Ok(None),
             Some(ranked) => {
@@ -233,6 +251,32 @@ pub fn handle_hello(
                 // Keep the link open so a lost rejection is retransmitted.
                 lease.close_after_rejection();
             }
+        }
+    }
+}
+
+/// Handshake messages that reach an admitted link are never read: count them,
+/// drop them, and close the link if they keep coming.
+#[allow(clippy::type_complexity)]
+pub fn discard_late_handshakes(
+    time: Res<Time<Real>>,
+    mut links: Query<
+        (
+            Entity,
+            &mut SessionLease,
+            &mut LinkBudget,
+            &mut MessageReceiver<SessionHello>,
+            &mut MessageReceiver<SessionTicket>,
+        ),
+        (With<Connected>, Without<AwaitingHello>),
+    >,
+) {
+    let now = time.elapsed_secs_f64();
+    for (link, mut lease, mut budget, mut hellos, mut tickets) in &mut links {
+        let late = hellos.receive().count() + tickets.receive().count();
+        if late > 0 && !budget.spend(Meter::Handshake, late as u32, now) {
+            warn!(?link, "Handshake message flood; closing the link");
+            lease.close();
         }
     }
 }

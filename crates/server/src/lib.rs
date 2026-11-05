@@ -57,6 +57,7 @@ pub fn add_core(app: &mut App, port: u16) {
             turns::collect_turn_commands,
             session::receive_session_requests,
             admission::handle_hello,
+            admission::discard_late_handshakes.after(admission::handle_hello),
         )
             .after(MessageSystems::Receive),
     );

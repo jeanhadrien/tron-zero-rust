@@ -21,16 +21,19 @@ pub enum Meter {
     SessionRequests,
     /// Respawn requests; a client has at most one in flight.
     RespawnRequests,
+    /// `SessionHello` and `SessionTicket`: one of each per join, so a few
+    /// retransmissions at most.
+    Handshake,
 }
 
 impl Meter {
-    const COUNT: usize = 4;
+    const COUNT: usize = 5;
 
     fn allowance_per_sec(self) -> u32 {
         match self {
             Self::TurnBatches => 5 * TICK_HZ as u32,
             Self::TurnRejections => 60,
-            Self::SessionRequests | Self::RespawnRequests => 10,
+            Self::SessionRequests | Self::RespawnRequests | Self::Handshake => 10,
         }
     }
 }
