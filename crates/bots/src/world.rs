@@ -150,7 +150,7 @@ impl WorldSnapshot {
 
     /// Obstacle segments in the exact form `shared::physics::nearest` expects.
     /// Rider segment owners use the snapshot's rider *index*, not entity bits —
-    /// `step_rider` is likewise called with the index, so self-exclusion matches.
+    /// `step_riders` is likewise called with the index, so self-exclusion matches.
     pub fn obstacles(&self) -> &[Segment] {
         self.obstacles.get_or_init(|| {
             let mut segments = Vec::new();

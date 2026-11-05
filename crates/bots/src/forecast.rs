@@ -2,7 +2,7 @@
 //! step so a projected world cannot diverge from the authoritative sim.
 
 use shared::Trail;
-use shared::physics::step_rider;
+use shared::physics::{RiderState, RiderStep, step_riders};
 
 use crate::strategy::Action;
 use crate::world::WorldSnapshot;
@@ -15,28 +15,36 @@ pub struct PhysicsForecaster;
 
 impl Forecaster for PhysicsForecaster {
     fn project(&self, world: &WorldSnapshot, actions: &[Action]) -> WorldSnapshot {
-        // Obstacles are the start-of-tick snapshot, matching `simulate_players`.
+        // Obstacles are the start-of-tick snapshot, matching `simulate_players`,
+        // and the tick is the same `step_riders` transaction, crossings included.
         let obstacles = world.obstacles();
         let mut riders = world.riders.clone();
-        for (index, rider) in riders.iter_mut().enumerate() {
-            if !rider.alive {
-                continue;
-            }
-            let action = actions.get(index).copied().unwrap_or(Action::Hold);
-            let mut trail = Trail(std::mem::take(&mut rider.trail));
-            let outcome = step_rider(
-                Some(index as u64),
-                shared::physics::RiderState {
-                    position: rider.pos,
-                    direction: rider.dir,
-                    target_speed: rider.target_speed_mult,
-                    rubber: rider.rubber,
-                },
-                action.to_input(),
-                obstacles,
-                &mut trail,
-            );
-            rider.trail = trail.0;
+        let live: Vec<usize> = (0..riders.len()).filter(|&i| riders[i].alive).collect();
+        let mut steps: Vec<RiderStep> = live
+            .iter()
+            .map(|&index| {
+                let rider = &mut riders[index];
+                RiderStep {
+                    owner: Some(index as u64),
+                    state: RiderState {
+                        position: rider.pos,
+                        direction: rider.dir,
+                        target_speed: rider.target_speed_mult,
+                        rubber: rider.rubber,
+                    },
+                    turn: actions
+                        .get(index)
+                        .copied()
+                        .unwrap_or(Action::Hold)
+                        .to_input(),
+                    trail: Trail(std::mem::take(&mut rider.trail)),
+                }
+            })
+            .collect();
+        let outcomes = step_riders(&mut steps, obstacles);
+        for ((index, step), outcome) in live.into_iter().zip(steps).zip(outcomes) {
+            let rider = &mut riders[index];
+            rider.trail = step.trail.0;
             rider.pos = outcome.position;
             rider.dir = outcome.direction;
             rider.rubber = outcome.rubber;
@@ -184,5 +192,38 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn forecaster_resolves_same_tick_crossings_like_the_simulation() {
+        let mut world = World::new();
+        world.insert_resource(SimulationRole::Server);
+        world.spawn((Arena, WallSegments(arena_walls(ARENA_WIDTH, ARENA_HEIGHT))));
+        // A reaches (0,0) a third into the first tick, B two thirds in: the
+        // sim stops B, and the forecast must too.
+        let a = cycle(&mut world, Vec2::new(-1.0, 0.0), Vec2::X);
+        let b = cycle(&mut world, Vec2::new(0.0, -2.0), Vec2::Y);
+        *world.get_mut::<Trail>(a).unwrap() =
+            Trail(vec![Vec2::new(-50.0, 0.0), Vec2::new(-1.0, 0.0)]);
+        *world.get_mut::<Trail>(b).unwrap() =
+            Trail(vec![Vec2::new(0.0, -50.0), Vec2::new(0.0, -2.0)]);
+        let mut schedule = Schedule::default();
+        schedule.add_systems(simulate_players);
+
+        let mut snapshot = rider_snapshot(&world, &[a, b]);
+        let hold = [Action::Hold, Action::Hold];
+        for _ in 0..5 {
+            schedule.run(&mut world);
+            snapshot = PhysicsForecaster.project(&snapshot, &hold);
+            for entity in [a, b] {
+                let sim = sim_state(&world, entity);
+                let forecast = forecast_state(&snapshot, entity);
+                assert_eq!(sim, forecast, "forecast diverged from the sim");
+            }
+        }
+        assert!(
+            forecast_state(&snapshot, b).0.y < 0.0,
+            "B crossed A's trail"
+        );
     }
 }

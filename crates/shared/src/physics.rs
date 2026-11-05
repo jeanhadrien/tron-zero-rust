@@ -154,7 +154,7 @@ pub struct StepOutcome {
 
 /// Turn → sense → move → rubber for one rider against immutable start-of-tick
 /// obstacles. Mutates `trail` in place (turn vertex + trimmed advance).
-pub fn step_rider(
+pub(crate) fn step_rider(
     owner: Option<u64>,
     state: RiderState,
     turn: PlayerInput,
@@ -245,6 +245,59 @@ pub fn step_rider(
     }
 }
 
+/// One rider entering a tick: who it is (for self-trail exclusions), its
+/// state, the turn it executes and its trail, which the tick updates in place.
+pub struct RiderStep {
+    pub owner: Option<u64>,
+    pub state: RiderState,
+    pub turn: PlayerInput,
+    pub trail: Trail,
+}
+
+/// The whole tick for every live rider: `step_rider` each one against the
+/// start-of-tick `obstacles`, then `resolve_crossings` between this tick's
+/// moves. The authoritative sim and the bot forecaster both call this, so a
+/// projected world cannot drift from the real one. Returns one outcome per
+/// rider, in order; a `died` rider's trail is the caller's to clear.
+pub fn step_riders(riders: &mut [RiderStep], obstacles: &[Segment]) -> Vec<StepOutcome> {
+    let mut outcomes: Vec<StepOutcome> = riders
+        .iter_mut()
+        .map(|r| step_rider(r.owner, r.state, r.turn, obstacles, &mut r.trail))
+        .collect();
+    let moves: Vec<Move> = riders
+        .iter()
+        .zip(&outcomes)
+        .map(|(r, o)| Move {
+            from: r.state.position,
+            direction: o.direction,
+            // A dead rider does not move; a zero move never meets anything.
+            length: if o.died { 0.0 } else { o.step },
+        })
+        .collect();
+    for (i, length) in resolve_crossings(&moves).into_iter().enumerate() {
+        let Some(length) = length else {
+            continue;
+        };
+        // Being stopped is a collision: it costs rubber like facing a wall,
+        // or two riders tied at a crossing would wait there forever.
+        let (rider, outcome, m) = (&mut riders[i], &mut outcomes[i], moves[i]);
+        let (target_speed, rubber) = crash(rider.state.target_speed, rider.state.rubber);
+        if rubber == 0.0 {
+            outcome.died = true;
+            continue;
+        }
+        outcome.position = m.from + m.direction * length;
+        outcome.step = length;
+        outcome.speed = length / (BASE_SPEED * TICK_SECS);
+        outcome.target_speed = target_speed;
+        outcome.rubber = rubber;
+        outcome.sliding = false;
+        outcome.colliding = true;
+        rider.trail.advance(outcome.position, TRAIL_MAX_LENGTH);
+    }
+    outcomes
+}
+
 /// Rubber one tick stuck facing an obstacle costs at cruise multiplier `cruise`.
 fn crash_drain(cruise: f32) -> f32 {
     let load = 1.0 + cruise;
@@ -259,7 +312,7 @@ fn crash_brake(cruise: f32) -> f32 {
 /// `(target_speed, rubber)` for a rider that entered the tick with `cruise`
 /// and `rubber` and was stopped by `resolve_crossings`: the same cost as a
 /// tick spent facing an obstacle, replacing whatever `step_rider` decided.
-pub fn crash(cruise: f32, rubber: f32) -> (f32, f32) {
+fn crash(cruise: f32, rubber: f32) -> (f32, f32) {
     (
         crash_brake(cruise),
         (rubber - crash_drain(cruise)).clamp(0.0, BASE_RUBBER),
@@ -269,7 +322,7 @@ pub fn crash(cruise: f32, rubber: f32) -> (f32, f32) {
 /// One rider's straight movement during a tick: `length` units along
 /// `direction` (unit, cardinal) from `from`.
 #[derive(Clone, Copy, Debug)]
-pub struct Move {
+pub(crate) struct Move {
     pub from: Vec2,
     pub direction: Vec2,
     pub length: f32,
@@ -293,7 +346,7 @@ struct Meeting {
 /// rider that was itself stopped before a crossing never lays trail there.
 /// Returns each move's new length when it was shortened. Order-independent,
 /// and `+ - * /` only like the rest of the sim.
-pub fn resolve_crossings(moves: &[Move]) -> Vec<Option<f32>> {
+pub(crate) fn resolve_crossings(moves: &[Move]) -> Vec<Option<f32>> {
     let mut meetings = Vec::new();
     for i in 0..moves.len() {
         for j in i + 1..moves.len() {
