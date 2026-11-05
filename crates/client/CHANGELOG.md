@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.5.0](https://github.com/jeanhadrien/tron-zero-rust/compare/client-v0.4.0...client-v0.5.0) (2026-11-05)
+
+
+### Features
+
+* **client:** gizmo particle effects (derez, rezz, grind sparks) ([846f28c](https://github.com/jeanhadrien/tron-zero-rust/commit/846f28c58949a0286a4d991bd3d983cc18436964))
+* **client:** ranked join with account, ticket and leaderboard ([14a3458](https://github.com/jeanhadrien/tron-zero-rust/commit/14a3458242f5889473b6a7c3f8c568d050d328c2))
+* **client:** render smoothing separate from sim state ([de34ec1](https://github.com/jeanhadrien/tron-zero-rust/commit/de34ec19968d8a33b6e0bca06dfa402844981b1f))
+* **client:** show Localhost only when a local server answers a probe ([30a5d41](https://github.com/jeanhadrien/tron-zero-rust/commit/30a5d412ebda7718c0ac2cfce30431b1299cc5f2))
+* **client:** Theme design tokens drive egui style and world rendering ([2c5134a](https://github.com/jeanhadrien/tron-zero-rust/commit/2c5134a89e3d39fe21898b8017ebf392bca93d14))
+* **manager,client:** placement via /api/play and a Play ranked button ([150bcfb](https://github.com/jeanhadrien/tron-zero-rust/commit/150bcfbd5d0b8550838d0bbbe79dc4885ced3537))
+
+
+### Bug Fixes
+
+* **client:** draw grid as sprites behind trails; centralise 2D layers ([f3f4089](https://github.com/jeanhadrien/tron-zero-rust/commit/f3f40891a4a6ff158b2124f4103aefa84dbac5a0))
+* **client:** review follow-ups for theme and effects ([f2612e1](https://github.com/jeanhadrien/tron-zero-rust/commit/f2612e177e6c69dd107c422bf05e48044e3cde2c))
+* **client:** sparks follow the replicated IsSliding grind flag ([dbe106b](https://github.com/jeanhadrien/tron-zero-rust/commit/dbe106ba48bc7824373e86c9f7920594143d3a52))
+
 ## [0.4.0](https://github.com/jeanhadrien/tron-zero-rust/compare/client-v0.3.0...client-v0.4.0) (2026-11-02)
 
 
