@@ -30,11 +30,13 @@ if ! gcloud artifacts repositories describe tron --location europe-west1 --proje
   gcloud artifacts repositories create tron --repository-format docker --location europe-west1 --project "$PROJECT"
 fi
 
-# A dedicated service account with no roles: it only has to exist to be a name
-# the manager can trust. (The default compute account holds broad roles.)
+# A dedicated service account: a name the manager can trust, holding only the right to
+# pull the server image. (The default compute account holds broad roles.)
 if ! gcloud iam service-accounts describe "$SA_EMAIL" --project "$PROJECT" >/dev/null 2>&1; then
   gcloud iam service-accounts create "$SA_NAME" --project "$PROJECT" --display-name "Tron Zero game server"
 fi
+gcloud artifacts repositories add-iam-policy-binding tron --location europe-west1 --project "$PROJECT" \
+  --member "serviceAccount:$SA_EMAIL" --role roles/artifactregistry.reader >/dev/null
 
 # Game ports: raw UDP for desktop clients, WebTransport (QUIC, UDP) for browsers.
 if ! gcloud compute firewall-rules describe tron-zero-game --project "$PROJECT" >/dev/null 2>&1; then
