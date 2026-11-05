@@ -28,7 +28,7 @@ bun run typecheck
 | `TICKET_SIGNING_KEY` | ephemeral | Ed25519 key that signs join tickets; unset generates a new one per start (tickets die with a restart). |
 | `WEB_ORIGINS` | none | Origins allowed to call `/api/accounts`, `/api/tickets` and `/api/me` from a browser. |
 
-Firestore needs the composite index in `firestore.indexes.json` (`firebase deploy --only firestore:indexes`, or create it from the console). Not yet exercised against a live database: the REST client loads under Bun and reaches credential lookup, but reads and transactions were only type-checked.
+Firestore needs the two composite indexes in `firestore.indexes.json` (`firebase deploy --only firestore:indexes`, or create it from the console). `bun scripts/firestore-live.ts` exercises the store against a real database and cleans up after itself (set `GCLOUD_TOKEN=$(gcloud auth print-access-token)` if there are no Application Default Credentials).
 
 ## API
 

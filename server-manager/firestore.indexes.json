@@ -7,6 +7,14 @@
         { "fieldPath": "eligible", "order": "ASCENDING" },
         { "fieldPath": "rating", "order": "DESCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "ratings",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "eligible", "order": "ASCENDING" },
+        { "fieldPath": "rating", "order": "ASCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []

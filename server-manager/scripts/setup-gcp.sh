@@ -22,13 +22,12 @@ if ! gcloud firestore databases describe --project "$PROJECT" >/dev/null 2>&1; t
   gcloud firestore databases create --project "$PROJECT" --location "$REGION" --type firestore-native
 fi
 
-# Leaderboard query: eligible == true ORDER BY rating DESC (see firestore.indexes.json).
-if ! gcloud firestore indexes composite list --project "$PROJECT" --format='value(name)' \
-  --filter='collectionGroup=ratings' | grep -q .; then
-  gcloud firestore indexes composite create --project "$PROJECT" --collection-group ratings \
-    --field-config field-path=eligible,order=ascending \
-    --field-config field-path=rating,order=descending
-fi
+# Leaderboard (eligible == true ORDER BY rating DESC) and rank (eligible == true AND
+# rating > r, counted) queries; see firestore.indexes.json. Creating an existing
+# index fails, which is fine on a re-run.
+for order in descending ascending; do
+  gcloud firestore indexes composite create --project "$PROJECT" --collection-group ratings     --field-config field-path=eligible,order=ascending     --field-config "field-path=rating,order=$order" --quiet || echo "index ($order) exists or is building"
+done
 
 # The identity the service runs as (the default compute account unless one was set).
 SA="$(gcloud run services describe "$SERVICE" --project "$PROJECT" --region "$REGION" \
