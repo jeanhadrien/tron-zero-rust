@@ -66,6 +66,17 @@ check('results need room token', r.status === 401, r);
 r = await call('POST', `/api/rooms/${room.id}/results`, { session: 's1', seq: 9, events: [{ type: 'kill', killer: idA, victim: idA }] }, room.token);
 check('self kill skipped', r.json.applied === 0, r);
 
+// Placement: an even match beats an empty server; exclusions and community rooms are respected.
+const c = (await call('POST', '/api/accounts', { displayName: 'Carol' })).json;
+const empty = (await call('POST', '/api/rooms', { host: 'h3', port: 3, displayName: 'official-empty', maxPlayers: 8, rankedKey: 'k1.s3cret' })).json;
+check('play needs credential', (await call('POST', '/api/play', {})).status === 401);
+r = await call('POST', '/api/play', {}, c.credential);
+check('placed where players are an even match', r.json.room?.id === room.id && !!r.json.ticket, r);
+r = await call('POST', '/api/play', { exclude: [room.id] }, c.credential);
+check('exclude moves to the next room', r.json.room?.id === empty.id, r);
+r = await call('POST', '/api/play', { exclude: [room.id, empty.id] }, c.credential);
+check('community rooms are never placed into', r.status === 404, r);
+
 stopEviction();
 server.close();
 process.exit(process.exitCode ?? 0);

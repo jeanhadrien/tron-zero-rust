@@ -10,6 +10,9 @@ import { checkRankedKey, forgetRankedRoom, getRankedRoom, markRanked, pruneRanke
 import { issueTicket, publicKeys } from './tickets';
 import { applyResults, parseResults } from './results';
 import { store } from './store';
+import { candidatesFor, forgetReservations, pickRoom, pruneReservations, reserve } from './placement';
+import { humanRatingId } from './rating/pool';
+import { RATING_CONFIG } from './rating/config';
 
 const HEARTBEAT_INTERVAL = 30_000; // servers should heartbeat every 30s
 const EVICT_GRACE = 10_000; // extra grace period => 40s idle eviction
@@ -195,6 +198,7 @@ app.delete('/api/rooms/:id', (req, res) => {
   if (getRoom(req.params.id) && !authorizedRoom(req, res)) return;
   const existed = removeRoom(req.params.id);
   forgetRankedRoom(req.params.id);
+  forgetReservations(req.params.id);
   logger.info(`Room unregistered — id=${req.params.id} existed=${existed}`);
   res.json({ ok: true, existed });
 });
@@ -234,6 +238,32 @@ app.post('/api/tickets', rateLimit(60, 60_000), async (req, res) => {
   if (displayName !== account.displayName) await store.setDisplayName(account.id, displayName);
   const ticket = issueTicket({ accountId: account.id, displayName, serverKeyId: ranked.keyId, roomId: room.entry.id });
   res.json({ ticket: ticket.toString('base64') });
+});
+
+// "Play now": the manager picks an official ranked room for the caller (spec:
+// Placement) and returns it with a ticket. `exclude` lists rooms the client
+// already failed to join. Always places someone when any official room has a slot.
+app.post('/api/play', rateLimit(30, 60_000), async (req, res) => {
+  const account = await authenticate(bearerToken(req.header('authorization')));
+  if (!account) {
+    res.status(401).json({ error: 'Invalid or missing account credential' });
+    return;
+  }
+  const body = (req.body ?? {}) as { exclude?: unknown; displayName?: unknown };
+  const exclude = new Set(Array.isArray(body.exclude) ? body.exclude.filter((v): v is string => typeof v === 'string') : []);
+  const rating = (await store.rating(humanRatingId(account.id)))?.rating ?? RATING_CONFIG.startRating;
+  const chosen = pickRoom(rating, await candidatesFor(getAllRooms(), exclude));
+  const ranked = chosen && getRankedRoom(chosen.entry.id);
+  if (!chosen || !ranked) {
+    res.status(404).json({ error: 'No ranked server has a free slot right now' });
+    return;
+  }
+  const displayName = sanitizeName(body.displayName ?? account.displayName);
+  if (displayName !== account.displayName) await store.setDisplayName(account.id, displayName);
+  reserve(chosen.entry.id, account.id, rating);
+  const ticket = issueTicket({ accountId: account.id, displayName, serverKeyId: ranked.keyId, roomId: chosen.entry.id });
+  logger.info(`Placed account ${account.id} (${Math.round(rating)}) in room ${chosen.entry.id}`);
+  res.json({ room: chosen.entry, ticket: ticket.toString('base64') });
 });
 
 // Verification keys for game servers (they also get them at register).
@@ -294,7 +324,9 @@ app.use((err: { status?: number; statusCode?: number }, _req: express.Request, r
 // Periodic eviction of stale rooms
 const evictionInterval = setInterval(() => {
   const removed = evictStale(HEARTBEAT_INTERVAL + EVICT_GRACE);
-  pruneRankedRooms(new Set(getAllRooms().map((room) => room.id)));
+  const liveIds = new Set(getAllRooms().map((room) => room.id));
+  pruneRankedRooms(liveIds);
+  pruneReservations(liveIds);
   if (removed > 0) {
     logger.warn(`Evicted ${removed} stale room(s)`);
   }

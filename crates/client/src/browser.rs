@@ -211,7 +211,7 @@ pub fn transport_error(url: &str, err: impl std::fmt::Display) -> String {
 // Where to dial a room, or why it can't be dialed. Numeric IPs never touch
 // DNS, so this is offline-safe for them; hostnames may block briefly natively,
 // which is why this runs once per refresh on receipt, not per frame.
-fn resolve_room(room: &RoomInfo) -> (Option<Endpoint>, Option<String>) {
+pub(crate) fn resolve_room(room: &RoomInfo) -> (Option<Endpoint>, Option<String>) {
     if WEB {
         web_endpoint(room)
     } else {

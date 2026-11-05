@@ -104,6 +104,8 @@ enum UiAction {
     GotoSettings,
     GotoRooms,
     GotoLeaderboard,
+    /// Play now: the manager picks a ranked room.
+    PlayRanked,
     Back,
     Refresh,
     ConnectRoom(Endpoint),
@@ -205,6 +207,9 @@ fn main_screen(
     }
     if theme::action_button(ui, "Browse Servers").clicked() {
         action.set_once(UiAction::GotoRooms);
+    }
+    if phase == ConnectionPhase::Offline && theme::action_button(ui, "Play ranked").clicked() {
+        action.set_once(UiAction::PlayRanked);
     }
     if theme::action_button(ui, "Leaderboard").clicked() {
         action.set_once(UiAction::GotoLeaderboard);
@@ -630,6 +635,19 @@ pub fn menu_ui(
                 menu.block_this_frame = true;
                 session.status = "Signing in to the ranked server...".into();
                 ranked.start(endpoint, room_id, join_name, &config, &accounts, now);
+            }
+        }
+        UiAction::PlayRanked => {
+            if joinable {
+                menu.block_this_frame = true;
+                // After a refusal (full, bad ticket), ask for a different room.
+                let exclude = if session.join_rejected() {
+                    ranked.last_placed.iter().cloned().collect()
+                } else {
+                    Vec::new()
+                };
+                session.status = "Finding a ranked server...".into();
+                ranked.start_play(exclude, join_name, &config, &accounts, now);
             }
         }
         UiAction::Back => menu.screen = MenuScreen::Main,

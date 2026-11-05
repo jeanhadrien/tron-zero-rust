@@ -18,7 +18,7 @@ use base64::Engine as _;
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use crate::browser::ManagerConfig;
+use crate::browser::{ManagerConfig, RoomInfo, resolve_room};
 use crate::connection::{Endpoint, Session};
 use crate::menu::MenuState;
 
@@ -127,24 +127,67 @@ fn ask_ticket(
     })
 }
 
+/// The manager's pick for "Play now": a room and a ticket for it.
+struct Placement {
+    room: RoomInfo,
+    ticket: Vec<u8>,
+}
+
+/// Ask the manager to choose a ranked room (`POST /api/play`); `exclude` lists
+/// rooms that already turned this player away.
+fn ask_placement(
+    config: &ManagerConfig,
+    account: &SavedAccount,
+    name: &str,
+    exclude: &[String],
+) -> Slot<Placement> {
+    #[derive(Deserialize)]
+    struct Reply {
+        room: RoomInfo,
+        ticket: String,
+    }
+    let url = format!("{}/api/play", config.base_url);
+    let body = serde_json::json!({ "exclude": exclude, "displayName": name });
+    send(json_post(url, body, Some(&account.credential)), |bytes| {
+        let reply: Reply = parse_json(bytes)?;
+        let ticket = base64::engine::general_purpose::STANDARD
+            .decode(reply.ticket)
+            .map_err(|_| "The manager sent a malformed ticket.".to_owned())?;
+        Ok(Placement {
+            room: reply.room,
+            ticket,
+        })
+    })
+}
+
 enum Step {
     Account(Slot<SavedAccount>),
     Ticket(Slot<Vec<u8>>),
+    Place(Slot<Placement>),
+}
+
+/// Where a ranked join is headed.
+enum Target {
+    /// A room the player picked in the browser.
+    Room { endpoint: Endpoint, room_id: String },
+    /// "Play now": the manager picks the room.
+    Play { exclude: Vec<String> },
 }
 
 struct PendingJoin {
-    endpoint: Endpoint,
-    room_id: String,
+    target: Target,
     name: String,
     step: Step,
     started_at: f64,
 }
 
-/// A ranked connect in progress: sign-up if needed, then a ticket, then the
-/// actual connection.
+/// A ranked connect in progress: sign-up if needed, then a ticket (or a
+/// placement, which includes one), then the actual connection.
 #[derive(Resource, Default)]
 pub struct RankedJoin {
     pending: Option<PendingJoin>,
+    /// The room "Play now" last chose, so a retry after a refusal can skip it.
+    pub last_placed: Option<String>,
 }
 
 impl RankedJoin {
@@ -163,16 +206,39 @@ impl RankedJoin {
         accounts: &Accounts,
         now: f64,
     ) {
+        let target = Target::Room { endpoint, room_id };
+        self.begin(target, name, config, accounts, now);
+    }
+
+    /// "Play now": let the manager choose a ranked room, skipping `exclude`.
+    pub fn start_play(
+        &mut self,
+        exclude: Vec<String>,
+        name: String,
+        config: &ManagerConfig,
+        accounts: &Accounts,
+        now: f64,
+    ) {
+        self.begin(Target::Play { exclude }, name, config, accounts, now);
+    }
+
+    fn begin(
+        &mut self,
+        target: Target,
+        name: String,
+        config: &ManagerConfig,
+        accounts: &Accounts,
+        now: f64,
+    ) {
         if self.busy() {
             return;
         }
         let step = match accounts.0.get(&config.base_url) {
-            Some(account) => Step::Ticket(ask_ticket(config, account, &room_id, &name)),
+            Some(account) => first_step(&target, config, account, &name),
             None => Step::Account(create_account(config, &name)),
         };
         self.pending = Some(PendingJoin {
-            endpoint,
-            room_id,
+            target,
             name,
             step,
             started_at: now,
@@ -180,16 +246,28 @@ impl RankedJoin {
     }
 }
 
+/// The request that follows having an account.
+fn first_step(target: &Target, config: &ManagerConfig, account: &SavedAccount, name: &str) -> Step {
+    match target {
+        Target::Room { room_id, .. } => Step::Ticket(ask_ticket(config, account, room_id, name)),
+        Target::Play { exclude } => Step::Place(ask_placement(config, account, name, exclude)),
+    }
+}
+
 /// What a polled step decided.
 enum Progress {
     Waiting,
     Next(Step),
-    Connect(Vec<u8>),
+    Connect {
+        endpoint: Endpoint,
+        ticket: Vec<u8>,
+        placed_in: Option<String>,
+    },
     Failed(String),
 }
 
-/// Advance the ranked join: store a new account, trade it for a ticket, then
-/// connect with the ticket. Failures land in the session status.
+/// Advance the ranked join: store a new account, trade it for a ticket (or a
+/// placement), then connect with the ticket. Failures land in the session status.
 #[allow(clippy::too_many_arguments)]
 pub fn poll_ranked_join(
     mut join: ResMut<RankedJoin>,
@@ -211,25 +289,49 @@ pub fn poll_ranked_join(
         Step::Account(slot) => match take(slot) {
             None => Progress::Waiting,
             Some(Ok(account)) => {
-                let ticket = ask_ticket(&config, &account, &pending.room_id, &pending.name);
+                let next = first_step(&pending.target, &config, &account, &pending.name);
                 accounts.0.insert(config.base_url.clone(), account);
-                Progress::Next(Step::Ticket(ticket))
+                Progress::Next(next)
             }
             Some(Err(message)) => Progress::Failed(message),
         },
-        Step::Ticket(slot) => match take(slot) {
+        Step::Ticket(slot) => match (take(slot), &pending.target) {
+            (None, _) => Progress::Waiting,
+            (Some(Ok(ticket)), Target::Room { endpoint, .. }) => Progress::Connect {
+                endpoint: endpoint.clone(),
+                ticket,
+                placed_in: None,
+            },
+            (Some(Ok(_)), Target::Play { .. }) => Progress::Failed("Unexpected ticket.".into()),
+            (Some(Err(message)), _) => Progress::Failed(message),
+        },
+        Step::Place(slot) => match take(slot) {
             None => Progress::Waiting,
-            Some(Ok(ticket)) => Progress::Connect(ticket),
+            Some(Ok(Placement { room, ticket })) => match resolve_room(&room) {
+                (Some(endpoint), _) => Progress::Connect {
+                    endpoint,
+                    ticket,
+                    placed_in: Some(room.id),
+                },
+                (None, problem) => Progress::Failed(
+                    problem.unwrap_or_else(|| "The chosen server cannot be reached.".into()),
+                ),
+            },
             Some(Err(message)) => Progress::Failed(message),
         },
     };
     match progress {
         Progress::Waiting => {}
         Progress::Next(step) => pending.step = step,
-        Progress::Connect(ticket) => {
+        Progress::Connect {
+            endpoint,
+            ticket,
+            placed_in,
+        } => {
             if let Some(done) = join.pending.take() {
-                session.connect_with_ticket(done.endpoint, &done.name, ticket, now, &mut commands);
+                session.connect_with_ticket(endpoint, &done.name, ticket, now, &mut commands);
             }
+            join.last_placed = placed_in;
         }
         Progress::Failed(message) => {
             join.pending = None;
