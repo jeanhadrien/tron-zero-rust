@@ -26,6 +26,7 @@ bun run typecheck
 | `FIRESTORE_PROJECT` | from ADC | Project id for `STORE=firestore`. `FIRESTORE_EMULATOR_HOST` also works. |
 | `RANKED_KEYS` | none | Memory store only: comma-separated `keyId:secret:official` (`1`/`0`). With Firestore, issue keys with `STORE=firestore bun scripts/add-key.ts <keyId> [official]`. |
 | `TICKET_SIGNING_KEY` | ephemeral | Ed25519 key that signs join tickets; unset generates a new one per start (tickets die with a restart). |
+| `TICKET_VERIFY_KEYS` | none | Extra Ed25519 public keys (raw hex, comma-separated) that are advertised to game servers and accepted when verifying tickets, never used to sign. Rotation: deploy once listing the new key's public half (servers re-register on a manager restart and learn it), then deploy with `TICKET_SIGNING_KEY` switched to the new key and the old public key listed until its tickets expire (60 s). `bun scripts/rotation.ts` checks the verification side. |
 | `WEB_ORIGINS` | none | Origins allowed to call `/api/accounts`, `/api/tickets` and `/api/me` from a browser. |
 
 Firestore needs the two composite indexes in `firestore.indexes.json` (`firebase deploy --only firestore:indexes`, or create it from the console). `bun scripts/firestore-live.ts` exercises the store against a real database and cleans up after itself (set `GCLOUD_TOKEN=$(gcloud auth print-access-token)` if there are no Application Default Credentials).

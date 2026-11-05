@@ -52,9 +52,41 @@ function loadSigningKey(): SigningKey {
 
 const current = loadSigningKey();
 
-/** Public keys game servers verify tickets with (current only for now). */
+/** A verification-only key: one that signs tickets elsewhere or used to. */
+interface VerifyKey {
+  kid: string;
+  publicKey: KeyObject;
+  publicKeyHex: string;
+}
+
+const kidOf = (publicKeyHex: string): string => createHash('sha256').update(publicKeyHex).digest('hex').slice(0, 8);
+
+/** Raw 32-byte Ed25519 public key (hex) as a verification key. */
+function verifyKeyFromHex(publicKeyHex: string): VerifyKey {
+  const x = Buffer.from(publicKeyHex, 'hex').toString('base64url');
+  const publicKey = createPublicKey({ key: { kty: 'OKP', crv: 'Ed25519', x }, format: 'jwk' });
+  return { kid: kidOf(publicKeyHex), publicKey, publicKeyHex };
+}
+
+/**
+ * Extra public keys from `TICKET_VERIFY_KEYS` (comma-separated hex). They are
+ * advertised to game servers and accepted when verifying, but never sign.
+ * Rotating the signing key takes two deploys: first list the new key's public
+ * half here (servers re-register on a manager restart and so learn it), then
+ * switch `TICKET_SIGNING_KEY` to the new key and list the old public key here
+ * until its last tickets have expired.
+ */
+const extraKeys: VerifyKey[] = (process.env.TICKET_VERIFY_KEYS ?? '')
+  .split(',')
+  .map((k) => k.trim())
+  .filter(Boolean)
+  .map(verifyKeyFromHex);
+
+const verifyKeys: VerifyKey[] = [current, ...extraKeys.filter((k) => k.kid !== current.kid)];
+
+/** Public keys game servers verify tickets with: the signing key, then the extras. */
 export function publicKeys(): { kid: string; publicKey: string }[] {
-  return [{ kid: current.kid, publicKey: current.publicKeyHex }];
+  return verifyKeys.map((k) => ({ kid: k.kid, publicKey: k.publicKeyHex }));
 }
 
 /**
@@ -77,15 +109,17 @@ export function issueTicket(
   return Buffer.concat([body, sign(null, body, current.privateKey)]);
 }
 
-/** The payload of a ticket this manager signed, or undefined if it did not. */
+/** The payload of a ticket signed by one of our keys, or undefined if none did. */
 export function verifyTicket(ticket: Buffer): TicketPayload | undefined {
   if (ticket.length <= SIGNATURE_LEN) return undefined;
   const body = ticket.subarray(0, ticket.length - SIGNATURE_LEN);
   const signature = ticket.subarray(ticket.length - SIGNATURE_LEN);
-  if (!verify(null, body, current.publicKey, signature)) return undefined;
   try {
     const payload = JSON.parse(body.toString('utf8')) as TicketPayload;
-    return payload.v === 1 && payload.kid === current.kid ? payload : undefined;
+    const key = verifyKeys.find((k) => k.kid === payload.kid);
+    // The kid only picks the key; nothing is trusted until the signature holds.
+    if (!key || !verify(null, body, key.publicKey, signature)) return undefined;
+    return payload.v === 1 ? payload : undefined;
   } catch {
     return undefined;
   }
