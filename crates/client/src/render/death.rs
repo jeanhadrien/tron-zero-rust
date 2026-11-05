@@ -10,7 +10,7 @@ use shared::{IsAlive, Player, PlayerInput};
 use crate::connection::{ConnectionPhase, Session};
 use crate::input::RespawnUi;
 use crate::menu::MenuState;
-use crate::theme;
+use crate::theme::Theme;
 
 // Pure text logic; unchanged from the Bevy-UI version.
 pub fn prompt(alive: bool, respawn: &RespawnUi) -> &'static str {
@@ -51,6 +51,7 @@ pub fn death_ui(
     mut contexts: EguiContexts,
     session: Res<Session>,
     menu: Res<MenuState>,
+    theme: Res<Theme>,
     clients: Query<Entity, (With<Client>, With<Connected>)>,
     players: Query<
         (&IsAlive, Option<&ControlledBy>),
@@ -85,16 +86,20 @@ pub fn death_ui(
         .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
         .interactable(false)
         .show(ctx, |ui| {
-            theme::panel_frame().show(ui, |ui| {
+            theme.panel_frame().show(ui, |ui| {
                 ui.set_min_width(384.0);
                 ui.vertical_centered(|ui| {
                     ui.label(
                         egui::RichText::new("YOU DIED")
                             .size(36.0)
                             .strong()
-                            .color(theme::RUBBER_RED),
+                            .color(theme.danger.egui()),
                     );
-                    ui.label(egui::RichText::new(text).size(18.0).color(theme::BODY));
+                    ui.label(
+                        egui::RichText::new(text)
+                            .size(18.0)
+                            .color(theme.body.egui()),
+                    );
                 });
             });
         });

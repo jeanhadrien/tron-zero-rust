@@ -11,7 +11,9 @@ use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 use shared::protocol::sanitize_name;
 
+use crate::render::FxSettings;
 use crate::settings::{Binding, PlayerName, TurnBindings};
+use crate::theme::{Theme, ThemeId};
 
 #[cfg(not(target_family = "wasm"))]
 const CONFIG_FILE_ENV: &str = "TRON_CONFIG_FILE";
@@ -28,9 +30,36 @@ pub struct SavedConfig {
     pub right_keys: Option<Vec<Binding>>,
     /// Lobby manager base URL; the `MANAGER_URL` env var still wins.
     pub manager_url: Option<String>,
+    /// Selected visual theme; `None` (or an unknown name) means the default.
+    #[serde(deserialize_with = "lenient_theme")]
+    pub theme: Option<ThemeId>,
+    /// Particle effects on or off; `None` means on.
+    pub effects: Option<bool>,
+}
+
+/// A theme name this build does not know (saved by another version, or typed
+/// by hand) reads as "not set" instead of failing the whole file, which would
+/// throw away the name and key bindings too.
+fn lenient_theme<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<ThemeId>, D::Error> {
+    let raw = Option::<serde_json::Value>::deserialize(deserializer)?;
+    Ok(raw.and_then(|value| serde_json::from_value(value).ok()))
 }
 
 impl SavedConfig {
+    /// Effects setting to start with.
+    pub fn fx(&self) -> FxSettings {
+        FxSettings {
+            enabled: self.effects.unwrap_or(true),
+        }
+    }
+
+    /// The theme to start with.
+    pub fn theme(&self) -> Theme {
+        Theme::from_id(self.theme.unwrap_or_default())
+    }
+
     /// The name to start with (sanitized so a bad file cannot poison it).
     pub fn name(&self) -> PlayerName {
         self.player_name
@@ -161,10 +190,14 @@ impl Preferences {
 /// Save name and bindings once they have stopped changing for
 /// [`SAVE_DEBOUNCE_SECS`], and immediately on app exit. The first run is
 /// skipped: resources just inserted from the file count as "changed".
+// Bevy injects each resource as its own parameter; the count is structural.
+#[allow(clippy::too_many_arguments)]
 pub fn persist_preferences(
     mut prefs: ResMut<Preferences>,
     name: Res<PlayerName>,
     bindings: Res<TurnBindings>,
+    theme: Res<Theme>,
+    fx: Res<FxSettings>,
     time: Res<Time<Real>>,
     mut exits: MessageReader<AppExit>,
     mut started: Local<bool>,
@@ -173,7 +206,7 @@ pub fn persist_preferences(
     let exiting = exits.read().count() > 0;
     if !*started {
         *started = true;
-    } else if name.is_changed() || bindings.is_changed() {
+    } else if name.is_changed() || bindings.is_changed() || theme.is_changed() || fx.is_changed() {
         prefs.dirty_since = Some(now);
     }
     let Some(since) = prefs.dirty_since else {
@@ -191,6 +224,8 @@ pub fn persist_preferences(
         left_keys: Some(bindings.left.clone()),
         right_keys: Some(bindings.right.clone()),
         manager_url: prefs.manager_url.clone(),
+        theme: Some(theme.id),
+        effects: Some(fx.enabled),
     };
     if let Err(err) = save_to(path, &config) {
         warn!(path = %path.display(), %err, "Could not save preferences");
@@ -218,6 +253,8 @@ mod tests {
             left_keys: Some(bindings.left.clone()),
             right_keys: Some(bindings.right.clone()),
             manager_url: Some("http://lobby.example:3001".into()),
+            theme: Some(ThemeId::Grid82),
+            effects: Some(false),
         };
         save_to(&path, &config).unwrap();
         let loaded = load_from(&path);
@@ -225,6 +262,16 @@ mod tests {
         assert_eq!(loaded.name().0, "Neo");
         assert_eq!(loaded.bindings(), bindings);
         let _ = std::fs::remove_dir_all(path.parent().unwrap().parent().unwrap());
+    }
+
+    #[test]
+    fn an_unknown_theme_keeps_the_rest_of_the_file() {
+        let text = r#"{ "player_name": "Neo", "theme": "FromTheFuture", "effects": false }"#;
+        let config: SavedConfig = serde_json::from_str(text).unwrap();
+        assert_eq!(config.theme, None);
+        assert_eq!(config.theme().id, ThemeId::default());
+        assert_eq!(config.name().0, "Neo");
+        assert_eq!(config.effects, Some(false));
     }
 
     #[test]
@@ -255,6 +302,8 @@ mod tests {
         world.init_resource::<Messages<AppExit>>();
         world.init_resource::<TurnBindings>();
         world.insert_resource(PlayerName("Neo".into()));
+        world.init_resource::<Theme>();
+        world.init_resource::<FxSettings>();
         world.insert_resource(Preferences {
             path: Some(path),
             manager_url: None,
@@ -314,6 +363,8 @@ mod tests {
             left_keys: Some(bindings.left),
             right_keys: Some(bindings.right),
             manager_url: None,
+            theme: None,
+            effects: None,
         };
         assert_eq!(config.bindings(), TurnBindings::default());
         assert_eq!(config.name().0, "Trinity");
