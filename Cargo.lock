@@ -7738,6 +7738,7 @@ dependencies = [
 name = "tron-zero-client"
 version = "0.4.0"
 dependencies = [
+ "base64 0.22.1",
  "bevy",
  "bevy_egui",
  "dirs",

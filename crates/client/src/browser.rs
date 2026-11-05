@@ -58,6 +58,9 @@ pub struct RoomInfo {
     pub bot_count: u32,
     #[serde(default)]
     pub last_heartbeat: u64,
+    // Ranked rooms need a manager-signed join ticket; absent on older managers.
+    #[serde(default)]
+    pub ranked: bool,
 }
 
 impl RoomInfo {
@@ -112,6 +115,7 @@ fn local_room(port: u16, web_port: Option<u16>, cert_hash: Option<String>) -> Ro
         max_players: 0,
         bot_count: 0,
         last_heartbeat: 0,
+        ranked: false,
     }
 }
 
@@ -456,6 +460,7 @@ mod tests {
             max_players: 8,
             bot_count: 0,
             last_heartbeat: heartbeat,
+            ranked: false,
         }
     }
 

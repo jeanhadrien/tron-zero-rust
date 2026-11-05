@@ -1,8 +1,10 @@
 //! egui overlay menu; opening it captures controls but never pauses the server.
 
+use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use bevy_egui::{EguiContexts, egui};
 
+use crate::account::{Accounts, RankedJoin, Standing};
 use crate::browser::{self, BrowserRow, BrowserState, FetchStatus, ManagerConfig};
 use crate::connection::{AutoConnect, ConnectionPhase, Endpoint, IDLE_STATUS, Session};
 use crate::input::PendingInput;
@@ -20,6 +22,7 @@ pub enum MenuScreen {
     Main,
     Settings,
     Rooms,
+    Leaderboard,
 }
 
 #[derive(Resource)]
@@ -77,7 +80,7 @@ pub fn menu_controls(
             rebind.error = None;
         } else if session.phase == ConnectionPhase::Playing {
             menu.open = !menu.open;
-        } else if menu.screen == MenuScreen::Rooms {
+        } else if matches!(menu.screen, MenuScreen::Rooms | MenuScreen::Leaderboard) {
             menu.screen = MenuScreen::Main;
             menu.open = true;
         } else {
@@ -100,9 +103,12 @@ enum UiAction {
     Quit,
     GotoSettings,
     GotoRooms,
+    GotoLeaderboard,
     Back,
     Refresh,
     ConnectRoom(Endpoint),
+    /// A ranked room: sign in and fetch a join ticket first.
+    ConnectRanked(Endpoint, String),
     StartCapture(TurnSide, usize),
     RemoveKey(TurnSide, usize),
     ResetBindings,
@@ -144,6 +150,8 @@ fn body_label(ui: &mut egui::Ui, theme: &Theme, text: impl Into<String>, size: f
     );
 }
 
+// One argument per thing the screen draws; a struct would only rename them.
+#[allow(clippy::too_many_arguments)]
 fn main_screen(
     ui: &mut egui::Ui,
     theme: &Theme,
@@ -151,10 +159,14 @@ fn main_screen(
     status: &str,
     name_edit: &mut String,
     local: Option<&Endpoint>,
+    rating: Option<&str>,
     action: &mut UiAction,
 ) {
     heading(ui, theme, "TRON ZERO", 34.0);
     body_label(ui, theme, status, 16.0);
+    if let Some(rating) = rating {
+        body_label(ui, theme, rating, 14.0);
+    }
     ui.separator();
     ui.horizontal(|ui| {
         body_label(ui, theme, "Name", 16.0);
@@ -193,6 +205,9 @@ fn main_screen(
     }
     if theme::action_button(ui, "Browse Servers").clicked() {
         action.set_once(UiAction::GotoRooms);
+    }
+    if theme::action_button(ui, "Leaderboard").clicked() {
+        action.set_once(UiAction::GotoLeaderboard);
     }
     if crate::platform::CAN_QUIT && theme::action_button(ui, "Quit game").clicked() {
         action.set_once(UiAction::Quit);
@@ -285,7 +300,7 @@ fn rooms_screen(
     browser: &BrowserState,
     rows: &[BrowserRow],
     config: &ManagerConfig,
-    phase: ConnectionPhase,
+    joinable: bool,
     now: f64,
     action: &mut UiAction,
 ) {
@@ -336,7 +351,7 @@ fn rooms_screen(
                 body_label(ui, theme, empty, 14.0);
             }
             for row in rows {
-                room_card(ui, theme, row, phase, action);
+                room_card(ui, theme, row, joinable, action);
             }
         });
     if theme::action_button(ui, "Back").clicked() {
@@ -348,7 +363,7 @@ fn room_card(
     ui: &mut egui::Ui,
     theme: &Theme,
     row: &BrowserRow,
-    phase: ConnectionPhase,
+    joinable: bool,
     action: &mut UiAction,
 ) {
     theme.card_frame().show(ui, |ui| {
@@ -359,12 +374,22 @@ fn room_card(
         } else {
             theme.body
         };
-        ui.label(
-            egui::RichText::new(row.room.display_name.as_str())
-                .size(18.0)
-                .strong()
-                .color(name_color.egui()),
-        );
+        ui.horizontal(|ui| {
+            ui.label(
+                egui::RichText::new(row.room.display_name.as_str())
+                    .size(18.0)
+                    .strong()
+                    .color(name_color.egui()),
+            );
+            if row.room.ranked {
+                ui.label(
+                    egui::RichText::new("RANKED")
+                        .size(12.0)
+                        .strong()
+                        .color(theme.accent.egui()),
+                );
+            }
+        });
         let bots = match row.room.bot_count {
             0 => String::new(),
             n => format!(" (+{n} bots)"),
@@ -386,16 +411,75 @@ fn room_card(
             ui.colored_label(theme.danger.egui(), problem.as_str());
         }
         let full = row.room.is_full();
-        let can_connect = row.endpoint.is_some() && phase == ConnectionPhase::Offline && !full;
+        let can_connect = row.endpoint.is_some() && joinable && !full;
         let caption = if full { "Full" } else { "Connect" };
         if ui
             .add_enabled(can_connect, egui::Button::new(caption))
             .clicked()
             && let Some(endpoint) = &row.endpoint
         {
-            action.set_once(UiAction::ConnectRoom(endpoint.clone()));
+            action.set_once(if row.room.ranked {
+                UiAction::ConnectRanked(endpoint.clone(), row.room.id.clone())
+            } else {
+                UiAction::ConnectRoom(endpoint.clone())
+            });
         }
     });
+}
+
+fn leaderboard_screen(
+    ui: &mut egui::Ui,
+    theme: &Theme,
+    standing: &Standing,
+    rating: Option<&str>,
+    action: &mut UiAction,
+) {
+    heading(ui, theme, "LEADERBOARD", 26.0);
+    body_label(
+        ui,
+        theme,
+        rating.unwrap_or("Play a ranked server to get a rating."),
+        14.0,
+    );
+    if let Some(error) = &standing.error {
+        ui.colored_label(theme.danger.egui(), error.as_str());
+    } else if standing.loading() {
+        body_label(ui, theme, "Loading...", 14.0);
+    }
+    if ui
+        .add_enabled(!standing.loading(), egui::Button::new("Refresh"))
+        .clicked()
+    {
+        action.set_once(UiAction::Refresh);
+    }
+    egui::ScrollArea::vertical()
+        .max_height(320.0)
+        .show(ui, |ui| {
+            for row in &standing.board {
+                let bot = if row.kind == "bot" { " (bot)" } else { "" };
+                body_label(
+                    ui,
+                    theme,
+                    format!(
+                        "#{:<3} {:>5.0}  {}{bot}",
+                        row.rank, row.rating, row.display_name
+                    ),
+                    15.0,
+                );
+            }
+        });
+    if theme::action_button(ui, "Back").clicked() {
+        action.set_once(UiAction::Back);
+    }
+}
+
+/// The ranked-play resources the menu reads and starts joins with (grouped to
+/// stay under Bevy's system parameter limit).
+#[derive(SystemParam)]
+pub struct RankedUi<'w> {
+    join: ResMut<'w, RankedJoin>,
+    standing: ResMut<'w, Standing>,
+    accounts: Res<'w, Accounts>,
 }
 
 // Bevy injects each resource as its own parameter; the count is structural.
@@ -412,6 +496,7 @@ pub fn menu_ui(
     mut theme: ResMut<Theme>,
     mut fx: ResMut<FxSettings>,
     mut browser: ResMut<BrowserState>,
+    ranked_ui: RankedUi,
     config: Res<ManagerConfig>,
     servers: Res<LocalServers>,
     time: Res<Time<Real>>,
@@ -419,6 +504,11 @@ pub fn menu_ui(
     if !menu.open {
         return;
     }
+    let RankedUi {
+        join: mut ranked,
+        mut standing,
+        accounts,
+    } = ranked_ui;
     let Ok(ctx) = contexts.ctx_mut() else {
         return;
     };
@@ -428,6 +518,8 @@ pub fn menu_ui(
     let status = session.status.clone();
     let now = time.elapsed_secs_f64();
     let mut action = UiAction::None;
+    let joinable = phase == ConnectionPhase::Offline && !ranked.busy();
+    let rating = standing.me.as_ref().map(|me| me.summary());
     let local_rows = browser::local_rows(&servers);
     let local_endpoint = local_rows.iter().find_map(|row| row.endpoint.clone());
     let rows = if screen == MenuScreen::Rooms {
@@ -461,6 +553,7 @@ pub fn menu_ui(
                         &status,
                         &mut name_edit,
                         local_endpoint.as_ref(),
+                        rating.as_deref(),
                         &mut action,
                     ),
                     MenuScreen::Settings => {
@@ -472,10 +565,13 @@ pub fn menu_ui(
                         &browser,
                         &rows,
                         &config,
-                        phase,
+                        joinable,
                         now,
                         &mut action,
                     ),
+                    MenuScreen::Leaderboard => {
+                        leaderboard_screen(ui, &theme, &standing, rating.as_deref(), &mut action)
+                    }
                 });
             });
         });
@@ -513,12 +609,27 @@ pub fn menu_ui(
             menu.screen = MenuScreen::Rooms;
             browser.request_refresh(&config);
         }
+        UiAction::GotoLeaderboard => {
+            menu.screen = MenuScreen::Leaderboard;
+            standing.refresh(&config, &accounts);
+        }
+        UiAction::Refresh if screen == MenuScreen::Leaderboard => {
+            standing.refresh(&config, &accounts);
+        }
         UiAction::Refresh => browser.request_refresh(&config),
         UiAction::ConnectRoom(endpoint) => {
             if session.phase == ConnectionPhase::Offline {
                 menu.screen = MenuScreen::Main;
                 menu.block_this_frame = true;
                 session.connect(endpoint, &join_name, now, &mut commands);
+            }
+        }
+        UiAction::ConnectRanked(endpoint, room_id) => {
+            if joinable {
+                menu.screen = MenuScreen::Main;
+                menu.block_this_frame = true;
+                session.status = "Signing in to the ranked server...".into();
+                ranked.start(endpoint, room_id, join_name, &config, &accounts, now);
             }
         }
         UiAction::Back => menu.screen = MenuScreen::Main,

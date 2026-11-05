@@ -8,8 +8,8 @@ use bevy::window::WindowCloseRequested;
 use bevy_egui::{EguiPlugin, EguiPrimaryContextPass};
 use lightyear::prelude::*;
 use tron_zero_client::{
-    add_input_and_prediction, add_network, attach_local_input, browser, config, connection, input,
-    local_scan, menu, render, settings, sim, theme,
+    account, add_input_and_prediction, add_network, attach_local_input, browser, config,
+    connection, input, local_scan, menu, render, settings, sim, theme,
 };
 
 fn main() {
@@ -34,6 +34,7 @@ fn main() {
     app.insert_resource(browser::ManagerConfig::from_env_and_saved(
         saved.manager_url.clone(),
     ));
+    app.insert_resource(account::Accounts(saved.accounts.clone()));
     app.insert_resource(preferences);
     app.add_systems(Last, config::persist_preferences);
 
@@ -60,6 +61,13 @@ fn main() {
     app.init_resource::<menu::MenuState>();
     app.init_resource::<browser::BrowserState>();
     app.init_resource::<local_scan::LocalServers>();
+    app.init_resource::<account::RankedJoin>();
+    app.init_resource::<account::Standing>();
+    app.add_systems(Startup, account::initial_standing);
+    app.add_systems(
+        PreUpdate,
+        (account::poll_ranked_join, account::poll_standing),
+    );
     app.add_systems(PreUpdate, local_scan::scan_local_servers);
     app.add_systems(Startup, browser::initial_refresh);
     app.add_systems(PreUpdate, browser::poll_browser_fetch);

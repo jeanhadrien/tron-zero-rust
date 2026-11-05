@@ -5,12 +5,14 @@
 //! (first run, read-only disk, hand-edit typos): every failure is logged and
 //! the game carries on with defaults / unsaved settings.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 use shared::protocol::sanitize_name;
 
+use crate::account::{Accounts, SavedAccount};
 use crate::render::FxSettings;
 use crate::settings::{Binding, PlayerName, TurnBindings};
 use crate::theme::{Theme, ThemeId};
@@ -35,6 +37,8 @@ pub struct SavedConfig {
     pub theme: Option<ThemeId>,
     /// Particle effects on or off; `None` means on.
     pub effects: Option<bool>,
+    /// Anonymous ranked accounts, by manager base URL.
+    pub accounts: BTreeMap<String, SavedAccount>,
 }
 
 /// A theme name this build does not know (saved by another version, or typed
@@ -198,6 +202,7 @@ pub fn persist_preferences(
     bindings: Res<TurnBindings>,
     theme: Res<Theme>,
     fx: Res<FxSettings>,
+    accounts: Res<Accounts>,
     time: Res<Time<Real>>,
     mut exits: MessageReader<AppExit>,
     mut started: Local<bool>,
@@ -206,7 +211,12 @@ pub fn persist_preferences(
     let exiting = exits.read().count() > 0;
     if !*started {
         *started = true;
-    } else if name.is_changed() || bindings.is_changed() || theme.is_changed() || fx.is_changed() {
+    } else if name.is_changed()
+        || bindings.is_changed()
+        || theme.is_changed()
+        || fx.is_changed()
+        || accounts.is_changed()
+    {
         prefs.dirty_since = Some(now);
     }
     let Some(since) = prefs.dirty_since else {
@@ -226,6 +236,7 @@ pub fn persist_preferences(
         manager_url: prefs.manager_url.clone(),
         theme: Some(theme.id),
         effects: Some(fx.enabled),
+        accounts: accounts.0.clone(),
     };
     if let Err(err) = save_to(path, &config) {
         warn!(path = %path.display(), %err, "Could not save preferences");
@@ -255,6 +266,13 @@ mod tests {
             manager_url: Some("http://lobby.example:3001".into()),
             theme: Some(ThemeId::Grid82),
             effects: Some(false),
+            accounts: BTreeMap::from([(
+                "http://lobby.example:3001".into(),
+                SavedAccount {
+                    id: "u1".into(),
+                    credential: "u1.secret".into(),
+                },
+            )]),
         };
         save_to(&path, &config).unwrap();
         let loaded = load_from(&path);
@@ -304,6 +322,7 @@ mod tests {
         world.insert_resource(PlayerName("Neo".into()));
         world.init_resource::<Theme>();
         world.init_resource::<FxSettings>();
+        world.init_resource::<Accounts>();
         world.insert_resource(Preferences {
             path: Some(path),
             manager_url: None,
@@ -365,6 +384,7 @@ mod tests {
             manager_url: None,
             theme: None,
             effects: None,
+            accounts: BTreeMap::new(),
         };
         assert_eq!(config.bindings(), TurnBindings::default());
         assert_eq!(config.name().0, "Trinity");

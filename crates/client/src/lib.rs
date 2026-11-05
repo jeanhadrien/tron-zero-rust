@@ -4,6 +4,7 @@
 //! real connection, input and prediction systems without a window
 //! (`tron-zero-nettest`). `main.rs` only adds windowing, menus and rendering.
 
+pub mod account;
 pub mod browser;
 pub mod config;
 pub mod connection;

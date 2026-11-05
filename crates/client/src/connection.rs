@@ -8,7 +8,7 @@ use lightyear::prelude::input::native::{InputMarker, NativeBuffer};
 use lightyear::prelude::*;
 use shared::protocol::{
     HelloReply, PROTOCOL_ID, SESSION_HEARTBEAT_SECS, SESSION_TIMEOUT_SECS, SessionChannel,
-    SessionHello, SessionReply, SessionRequest, sanitize_name,
+    SessionHello, SessionReply, SessionRequest, SessionTicket, sanitize_name,
 };
 
 use crate::input::{InputLifecycle, PendingInput, RespawnUi, TurnAckState, TurnOutbox, TurnSeq};
@@ -39,6 +39,9 @@ pub struct Session {
     pub name: String,
     /// Protocol advertised in the hello (a field so tests can fake a stale build).
     pub protocol: u32,
+    /// Manager-signed join ticket for a ranked server, sent once just before
+    /// the hello. Set by [`Session::connect_with_ticket`].
+    ticket: Option<Vec<u8>>,
     address: Option<SocketAddr>,
     hello_sent: bool,
     admitted: bool,
@@ -62,6 +65,7 @@ impl Default for Session {
             status: IDLE_STATUS.into(),
             name: shared::protocol::DEFAULT_NAME.into(),
             protocol: PROTOCOL_ID,
+            ticket: None,
             address: None,
             hello_sent: false,
             admitted: false,
@@ -142,6 +146,20 @@ impl Session {
         );
     }
 
+    /// [`Session::connect`] to a ranked server: `ticket` goes out right before
+    /// the hello. Tickets are single-use, so a reconnect needs a fresh one.
+    pub fn connect_with_ticket(
+        &mut self,
+        endpoint: impl Into<Endpoint>,
+        name: &str,
+        ticket: Vec<u8>,
+        now: f64,
+        commands: &mut Commands,
+    ) {
+        self.ticket = Some(ticket);
+        self.connect(endpoint, name, now, commands);
+    }
+
     /// [`Session::connect`] over another transport: `io` is the link's IO
     /// bundle (it must include `PeerAddr(address)`), e.g. WebTransport.
     pub fn connect_with(
@@ -156,6 +174,7 @@ impl Session {
             || self.client.is_some()
             || self.quit_requested_at.is_some()
         {
+            self.ticket = None;
             return;
         }
         let client = commands
@@ -171,6 +190,7 @@ impl Session {
             status: format!("Connecting to {address}..."),
             name: name.to_owned(),
             protocol: self.protocol,
+            ticket: self.ticket.take(),
             address: Some(address),
             client: Some(client),
             started_at: now,
@@ -242,6 +262,7 @@ pub fn monitor_connection(
             Option<&mut MessageSender<SessionRequest>>,
             Option<&mut MessageReceiver<HelloReply>>,
             Option<&mut MessageSender<SessionHello>>,
+            Option<&mut MessageSender<SessionTicket>>,
         ),
         With<Client>,
     >,
@@ -265,8 +286,16 @@ pub fn monitor_connection(
         return;
     }
     let now = time.elapsed_secs_f64();
-    let Ok((connected, synced, disconnected, receiver, sender, hello_receiver, hello_sender)) =
-        clients.get_mut(entity)
+    let Ok((
+        connected,
+        synced,
+        disconnected,
+        receiver,
+        sender,
+        hello_receiver,
+        hello_sender,
+        ticket_sender,
+    )) = clients.get_mut(entity)
     else {
         session.disconnect("Connection entity was lost. Please retry.");
         menu.open = true;
@@ -283,7 +312,10 @@ pub fn monitor_connection(
         && let Some(mut hello_sender) = hello_sender
     {
         // Same ordered channel as the heartbeat below, so the server sees the
-        // hello first.
+        // hello first, and the ticket (if any) before the hello.
+        if let (Some(ticket), Some(mut ticket_sender)) = (session.ticket.take(), ticket_sender) {
+            ticket_sender.send::<SessionChannel>(SessionTicket { ticket });
+        }
         hello_sender.send::<SessionChannel>(SessionHello {
             protocol: session.protocol,
             name: session.name.clone(),

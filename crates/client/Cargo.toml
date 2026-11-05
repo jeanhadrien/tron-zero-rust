@@ -38,6 +38,8 @@ lightyear = { workspace = true, features = ["raw_connection", "input_native"] }
 lightyear_transport = "0.28"
 bevy_egui = { workspace = true, features = ["render", "default_fonts", "manage_clipboard"] }
 ehttp = "0.7"
+# Join tickets arrive base64-encoded from the manager.
+base64 = "0.22"
 rand.workspace = true
 serde.workspace = true
 serde_json = "1"
