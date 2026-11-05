@@ -52,8 +52,13 @@ stored in GitHub, Secret Manager or instance metadata. One-time setup:
 
 Check `curl https://server-manager.tronzero.dev/api/rooms`: the room should say
 `"ranked":true,"official":true`. The server logs `Registered as a ranked server` and
-warns if the manager only trusts it as a community server. Verified against locally
-signed tokens only (`bun run smoke`); the first real token needs a deploy.
+warns if the manager only trusts it as a community server.
+
+Done for `tron-zero-eu` on 2026-11-05 and verified live. The service account holds one
+role, `roles/artifactregistry.reader` on the `tron` repository (`create-vm.sh` grants
+it); without it the image pull is denied and the unit crash-loops. Set
+`IDENTITY_AUDIENCE` once with `gcloud run services update server-manager --update-env-vars`;
+later manager deploys keep it.
 
 ## Run and stop
 

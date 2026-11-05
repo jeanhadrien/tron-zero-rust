@@ -16,6 +16,8 @@ Server (`tron-zero-server`, all optional):
 | `MAX_PLAYERS` | `10` | Human capacity; the 11th player is rejected `ServerFull`. Bots do not count. |
 | `SERVER_NAME` | `Unnamed Server` | Name shown in the server browser. |
 | `MANAGER_URL` | `http://localhost:3001` | Lobby to register with. |
+| `RANKED_KEY` | none | `<keyId>.<secret>` from the manager's `add-key.ts`: registers the room as ranked (join tickets required, results move ratings). For community servers. |
+| `RANKED_IDENTITY` | none | `gcp`: register as ranked with the VM service account's ID token from the GCE metadata server instead of a key. The manager must trust the account and set `IDENTITY_AUDIENCE` equal to `MANAGER_URL` (see `deploy/gce/README.md`). Wins over `RANKED_KEY`. |
 | `ADVERTISED_HOST` | `127.0.0.1` | Public host clients should use. A loopback value with a non-local `MANAGER_URL` is refused (no announce, game still runs). |
 | `ADVERTISED_PORT` | `PORT` | Public port, if NAT maps it differently. |
 | `WEB_PORT` | `5001` | UDP port of the WebTransport listener for browser players (QUIC; open it in the firewall next to `PORT`). `0` disables it. Equal to `PORT` is refused at startup. The room is announced with `webPort`/`certHash` only once the listener is open. |
