@@ -23,6 +23,16 @@ function rankedKeysFromEnv(): RankedKeyDoc[] {
     });
 }
 
-// The Firestore implementation of `Store` plugs in here (selected by env).
-export const store: Store = new MemoryStore(rankedKeysFromEnv());
-logger.info('Using the in-memory store: ratings are lost on restart');
+// `STORE=firestore` selects Firestore (keys live in its `rankedKeys` collection,
+// see scripts/add-key.ts); otherwise everything is in memory and lost on restart.
+async function openStore(): Promise<Store> {
+  if (process.env.STORE === 'firestore') {
+    const { FirestoreStore } = await import('./firestore');
+    logger.info('Using Firestore');
+    return new FirestoreStore();
+  }
+  logger.info('Using the in-memory store: ratings are lost on restart');
+  return new MemoryStore(rankedKeysFromEnv());
+}
+
+export const store: Store = await openStore();

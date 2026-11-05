@@ -22,6 +22,13 @@ bun run typecheck
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error`, `none`. |
 | `TRUST_PROXY` | `0` | Reverse-proxy hops to trust for the client IP (rate limiting). The Dockerfile sets `1` for Cloud Run; leave `0` when exposed directly, or `X-Forwarded-For` becomes spoofable. |
 | `REGISTER_LIMIT_PER_MIN` | `20` | Max `POST /api/rooms` per IP per minute (`429` + `Retry-After` beyond). |
+| `STORE` | memory | `firestore` keeps accounts, ratings, ranked keys and batch cursors in Firestore (needs Application Default Credentials and `roles/datastore.user`); otherwise everything is lost on restart. |
+| `FIRESTORE_PROJECT` | from ADC | Project id for `STORE=firestore`. `FIRESTORE_EMULATOR_HOST` also works. |
+| `RANKED_KEYS` | none | Memory store only: comma-separated `keyId:secret:official` (`1`/`0`). With Firestore, issue keys with `STORE=firestore bun scripts/add-key.ts <keyId> [official]`. |
+| `TICKET_SIGNING_KEY` | ephemeral | Ed25519 key that signs join tickets; unset generates a new one per start (tickets die with a restart). |
+| `WEB_ORIGINS` | none | Origins allowed to call `/api/accounts`, `/api/tickets` and `/api/me` from a browser. |
+
+Firestore needs the composite index in `firestore.indexes.json` (`firebase deploy --only firestore:indexes`, or create it from the console). Not yet exercised against a live database: the REST client loads under Bun and reaches credential lookup, but reads and transactions were only type-checked.
 
 ## API
 
