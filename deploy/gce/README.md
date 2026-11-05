@@ -34,6 +34,27 @@ The advertised host is the VM's ephemeral external IP, read at every service
 start, so no reserved static IP is billed. The IP changes when the VM is
 stopped and started; the server re-registers with the new one.
 
+## Official ranked status (no secret)
+
+The unit starts the server with `RANKED_IDENTITY=gcp`: at every registration it asks
+the metadata server for an ID token of the VM's service account (`tron-zero-game`,
+created by `create-vm.sh`) and the manager checks it against its allowlist. Nothing is
+stored in GitHub, Secret Manager or instance metadata. One-time setup:
+
+1. Manager: set `IDENTITY_AUDIENCE=https://server-manager.tronzero.dev` (must equal the
+   VM's `tron-manager-url`) and redeploy it.
+2. Trust the account:
+   `STORE=firestore bun scripts/add-identity.ts tron-zero-game@tron-zero-js.iam.gserviceaccount.com official`
+   (in `server-manager/`).
+3. An existing VM must switch service account while stopped; `create-vm.sh` prints the
+   exact commands when it finds a mismatch. Then `sudo systemctl restart tron-zero`
+   (or restart the VM, as `cloud-init.yaml` changed).
+
+Check `curl https://server-manager.tronzero.dev/api/rooms`: the room should say
+`"ranked":true,"official":true`. The server logs `Registered as a ranked server` and
+warns if the manager only trusts it as a community server. Verified against locally
+signed tokens only (`bun run smoke`); the first real token needs a deploy.
+
 ## Run and stop
 
 ```

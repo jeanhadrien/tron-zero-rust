@@ -36,6 +36,7 @@ write_files:
           -e SERVER_NAME="$(md attributes/tron-server-name)" \
           -e MAX_PLAYERS="$(md attributes/tron-max-players)" \
           -e MANAGER_URL="$manager" \
+          -e RANKED_IDENTITY=gcp \
           -e RUST_LOG=info \
           "$image"'
       # The server unregisters on SIGTERM (HTTP timeout 5 s); give it room.
