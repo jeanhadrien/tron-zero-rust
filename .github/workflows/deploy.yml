@@ -43,18 +43,24 @@ jobs:
       - name: Build release client
         run: cargo build --release -p tron-zero-client --locked
 
-      - name: Package and upload to Release
+      - name: Package client
+        id: zip
         shell: pwsh
         env:
-          GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.tag.outputs.tag }}
         run: |
-          $zip = "tron-zero-$TAG-windows-x86_64.zip"
+          $zip = "tron-zero-$env:TAG-windows-x86_64.zip"
           Compress-Archive -Path target/release/tron-zero-client.exe -DestinationPath $zip
-          # Explicit --repo: don't rely on gh inferring it from the detached tag checkout.
-          # The view prints what the token actually sees if the upload fails.
-          gh release view "$TAG" --repo $env:GITHUB_REPOSITORY --json tagName,isDraft,assets
-          gh release upload "$TAG" "$zip" --clobber --repo $env:GITHUB_REPOSITORY
+          "zip=$zip" >> $env:GITHUB_OUTPUT
+
+      # `gh release upload` answers "release not found" on this release even
+      # though `gh release view` finds it; the action uploads through the API
+      # directly.
+      - name: Upload to Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          files: ${{ steps.zip.outputs.zip }}
 
   # The game server rides the same release as the client: a protocol change
   # (PROTOCOL_ID) must reach both together. Auth is keyless (Workload Identity);
