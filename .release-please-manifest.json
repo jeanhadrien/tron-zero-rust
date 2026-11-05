@@ -1,6 +1,6 @@
 {
-  "crates/shared": "0.6.0",
-  "crates/server": "0.6.0",
-  "crates/client": "0.6.0",
-  "crates/nettest": "0.0.3"
+  "crates/shared": "0.7.0",
+  "crates/server": "0.7.0",
+  "crates/client": "0.7.0",
+  "crates/nettest": "0.0.4"
 }
