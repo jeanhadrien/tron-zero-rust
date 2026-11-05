@@ -23,7 +23,6 @@ pub enum MenuScreen {
     Main,
     Settings,
     Rooms,
-    Leaderboard,
 }
 
 #[derive(Resource)]
@@ -49,18 +48,6 @@ impl MenuState {
     }
 }
 
-// Caption for the primary button; kept pure for tests. `local_found`: a server
-// answered on this machine, so there is something to connect to while offline.
-pub fn primary_caption(phase: ConnectionPhase, local_found: bool) -> &'static str {
-    match phase {
-        ConnectionPhase::Offline if local_found => "Connect to Localhost",
-        ConnectionPhase::Offline => "No local server found",
-        ConnectionPhase::Connecting | ConnectionPhase::Synchronizing => "Cancel",
-        ConnectionPhase::Playing => "Resume",
-        ConnectionPhase::Disconnecting => "Disconnecting...",
-    }
-}
-
 pub fn begin_input_frame(mut menu: ResMut<MenuState>) {
     menu.block_this_frame = false;
 }
@@ -81,13 +68,12 @@ pub fn menu_controls(
         if rebind.capturing.is_some() {
             rebind.capturing = None;
             rebind.error = None;
-        } else if session.phase == ConnectionPhase::Playing {
-            menu.open = !menu.open;
-        } else if matches!(menu.screen, MenuScreen::Rooms | MenuScreen::Leaderboard) {
-            menu.screen = MenuScreen::Main;
-            menu.open = true;
         } else {
-            menu.open = true;
+            // Escape always converges: in a match it closes the menu from any
+            // screen; offline it returns to the main screen. Either way the
+            // menu reopens on the main screen.
+            menu.open = session.phase != ConnectionPhase::Playing || !menu.open;
+            menu.screen = MenuScreen::Main;
         }
         menu.block_this_frame = true;
     }
@@ -99,14 +85,13 @@ pub fn menu_controls(
 // Deferred UI action so binding lists can be read while drawing their buttons.
 enum UiAction {
     None,
-    Connect(Endpoint),
     CancelConnect,
-    Resume,
     Disconnect,
     Quit,
     GotoSettings,
     GotoRooms,
-    GotoLeaderboard,
+    /// Re-fetch the leaderboard panel.
+    RefreshBoard,
     /// Play now: the manager picks a ranked room.
     PlayRanked,
     Back,
@@ -155,23 +140,16 @@ fn body_label(ui: &mut egui::Ui, theme: &Theme, text: impl Into<String>, size: f
     );
 }
 
-// One argument per thing the screen draws; a struct would only rename them.
-#[allow(clippy::too_many_arguments)]
 fn main_screen(
     ui: &mut egui::Ui,
     theme: &Theme,
     phase: ConnectionPhase,
     status: &str,
     name_edit: &mut String,
-    local: Option<&Endpoint>,
-    rating: Option<&str>,
     action: &mut UiAction,
 ) {
     heading(ui, theme, "TRON ZERO", 34.0);
     body_label(ui, theme, status, 16.0);
-    if let Some(rating) = rating {
-        body_label(ui, theme, rating, 14.0);
-    }
     ui.separator();
     ui.horizontal(|ui| {
         body_label(ui, theme, "Name", 16.0);
@@ -183,39 +161,29 @@ fn main_screen(
                 .desired_width(f32::INFINITY),
         );
     });
-    let primary_enabled = match phase {
-        ConnectionPhase::Disconnecting => false,
-        ConnectionPhase::Offline => local.is_some(),
-        _ => true,
+    // The first button follows the connection: play, cancel the attempt, or
+    // leave the match (Escape returns to the game).
+    let (caption, next) = match phase {
+        ConnectionPhase::Offline => ("Play (ranked)", UiAction::PlayRanked),
+        ConnectionPhase::Connecting | ConnectionPhase::Synchronizing => {
+            ("Cancel", UiAction::CancelConnect)
+        }
+        ConnectionPhase::Playing => ("Disconnect", UiAction::Disconnect),
+        ConnectionPhase::Disconnecting => ("Disconnecting...", UiAction::None),
     };
-    let primary = ui.add_enabled_ui(primary_enabled, |ui| {
-        theme::action_button(ui, primary_caption(phase, local.is_some()))
-    });
-    if primary.inner.clicked() {
-        action.set_once(match (phase, local) {
-            (ConnectionPhase::Offline, Some(endpoint)) => UiAction::Connect(endpoint.clone()),
-            (ConnectionPhase::Offline, None) => UiAction::None,
-            (ConnectionPhase::Connecting | ConnectionPhase::Synchronizing, _) => {
-                UiAction::CancelConnect
-            }
-            (ConnectionPhase::Playing, _) => UiAction::Resume,
-            (ConnectionPhase::Disconnecting, _) => UiAction::None,
-        });
+    let enabled = phase != ConnectionPhase::Disconnecting;
+    if ui
+        .add_enabled_ui(enabled, |ui| theme::action_button(ui, caption))
+        .inner
+        .clicked()
+    {
+        action.set_once(next);
     }
-    if phase == ConnectionPhase::Playing && theme::action_button(ui, "Disconnect").clicked() {
-        action.set_once(UiAction::Disconnect);
+    if theme::action_button(ui, "Server browser").clicked() {
+        action.set_once(UiAction::GotoRooms);
     }
     if theme::action_button(ui, "Settings").clicked() {
         action.set_once(UiAction::GotoSettings);
-    }
-    if theme::action_button(ui, "Browse Servers").clicked() {
-        action.set_once(UiAction::GotoRooms);
-    }
-    if phase == ConnectionPhase::Offline && theme::action_button(ui, "Play ranked").clicked() {
-        action.set_once(UiAction::PlayRanked);
-    }
-    if theme::action_button(ui, "Leaderboard").clicked() {
-        action.set_once(UiAction::GotoLeaderboard);
     }
     if crate::platform::CAN_QUIT && theme::action_button(ui, "Quit game").clicked() {
         action.set_once(UiAction::Quit);
@@ -435,13 +403,20 @@ fn room_card(
     });
 }
 
-fn leaderboard_screen(
+/// Window width (points) from which the leaderboard sits beside the centered
+/// 404-wide menu without overlapping it; narrower windows stack it below.
+const MIN_WIDTH_FOR_SIDE_PANEL: f32 = 1040.0;
+
+/// The ranked leaderboard: a side panel next to the main menu, or stacked
+/// below it in narrow windows.
+fn leaderboard_panel(
     ui: &mut egui::Ui,
     theme: &Theme,
     standing: &Standing,
     rating: Option<&str>,
     action: &mut UiAction,
 ) {
+    ui.set_width(260.0);
     heading(ui, theme, "LEADERBOARD", 26.0);
     body_label(
         ui,
@@ -458,7 +433,7 @@ fn leaderboard_screen(
         .add_enabled(!standing.loading(), egui::Button::new("Refresh"))
         .clicked()
     {
-        action.set_once(UiAction::Refresh);
+        action.set_once(UiAction::RefreshBoard);
     }
     egui::ScrollArea::vertical()
         .max_height(320.0)
@@ -476,9 +451,6 @@ fn leaderboard_screen(
                 );
             }
         });
-    if theme::action_button(ui, "Back").clicked() {
-        action.set_once(UiAction::Back);
-    }
 }
 
 /// The ranked-play resources the menu reads and starts joins with (grouped to
@@ -528,10 +500,9 @@ pub fn menu_ui(
     let mut action = UiAction::None;
     let joinable = phase == ConnectionPhase::Offline && !ranked.busy();
     let rating = standing.me.as_ref().map(|me| me.summary());
-    let local_rows = browser::local_rows(&servers);
-    let local_endpoint = local_rows.iter().find_map(|row| row.endpoint.clone());
+    // Detected local servers are pinned above the manager's rooms.
     let rows = if screen == MenuScreen::Rooms {
-        browser::merge_rows(local_rows, &browser.rows)
+        browser::merge_rows(browser::local_rows(&servers), &browser.rows)
     } else {
         Vec::new()
     };
@@ -540,6 +511,7 @@ pub fn menu_ui(
     let mut name_edit = player_name.0.clone();
     // Fullscreen dim backdrop, then a borderless panel centered on screen.
     let viewport = ctx.viewport_rect();
+    let side_panel = viewport.width() >= MIN_WIDTH_FOR_SIDE_PANEL;
     egui::Area::new("menu_dim".into())
         .order(egui::Order::Background)
         .fixed_pos(viewport.min)
@@ -554,16 +526,20 @@ pub fn menu_ui(
                 ui.set_min_width(404.0);
                 theme::panel_spacing(ui);
                 ui.vertical_centered(|ui| match screen {
-                    MenuScreen::Main => main_screen(
-                        ui,
-                        &theme,
-                        phase,
-                        &status,
-                        &mut name_edit,
-                        local_endpoint.as_ref(),
-                        rating.as_deref(),
-                        &mut action,
-                    ),
+                    MenuScreen::Main => {
+                        main_screen(ui, &theme, phase, &status, &mut name_edit, &mut action);
+                        if !side_panel {
+                            // Too narrow for a panel beside the menu: stack it below.
+                            ui.separator();
+                            leaderboard_panel(
+                                ui,
+                                &theme,
+                                &standing,
+                                rating.as_deref(),
+                                &mut action,
+                            );
+                        }
+                    }
                     MenuScreen::Settings => {
                         settings_screen(ui, &theme, fx.enabled, &bindings, &rebind, &mut action)
                     }
@@ -577,12 +553,20 @@ pub fn menu_ui(
                         now,
                         &mut action,
                     ),
-                    MenuScreen::Leaderboard => {
-                        leaderboard_screen(ui, &theme, &standing, rating.as_deref(), &mut action)
-                    }
                 });
             });
         });
+    // The leaderboard sits beside the main screen only.
+    if screen == MenuScreen::Main && side_panel {
+        egui::Area::new("menu_leaderboard".into())
+            .anchor(egui::Align2::RIGHT_CENTER, [-24.0, 0.0])
+            .show(ctx, |ui| {
+                theme.panel_frame().show(ui, |ui| {
+                    theme::panel_spacing(ui);
+                    leaderboard_panel(ui, &theme, &standing, rating.as_deref(), &mut action);
+                });
+            });
+    }
     if name_edit != player_name.0 {
         player_name.0 = name_edit;
     }
@@ -595,10 +579,6 @@ pub fn menu_ui(
     let join_name = sanitize_name(&player_name.0);
     match action {
         UiAction::None => {}
-        UiAction::Connect(endpoint) => {
-            menu.block_this_frame = true;
-            session.connect(endpoint, &join_name, now, &mut commands);
-        }
         UiAction::CancelConnect => {
             menu.block_this_frame = true;
             session.disconnect(IDLE_STATUS);
@@ -608,22 +588,12 @@ pub fn menu_ui(
             session.disconnect("Disconnected from server.");
         }
         UiAction::Quit => session.request_quit(now),
-        UiAction::Resume => {
-            menu.block_this_frame = true;
-            menu.open = false;
-        }
         UiAction::GotoSettings => menu.screen = MenuScreen::Settings,
         UiAction::GotoRooms => {
             menu.screen = MenuScreen::Rooms;
             browser.request_refresh(&config);
         }
-        UiAction::GotoLeaderboard => {
-            menu.screen = MenuScreen::Leaderboard;
-            standing.refresh(&config, &accounts);
-        }
-        UiAction::Refresh if screen == MenuScreen::Leaderboard => {
-            standing.refresh(&config, &accounts);
-        }
+        UiAction::RefreshBoard => standing.refresh(&config, &accounts),
         UiAction::Refresh => browser.request_refresh(&config),
         UiAction::ConnectRoom(endpoint) => {
             if session.phase == ConnectionPhase::Offline {
@@ -705,31 +675,6 @@ mod tests {
     }
 
     #[test]
-    fn primary_captions_match_connection_phase() {
-        assert_eq!(
-            primary_caption(ConnectionPhase::Offline, true),
-            "Connect to Localhost"
-        );
-        assert_eq!(
-            primary_caption(ConnectionPhase::Offline, false),
-            "No local server found"
-        );
-        assert_eq!(
-            primary_caption(ConnectionPhase::Connecting, false),
-            "Cancel"
-        );
-        assert_eq!(
-            primary_caption(ConnectionPhase::Synchronizing, false),
-            "Cancel"
-        );
-        assert_eq!(primary_caption(ConnectionPhase::Playing, false), "Resume");
-        assert_eq!(
-            primary_caption(ConnectionPhase::Disconnecting, false),
-            "Disconnecting..."
-        );
-    }
-
-    #[test]
     fn escape_clears_queue_and_captures_the_closing_frame() {
         let mut world = test_world();
         world.resource_mut::<Session>().phase = ConnectionPhase::Playing;
@@ -745,6 +690,20 @@ mod tests {
         assert!(world.resource::<MenuState>().captures_input());
         world.run_system_once(begin_input_frame).unwrap();
         assert!(!world.resource::<MenuState>().captures_input());
+    }
+
+    #[test]
+    fn escape_from_a_sub_screen_returns_to_the_game_and_resets_the_screen() {
+        let mut world = test_world();
+        world.resource_mut::<Session>().phase = ConnectionPhase::Playing;
+        world.resource_mut::<MenuState>().open = true;
+        world.resource_mut::<MenuState>().screen = MenuScreen::Settings;
+        world
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::Escape);
+        world.run_system_once(menu_controls).unwrap();
+        assert!(!world.resource::<MenuState>().open);
+        assert_eq!(world.resource::<MenuState>().screen, MenuScreen::Main);
     }
 
     #[test]

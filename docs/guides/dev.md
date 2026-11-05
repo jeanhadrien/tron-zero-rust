@@ -208,14 +208,13 @@ scenario; a scenario without a golden fails). After an intended behaviour change
 
 The client starts disconnected, with a menu over an empty grid (unless
 `TRON_AUTOCONNECT` is set, see above). Type a **Name** (16 characters max,
-saved), start the server separately, then click **Connect to Localhost** to
-join it, or pick a room under **Browse Servers**. The button is disabled
-("No local server found") until a server answers a probe on `127.0.0.1`
-ports 5000-5003; the menu re-probes about every 1.5 s while it is open and
-offline (never during play). A second local server needs its own `PORT` and
-`WEB_PORT` (e.g. `PORT=5002 WEB_PORT=5012`); 5001 is the default WebTransport
-port and never answers. Servers found there also appear first under
-**Browse Servers**. The browser build cannot probe UDP, so it lists localhost
+saved), start the server separately, then open **Server browser** and click
+**Connect** on the localhost row (always listed first). It appears once a
+server answers a probe on `127.0.0.1` ports 5000-5003; the menu re-probes
+about every 1.5 s while it is open and offline (never during play). A second
+local server needs its own `PORT` and `WEB_PORT` (e.g.
+`PORT=5002 WEB_PORT=5012`); 5001 is the default WebTransport port and never
+answers. The browser build cannot probe UDP, so it lists localhost
 only on a local dev host with `?TRON_CERT_DIGEST=` (see `docs/guides/run.md`). Full rooms show
 a disabled **Full** button. **Quit game** leaves the server first (so the rider
 is removed at once) and then exits; the window close button does the same.

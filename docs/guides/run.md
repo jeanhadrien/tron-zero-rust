@@ -55,7 +55,7 @@ Build options and URL parameters: `web/README.md`.
 ```
 cd server-manager && bun run dev             # terminal 1
 cargo run -p tron-zero-server                # terminal 2, announces to localhost:3001 by default
-cargo run -p tron-zero-client                # terminal 3, Browse Servers lists the room
+cargo run -p tron-zero-client                # terminal 3, Server browser lists the room
 ```
 
 For the web client, serve `web/dist` as in scenario 2 and open

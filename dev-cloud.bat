@@ -19,6 +19,6 @@ timeout /t 8 /nobreak >nul
 echo Current rooms:
 curl.exe -s %MANAGER_URL%api/rooms
 echo.
-echo Starting client against the same manager. Browse Servers, Refresh, Connect.
+echo Starting client against the same manager. Server browser, Refresh, Connect.
 echo NOTE: this advertises 127.0.0.1:5000 on a PUBLIC list. Ctrl-C the server window when done.
 start "tron-zero-client (cloud)" cmd /k "set MANAGER_URL=%MANAGER_URL% && cargo run -p tron-zero-client"
