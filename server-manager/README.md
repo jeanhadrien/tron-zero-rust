@@ -94,3 +94,14 @@ gcloud run deploy server-manager --project tron-zero-js --region europe-west1 \
 ```
 
 Every room requires its token; the Rust announcer refuses a registration without one.
+
+### Ranked mode in production
+
+Ratings, accounts and ranked keys must survive restarts, so the service runs with
+`STORE=firestore` and a stable `TICKET_SIGNING_KEY` from Secret Manager. Room state
+stays in memory (still max instances = 1). `scripts/setup-gcp.sh` does the one-time
+setup (APIs, database, leaderboard index, `roles/datastore.user`, the secret) and
+prints the deploy flags; it changes the project, so read it first. Then issue a key per
+ranked game server with `scripts/add-key.ts` and start the server with `RANKED_KEY`.
+`WEB_ORIGINS` must list the browser client's origin for sign-in from the web build.
+
