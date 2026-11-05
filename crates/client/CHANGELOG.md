@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.0](https://github.com/jeanhadrien/tron-zero-rust/compare/client-v0.6.0...client-v0.7.0) (2026-11-05)
+
+
+### Features
+
+* player chat (Enter to type, server-labelled broadcast, fading top-left overlay) ([3b7f079](https://github.com/jeanhadrien/tron-zero-rust/commit/3b7f07940290297769e74e37b2cf46a6f35e40b6))
+
 ## [0.6.0](https://github.com/jeanhadrien/tron-zero-rust/compare/client-v0.5.0...client-v0.6.0) (2026-11-05)
 
 
