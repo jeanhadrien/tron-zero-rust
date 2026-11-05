@@ -51,7 +51,10 @@ jobs:
         run: |
           $zip = "tron-zero-$TAG-windows-x86_64.zip"
           Compress-Archive -Path target/release/tron-zero-client.exe -DestinationPath $zip
-          gh release upload "$TAG" "$zip" --clobber
+          # Explicit --repo: don't rely on gh inferring it from the detached tag checkout.
+          # The view prints what the token actually sees if the upload fails.
+          gh release view "$TAG" --repo $env:GITHUB_REPOSITORY --json tagName,isDraft,assets
+          gh release upload "$TAG" "$zip" --clobber --repo $env:GITHUB_REPOSITORY
 
   # The game server rides the same release as the client: a protocol change
   # (PROTOCOL_ID) must reach both together. Auth is keyless (Workload Identity);
