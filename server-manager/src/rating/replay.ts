@@ -1,5 +1,5 @@
-// Replays a lab elimination log through the rating core and reports whether
-// the measured order matches the bots' skill order.
+// Replays a lab elimination log through the rating core and reports the
+// measured order and how the ratings converge.
 //
 //   bun src/rating/replay.ts ratings.jsonl [--checkpoints N]
 //
@@ -73,24 +73,9 @@ events.forEach((e, i) => {
   }
 });
 
-/** Skill is the last segment of `bot:<personality>:<skill>`. */
-const skillOf = (id: string): number => Number(id.split(':')[2]);
 
 const rows = [...ratings.values()].sort((a, b) => b.rating - a.rating);
 
-/** Spearman rank correlation between rating and skill (no ties expected). */
-function spearman(items: Rated[]): number {
-  const n = items.length;
-  if (n < 2) return NaN;
-  const rank = (key: (r: Rated) => number) => {
-    const order = [...items].sort((a, b) => key(a) - key(b));
-    return new Map(order.map((r, i) => [r.id, i]));
-  };
-  const byRating = rank((r) => r.rating);
-  const bySkill = rank((r) => skillOf(r.id));
-  const d2 = items.reduce((s, r) => s + (byRating.get(r.id)! - bySkill.get(r.id)!) ** 2, 0);
-  return 1 - (6 * d2) / (n * (n * n - 1));
-}
 
 const total = moved.kill + moved.mutual + moved.suicide;
 const count = (t: Elimination['type']) => events.filter((e) => e.type === t).length;
@@ -105,12 +90,11 @@ rows.forEach((r, i) =>
     `${String(i + 1).padStart(4)}  ${r.rating.toFixed(0).padStart(6)}  ${String(r.ratedEvents).padStart(6)}  ${String(isEligible(r.ratedEvents)).padStart(8)}  ${r.id}`,
   ),
 );
-console.log(`\nSpearman(rating, skill) = ${spearman(rows).toFixed(3)}  (1 = order matches skill)`);
 
 console.log('\nconvergence (rating by checkpoint):');
 for (const s of snapshots) {
   const line = s.ratings
-    .sort((a, b) => skillOf(a[0]) - skillOf(b[0]))
+    .sort((a, b) => a[0].localeCompare(b[0]))
     .map(([id, rating]) => `${id.split(':').slice(1).join(':')}=${rating}`)
     .join('  ');
   console.log(`  @${String(s.at).padStart(6)}  ${line}`);

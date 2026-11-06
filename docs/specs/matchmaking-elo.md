@@ -82,13 +82,15 @@ question). The rules above do not change if it is added.
 
 ### Bots
 
-- A bot has a stable identity `bot:<personality>:<skill>` and **one shared
-  rating per identity**, however many instances run.
-- The existing `Elo` knob in `crates/bots` becomes a hidden `skill` input. The
-  *rating* is what the pool measures. Bots are chosen for a lobby by measured
-  rating, not by the knob.
-- Initial ratings come from a monotone remap of the old anchors (`500..4000`
-  onto about `800..2500`); measurement corrects it over time.
+- A bot is its personality plus a set of named policy knobs (reaction,
+  look-ahead, mistake rate, aggression, caution, ...). Its rating identity is
+  `bot:<personality>:<knob fingerprint>`: **one shared rating per identity**,
+  however many instances run, and a retuned knob is a new bot with a new rating.
+- Bots carry no declared skill. A new bot identity starts at the same rating as
+  a newcomer (1500); the pool measures where it really belongs. Bots are chosen
+  for a lobby by measured rating.
+- A bot's display name is drawn at random from a list and is unique among the
+  riders in the room; it carries no information about the build.
 - Only results from **official** servers move bot ratings.
 
 ## Trust

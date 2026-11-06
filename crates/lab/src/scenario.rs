@@ -27,14 +27,17 @@
 //! [[rider]]
 //! name = "trapper"
 //! bot = "trapper"                  # survivalist | trapper | adaptive |
-//! elo = 2500                       # territorialist | duelist | roamer
+//! difficulty = 2500                # territorialist | duelist | roamer
 //! respawn_after = 240              # optional: respawn N ticks after a death
-//! ```
+//!
+//! [rider.knobs]                    # optional: override single knobs of the preset
+//! reaction_ticks = 4               # (also lookahead_ticks, mistake_prob, greed,
+//! ```                              #  aggression, caution, bfs_budget, strategy_mix)
 
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use bots::config::{BotBuild, Elo, Personality};
+use bots::config::{BotBuild, Difficulty, KnobOverrides, Personality};
 use glam::Vec2;
 use serde::Deserialize;
 
@@ -72,8 +75,12 @@ pub struct RiderSpec {
     /// Bot personality; the rider is then driven by the bot brain.
     #[serde(default)]
     pub bot: Option<String>,
-    #[serde(default = "default_elo")]
-    pub elo: u32,
+    /// Authoring preset the bot's knobs start from (see `bots::config::Difficulty`).
+    #[serde(default = "default_difficulty")]
+    pub difficulty: u32,
+    /// Per-knob overrides applied on top of the preset.
+    #[serde(default)]
+    pub knobs: KnobOverrides,
     /// Respawn automatically this many ticks after each death.
     #[serde(default)]
     pub respawn_after: Option<u32>,
@@ -134,7 +141,7 @@ fn default_rubber() -> f32 {
     shared::BASE_RUBBER
 }
 
-fn default_elo() -> u32 {
+fn default_difficulty() -> u32 {
     1500
 }
 
@@ -182,7 +189,9 @@ impl RiderSpec {
             "roamer" => Personality::Roamer,
             other => return Err(format!("{}: unknown bot {other:?}", self.name)),
         };
-        Ok(Some(BotBuild::new(Elo(self.elo), personality)))
+        let mut knobs = Difficulty(self.difficulty).knobs(personality);
+        self.knobs.apply(&mut knobs);
+        Ok(Some(BotBuild::new(personality, knobs)))
     }
 
     /// Parse `"<tick> <action>"` entries into one action per tick. The sim

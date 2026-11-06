@@ -72,7 +72,7 @@ impl Brain {
         perception.memory_trend = self.memory.trend();
         perception.opponent_turn_prob = self.memory.opponent.turn_prob();
         let strategy = strategy_for(self.build.personality);
-        // Clamp the Elo horizon by the LOD tier before strategies see it.
+        // Clamp the look-ahead horizon by the LOD tier before strategies see it.
         let mut knobs = self.build.knobs.clone();
         knobs.lookahead_ticks = knobs.lookahead_ticks.min(tier.max_lookahead());
         let action = decide(strategy, &perception, world, &PhysicsForecaster, &knobs);
