@@ -41,7 +41,7 @@ Implemented contract and measurements: `docs/specs/netcode-design.md`. Open item
 
 ## Gameplay invariants (`docs/specs/core-gameplay-mechanics.md` is normative)
 
-120 ticks/s, base speed 360 u/s, 2000x2000 arena, one turn per tick, trail cap `TRAIL_MAX_LENGTH` (2400), rubber max 120 with cubic-in-cruise-speed drain and slow regen, Zeno-style slowdown within 12 units of a front obstacle, capped inertial speed (`MAX_SPEED_MULT` 2.0) fed by grinding within `SLIDE_DISTANCE` of others' trails (own trail never grinds; arena walls pay 0.4x), deterministic spawn/safe-respawn search, manual human respawn only. Sim arithmetic uses `+ - * /` only (no `powi`/`exp`) so client and server stay bit-identical.
+120 ticks/s, base speed 360 u/s, 2000x2000 arena, one turn per tick (each costs 5% of the cruise speed, floored at 0.8x), trail cap `TRAIL_MAX_LENGTH` (2400), rubber max 120 paid per unit of distance lost in the rubber zone (linear-ish in speed, ~22 ticks to die at base, ~14 at the cap, above the 12-tick late window) with proportional regen that also runs while grinding, an exponential wall approach inside a speed-wide zone (>= 12 units), capped inertial speed (`MAX_SPEED_MULT` 3.0) accelerated by grinding within `GRIND_RANGE` of any trail on either side, summed (own trail counts from `OWN_GRIND_MIN_FROM_HEAD` legs back; arena walls pay 0.4x) and fading exponentially, no crash bleed, deterministic spawn/safe-respawn search, manual human respawn only. Sim arithmetic uses `+ - * /` only (no `powi`/`exp`) so client and server stay bit-identical.
 
 ## Architecture rules
 

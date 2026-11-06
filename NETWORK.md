@@ -9,8 +9,8 @@ numbers are in `docs/specs/netcode-design.md`; the headless harness is
 ## Needs a decision from JH
 
 - [ ] **Approve the tuning values.** Nothing below has been signed off by a
-  human playtest: the physics retune (`MAX_SPEED_MULT` 2.0, `SLIDE_DISTANCE`
-  24, `ARENA_WALL_GRIND` 0.4, inertia rates, rubber drain/regen, arena
+  human playtest: the physics retune (`MAX_SPEED_MULT` 3.0, `GRIND_RANGE`
+  72, `ARENA_WALL_GRIND` 0.4, inertia rates, rubber cost/regen, arena
   2000x2000, trail cap 2400), the 12-tick late window, the redundancy bounds
   (16 commands, 48 ticks) and the abuse budgets (600 batches/s, 60 rejections/s,
   10 requests/s). The netcode numbers are measured on loopback with a

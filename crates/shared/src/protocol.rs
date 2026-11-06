@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 /// handling, anything in `simulate_players`) are NOT captured by the constant
 /// fingerprint and REQUIRE a manual bump here: otherwise mixed builds connect
 /// fine and then silently mispredict.
-pub const PROTOCOL_VERSION: u32 = 5;
+pub const PROTOCOL_VERSION: u32 = 6;
 
 /// Name and value of every constant the client and server must agree on to
 /// simulate identically (`constants.rs` in full, plus the turn timing rules).
@@ -36,22 +36,28 @@ sim_constants! {
     TICK_MS => TICK_MS.to_bits() as u64,
     BASE_SPEED => BASE_SPEED.to_bits() as u64,
     BASE_RUBBER => BASE_RUBBER.to_bits() as u64,
-    DELTA_STUFF => DELTA_STUFF.to_bits() as u64,
     SLOW_DOWN_DISTANCE => SLOW_DOWN_DISTANCE.to_bits() as u64,
     TRAIL_MAX_LENGTH => TRAIL_MAX_LENGTH.to_bits() as u64,
     ROTATION_ANGLE => ROTATION_ANGLE.to_bits() as u64,
     ARENA_WIDTH => ARENA_WIDTH.to_bits() as u64,
     ARENA_HEIGHT => ARENA_HEIGHT.to_bits() as u64,
     MAX_SPEED_MULT => MAX_SPEED_MULT.to_bits() as u64,
-    SLIDE_DISTANCE => SLIDE_DISTANCE.to_bits() as u64,
+    GRIND_RANGE => GRIND_RANGE.to_bits() as u64,
+    GRIND_OFFSET => GRIND_OFFSET.to_bits() as u64,
+    GRIND_NORM => GRIND_NORM.to_bits() as u64,
     ARENA_WALL_GRIND => ARENA_WALL_GRIND.to_bits() as u64,
-    SLIDE_ACCEL_PER_SEC => SLIDE_ACCEL_PER_SEC.to_bits() as u64,
-    COAST_DECEL_PER_SEC => COAST_DECEL_PER_SEC.to_bits() as u64,
-    CRASH_BRAKE_PER_SEC => CRASH_BRAKE_PER_SEC.to_bits() as u64,
-    SLIDE_ACCEL => SLIDE_ACCEL.to_bits() as u64,
-    COAST_DECEL => COAST_DECEL.to_bits() as u64,
-    CRASH_BRAKE => CRASH_BRAKE.to_bits() as u64,
-    RUBBER_DRAIN => RUBBER_DRAIN.to_bits() as u64,
+    OWN_GRIND_MIN_FROM_HEAD => OWN_GRIND_MIN_FROM_HEAD as u64,
+    GRIND_ACCEL_PER_SEC => GRIND_ACCEL_PER_SEC.to_bits() as u64,
+    SPEED_DECAY_PER_SEC => SPEED_DECAY_PER_SEC.to_bits() as u64,
+    SPEED_RECOVER_PER_SEC => SPEED_RECOVER_PER_SEC.to_bits() as u64,
+    GRIND_ACCEL => GRIND_ACCEL.to_bits() as u64,
+    SPEED_DECAY => SPEED_DECAY.to_bits() as u64,
+    SPEED_RECOVER => SPEED_RECOVER.to_bits() as u64,
+    TURN_SPEED_FACTOR => TURN_SPEED_FACTOR.to_bits() as u64,
+    MIN_SPEED_MULT => MIN_SPEED_MULT.to_bits() as u64,
+    RUBBER_APPROACH => RUBBER_APPROACH.to_bits() as u64,
+    RUBBER_COST => RUBBER_COST.to_bits() as u64,
+    RUBBER_REGEN_PER_SEC => RUBBER_REGEN_PER_SEC.to_bits() as u64,
     RUBBER_REGEN => RUBBER_REGEN.to_bits() as u64,
     TURN_LATE_WINDOW_TICKS => TURN_LATE_WINDOW_TICKS as u64,
     TURN_MAX_LEAD_TICKS => TURN_MAX_LEAD_TICKS as u64,

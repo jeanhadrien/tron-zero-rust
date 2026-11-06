@@ -107,12 +107,18 @@ fn ray_contacts_cover_zero_distance_collinear_and_endpoints() {
 fn wall_rubber_drains_then_death_clears_trail_once() {
     let (mut world, mut schedule) = setup();
     let entity = cycle(&mut world, Vec2::new(ARENA_WIDTH * 0.5 - 1.0, 0.0), Vec2::X);
-    world.get_mut::<Rubber>(entity).unwrap().0 = 4.0;
+    world.get_mut::<Rubber>(entity).unwrap().0 = 10.0;
     schedule.run(&mut world);
     assert!(world.get::<IsColliding>(entity).unwrap().0);
     assert!(world.get::<IsAlive>(entity).unwrap().0);
-    near(world.get::<Rubber>(entity).unwrap().0, 1.12);
-    schedule.run(&mut world);
+    // One unit from the wall the rider closes 28% of the gap and pays for the
+    // rest of its 3-unit step.
+    let lost = 3.0 - RUBBER_APPROACH;
+    let expected = 10.0 + 110.0 * RUBBER_REGEN - lost * RUBBER_COST;
+    near(world.get::<Rubber>(entity).unwrap().0, expected);
+    for _ in 0..3 {
+        schedule.run(&mut world);
+    }
     assert!(!world.get::<IsAlive>(entity).unwrap().0);
     assert!(!world.get::<ShouldHandleDeath>(entity).unwrap().0);
     assert_eq!(world.get::<Rubber>(entity).unwrap().0, 0.0);
@@ -135,10 +141,12 @@ fn entering_the_slowdown_zone_never_speeds_the_rider_up() {
     assert!(world.get::<IsColliding>(entity).unwrap().0);
     let speed = world.get::<SpeedMult>(entity).unwrap().0;
     assert!(speed <= 1.0 + 1e-4, "lurched forward at {speed}x");
+    // The edge of the zone is free: nothing was lost yet.
+    assert!(world.get::<Rubber>(entity).unwrap().0 >= BASE_RUBBER - 1e-3);
 }
 
 #[test]
-fn escape_regenerates_rubber_and_keeps_most_of_the_speed() {
+fn escape_regenerates_rubber_and_keeps_the_speed() {
     let (mut world, mut schedule) = setup();
     let edge = ARENA_WIDTH * 0.5;
     let entity = cycle(&mut world, Vec2::new(edge - 1.0, 0.0), Vec2::X);
@@ -146,39 +154,105 @@ fn escape_regenerates_rubber_and_keeps_most_of_the_speed() {
     world.get_mut::<Rubber>(entity).unwrap().0 = 70.0;
     schedule.run(&mut world);
     assert!(world.get::<SpeedMult>(entity).unwrap().0 < 1.0);
-    // Pressing the wall bleeds boost, but only a little per tick.
-    near(
-        world.get::<TargetSpeedMult>(entity).unwrap().0,
-        2.0 - CRASH_BRAKE,
-    );
+    // Facing the wall does not bleed the boost: it only fades like in open space.
+    let target = world.get::<TargetSpeedMult>(entity).unwrap().0;
+    near(target, 2.0 - SPEED_DECAY);
     let rubber = world.get::<Rubber>(entity).unwrap().0;
     world.get_mut::<ActionState<PlayerInput>>(entity).unwrap().0 = PlayerInput::TurnLeft;
     schedule.run(&mut world);
     assert!(!world.get::<IsColliding>(entity).unwrap().0);
     assert!(world.get::<Rubber>(entity).unwrap().0 > rubber);
-    near(world.get::<SpeedMult>(entity).unwrap().0, 2.0 - CRASH_BRAKE);
+    // The turn costs 5% of the cruise speed.
+    near(
+        world.get::<SpeedMult>(entity).unwrap().0,
+        target * TURN_SPEED_FACTOR,
+    );
     assert!(world.get::<IsSliding>(entity).unwrap().0);
 }
 
 #[test]
-fn grinding_converges_on_a_proximity_scaled_cap() {
+fn rubber_regen_runs_while_grinding_and_is_proportional_to_what_is_missing() {
     let (mut world, mut schedule) = setup();
-    let edge = ARENA_WIDTH * 0.5;
-    let entity = cycle(&mut world, Vec2::new(-edge + 100.0, edge - 6.0), Vec2::X);
-    let mut last = 1.0;
-    for _ in 0..(2.5 * TICK_HZ) as usize {
-        schedule.run(&mut world);
-        let target = world.get::<TargetSpeedMult>(entity).unwrap().0;
-        assert!(target >= last && target <= MAX_SPEED_MULT);
-        last = target;
-    }
-    // Arena walls pay only ARENA_WALL_GRIND of the trail strength.
-    let proximity = (1.0 - 6.0 / SLIDE_DISTANCE) * ARENA_WALL_GRIND;
-    near(last, 1.0 + (MAX_SPEED_MULT - 1.0) * proximity);
+    let entity = cycle(
+        &mut world,
+        Vec2::new(0.0, ARENA_HEIGHT * 0.5 - 5.0),
+        Vec2::X,
+    );
+    world.get_mut::<Rubber>(entity).unwrap().0 = 20.0;
+    schedule.run(&mut world);
+    assert!(world.get::<IsSliding>(entity).unwrap().0);
+    near(
+        world.get::<Rubber>(entity).unwrap().0,
+        20.0 + 100.0 * RUBBER_REGEN,
+    );
+    world.get_mut::<Rubber>(entity).unwrap().0 = 110.0;
+    schedule.run(&mut world);
+    near(
+        world.get::<Rubber>(entity).unwrap().0,
+        110.0 + 10.0 * RUBBER_REGEN,
+    );
+}
+
+/// Grind strength of a trail `d` units to the side, as the sim defines it.
+fn strength_at(d: f32) -> f32 {
+    (1.0 / (d + GRIND_OFFSET) - 1.0 / (GRIND_RANGE + GRIND_OFFSET)) * GRIND_NORM
 }
 
 #[test]
-fn slide_boosts_next_tick_and_open_space_decays_gradually() {
+fn grind_strength_is_convex_and_reaches_zero_at_the_range() {
+    near(strength_at(0.0), 1.0);
+    near(strength_at(GRIND_OFFSET), 1.0 / 3.0);
+    near(strength_at(GRIND_RANGE), 0.0);
+    // Touching pays far more than hovering: convex, not linear.
+    assert!(strength_at(8.0) < 1.0 - 8.0 / GRIND_RANGE);
+}
+
+/// First-tick target speed of a rider with a foreign trail 3 units to each
+/// listed side (`1.0` = left, `-1.0` = right).
+fn first_tick_target(sides: &[f32]) -> f32 {
+    let (mut world, mut schedule) = setup();
+    let entity = cycle(&mut world, Vec2::ZERO, Vec2::X);
+    for &side in sides {
+        let head = Vec2::new(400.0, 3.0 * side);
+        let other = cycle(&mut world, head, Vec2::X);
+        *world.get_mut::<Trail>(other).unwrap() = Trail(vec![head - Vec2::X * 800.0, head]);
+    }
+    schedule.run(&mut world);
+    world.get::<TargetSpeedMult>(entity).unwrap().0
+}
+
+#[test]
+fn both_sides_add_up() {
+    let single = first_tick_target(&[1.0]);
+    let tunnel = first_tick_target(&[1.0, -1.0]);
+    near(single - 1.0, strength_at(3.0) * GRIND_ACCEL);
+    near(tunnel - 1.0, 2.0 * strength_at(3.0) * GRIND_ACCEL);
+}
+
+#[test]
+fn grinding_converges_on_a_proximity_scaled_terminal_speed() {
+    let (mut world, mut schedule) = setup();
+    // Ten seconds of riding need more room than the default arena.
+    let mut walls = world.query::<&mut WallSegments>();
+    walls.single_mut(&mut world).unwrap().0 = arena_walls(8000.0, 8000.0);
+    let edge = 4000.0;
+    let entity = cycle(&mut world, Vec2::new(-edge + 100.0, edge - 6.0), Vec2::X);
+    let mut last = 1.0;
+    for _ in 0..(10.0 * TICK_HZ) as usize {
+        schedule.run(&mut world);
+        let target = world.get::<TargetSpeedMult>(entity).unwrap().0;
+        assert!(target >= last - 1e-6 && target <= MAX_SPEED_MULT);
+        last = target;
+    }
+    // Arena walls pay only ARENA_WALL_GRIND of the trail strength.
+    near(
+        last,
+        1.0 + GRIND_ACCEL_PER_SEC / SPEED_DECAY_PER_SEC * strength_at(6.0) * ARENA_WALL_GRIND,
+    );
+}
+
+#[test]
+fn slide_boosts_next_tick_and_open_space_decays_exponentially() {
     let (mut world, mut schedule) = setup();
     let entity = cycle(
         &mut world,
@@ -189,7 +263,7 @@ fn slide_boosts_next_tick_and_open_space_decays_gradually() {
     assert!(world.get::<IsSliding>(entity).unwrap().0);
     near(world.get::<SpeedMult>(entity).unwrap().0, 1.0);
     let target = world.get::<TargetSpeedMult>(entity).unwrap().0;
-    near(target, 1.0 + SLIDE_ACCEL);
+    assert!(target > 1.0);
     schedule.run(&mut world);
     near(world.get::<SpeedMult>(entity).unwrap().0, target);
     world.get_mut::<Position>(entity).unwrap().0 = Vec2::ZERO;
@@ -199,9 +273,55 @@ fn slide_boosts_next_tick_and_open_space_decays_gradually() {
     assert!(!world.get::<IsSliding>(entity).unwrap().0);
     near(
         world.get::<TargetSpeedMult>(entity).unwrap().0,
-        2.0 - COAST_DECEL,
+        2.0 - SPEED_DECAY,
     );
     near(world.get::<SpeedMult>(entity).unwrap().0, 2.0);
+    // The excess fades by a fixed fraction per tick, not a fixed amount.
+    world.get_mut::<TargetSpeedMult>(entity).unwrap().0 = 1.5;
+    schedule.run(&mut world);
+    near(
+        world.get::<TargetSpeedMult>(entity).unwrap().0,
+        1.5 - 0.5 * SPEED_DECAY,
+    );
+}
+
+#[test]
+fn turns_cost_speed_down_to_a_floor_and_recover_below_base() {
+    let (mut world, mut schedule) = setup();
+    let entity = cycle(&mut world, Vec2::ZERO, Vec2::X);
+    world.get_mut::<TargetSpeedMult>(entity).unwrap().0 = 2.0;
+    world.get_mut::<ActionState<PlayerInput>>(entity).unwrap().0 = PlayerInput::TurnLeft;
+    schedule.run(&mut world);
+    // The penalty applies to the tick's own step.
+    near(
+        world.get::<SpeedMult>(entity).unwrap().0,
+        2.0 * TURN_SPEED_FACTOR,
+    );
+    // Turn spam settles at the floor instead of stalling the rider.
+    world.get_mut::<TargetSpeedMult>(entity).unwrap().0 = 1.0;
+    for i in 0..100 {
+        let turn = if i % 2 == 0 {
+            PlayerInput::TurnRight
+        } else {
+            PlayerInput::TurnLeft
+        };
+        world.get_mut::<ActionState<PlayerInput>>(entity).unwrap().0 = turn;
+        schedule.run(&mut world);
+        let target = world.get::<TargetSpeedMult>(entity).unwrap().0;
+        assert!(world.get::<IsAlive>(entity).unwrap().0, "died at tick {i}");
+        assert!(target >= MIN_SPEED_MULT - 0.05, "stalled at {target}");
+    }
+    // Back on a straight, it recovers to base speed.
+    world.get_mut::<ActionState<PlayerInput>>(entity).unwrap().0 = PlayerInput::None;
+    for i in 0..(1.5 * TICK_HZ) as usize {
+        schedule.run(&mut world);
+        let p = world.get::<Position>(entity).unwrap().0;
+        assert!(
+            world.get::<IsAlive>(entity).unwrap().0,
+            "died in recovery tick {i} at {p}"
+        );
+    }
+    near(world.get::<TargetSpeedMult>(entity).unwrap().0, 1.0);
 }
 
 #[test]
@@ -276,7 +396,10 @@ fn old_self_segment_collides_but_own_active_and_turn_junction_do_not() {
     world.get_mut::<ActionState<PlayerInput>>(entity).unwrap().0 = PlayerInput::TurnLeft;
     schedule.run(&mut world);
     near(world.get::<Position>(entity).unwrap().0.x, 0.0);
-    near(world.get::<Position>(entity).unwrap().0.y, 3.0);
+    near(
+        world.get::<Position>(entity).unwrap().0.y,
+        3.0 * TURN_SPEED_FACTOR,
+    );
     assert!(!world.get::<IsColliding>(entity).unwrap().0);
     assert!(!world.get::<IsSliding>(entity).unwrap().0);
     world.get_mut::<ActionState<PlayerInput>>(entity).unwrap().0 = PlayerInput::None;
@@ -445,12 +568,14 @@ fn restoring_trail_snapshot_replays_turn_without_duplicate_geometry() {
     let trail = world.get::<Trail>(entity).unwrap().clone();
     let position = *world.get::<Position>(entity).unwrap();
     let direction = *world.get::<Direction>(entity).unwrap();
+    let target = *world.get::<TargetSpeedMult>(entity).unwrap();
+    let rubber = *world.get::<Rubber>(entity).unwrap();
     world.get_mut::<ActionState<PlayerInput>>(entity).unwrap().0 = PlayerInput::TurnLeft;
     schedule.run(&mut world);
     let result = world.get::<Trail>(entity).unwrap().clone();
     world
         .entity_mut(entity)
-        .insert((trail, position, direction));
+        .insert((trail, position, direction, target, rubber));
     schedule.run(&mut world);
     assert_eq!(*world.get::<Trail>(entity).unwrap(), result);
     assert_eq!(sim_entities(&mut world), 2);

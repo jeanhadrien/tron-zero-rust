@@ -39,7 +39,8 @@ pub enum EventKind {
         at: [f64; 2],
         heading: &'static str,
     },
-    /// Front sensor came within `SLOW_DOWN_DISTANCE`: rubber starts draining.
+    /// Front sensor came within the rubber zone (`SLOW_DOWN_DISTANCE` at least,
+    /// wider with speed): the rider closes in exponentially and pays rubber.
     EnterRubberZone {
         at: [f64; 2],
         rubber: f64,
@@ -48,7 +49,7 @@ pub enum EventKind {
         at: [f64; 2],
         rubber: f64,
     },
-    /// A side sensor came within `SLIDE_DISTANCE`: target speed grows.
+    /// A side sensor came within `GRIND_RANGE`: target speed grows.
     SlideStart {
         at: [f64; 2],
         target: f64,

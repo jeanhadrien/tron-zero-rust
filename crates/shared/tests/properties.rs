@@ -67,7 +67,10 @@ fn crosses(p: Vec2, q: Vec2, a: Vec2, b: Vec2) -> bool {
     }
     let t = (a - p).perp_dot(s) / denom;
     let u = (a - p).perp_dot(r) / denom;
-    t > 1e-3 && t <= 1.0 && (-1e-4..=1.0 + 1e-4).contains(&u)
+    // Endpoint slack in world units (half the sim's 0.001), not a fraction of a 2000-unit
+    // wall: a rider 0.01 beyond a wall's end has genuinely passed it.
+    let slack = 0.0005 / s.length();
+    t > 1e-3 && t <= 1.0 && (-slack..=1.0 + slack).contains(&u)
 }
 
 fn axis_aligned(a: Vec2, b: Vec2) -> bool {
@@ -157,11 +160,11 @@ fn run_and_check(walls: Vec<[f32; 4]>, plans: Vec<RiderPlan>) -> Result<(), Test
                 CARDINALS.contains(&direction),
                 "tick {tick}: heading {direction}"
             );
-            // Inside the rubber zone the Zeno step is `front³ / 12²` (JS
-            // parity), which is NOT capped by target speed: entering the zone
-            // can lunge up to 4x a base step. Only open-space speed is capped.
+            // Neither the zone's exponential approach nor the turn penalty can
+            // push a step above the cruise speed the tick started with.
+            let _ = colliding;
             prop_assert!(
-                colliding || speed <= before.target_speed + 1e-4,
+                speed <= before.target_speed + 1e-4,
                 "tick {tick}: speed {speed} above target {}",
                 before.target_speed
             );

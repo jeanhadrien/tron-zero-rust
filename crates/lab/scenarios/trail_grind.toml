@@ -1,5 +1,5 @@
 # Grind an opponent trail from 12 u: trails pay out over the full
-# SLIDE_DISTANCE, unlike boundary walls. "wall" rides alongside at base speed, so "a" is passed along its trail head.
+# GRIND_RANGE, unlike boundary walls. "wall" rides alongside at base speed, so "a" is passed along its trail head.
 arena = [6000, 6000]
 until = 480
 

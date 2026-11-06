@@ -93,10 +93,11 @@ fn facing_a_wall_drains_rubber_then_kills() {
     });
     let died = ticks(&lab, "a", |k| matches!(k, EventKind::Death { .. }));
     assert_eq!(death_causes(&lab, "a"), ["wall"]);
-    // Base-speed drain is 12 * 0.03 * 2^3 = 2.88 per tick: 120 rubber lasts
-    // ~42 ticks in the zone. The rider must never touch the wall meanwhile.
+    // Rubber is paid per unit of distance not travelled, so the zone's soft
+    // edge is free and the full drain only arrives at the wall: ~25 ticks in
+    // the zone at base speed. The rider must never touch the wall meanwhile.
     let in_zone = died[0] - entered[0];
-    assert!((40..=44).contains(&in_zone), "{in_zone} ticks in zone");
+    assert!((22..=30).contains(&in_zone), "{in_zone} ticks in zone");
     let a = lab.rider("a").unwrap();
     assert!(a.deaths[0].x < 1200.0);
 }
@@ -107,10 +108,15 @@ fn turning_away_escapes_and_rubber_regenerates() {
     let a = lab.rider("a").unwrap();
     assert!(a.alive);
     assert!(death_causes(&lab, "a").is_empty());
-    // Regen is slow on purpose (about 18/s): most, not all, of it is back.
-    assert!(a.rubber > 100.0, "rubber {}", a.rubber);
+    // Regen is proportional to what is missing (about 5 s time constant): a
+    // good part of it is back, never all of it.
+    assert!(
+        a.rubber > 60.0 && a.rubber < shared::BASE_RUBBER,
+        "rubber {}",
+        a.rubber
+    );
     // Its escape route hugs the east wall: grinding boosts the target speed.
-    assert!(a.target > 1.2, "target {}", a.target);
+    assert!(a.target > 1.1, "target {}", a.target);
 }
 
 #[test]
@@ -123,7 +129,8 @@ fn grinding_boosts_and_open_space_decays_to_base() {
     lab.run(scenario.until, 0);
     let a = lab.rider("a").unwrap();
     assert!(a.alive);
-    assert_eq!(a.target, 1.0);
+    // The boost fades exponentially: close to base, never exactly there.
+    assert!(a.target > 1.0 && a.target < 1.05, "target {}", a.target);
 }
 
 #[test]
@@ -198,8 +205,7 @@ fn grind_speed_rises_with_closeness_and_respects_the_cap() {
     assert!(target("d12") > 1.0);
     assert_eq!(target("dnone"), 1.0);
     // Walls pay a fraction of the trail boost, even at near contact.
-    let arena_cap = 1.0 + (shared::MAX_SPEED_MULT - 1.0) * shared::ARENA_WALL_GRIND;
-    assert!(target("d2") <= arena_cap);
+    assert!(target("d2") <= rim_cap());
 }
 
 #[test]
@@ -210,44 +216,57 @@ fn full_speed_rubber_outlasts_the_late_turn_window() {
     });
     let died = ticks(&lab, "a", |k| matches!(k, EventKind::Death { .. }));
     // A turn arriving up to 12 ticks late (netcode TURN_LATE_WINDOW_TICKS)
-    // must still be able to save a cornered rider at the cap.
-    assert!(died[0] - entered[0] >= 12, "{} ticks", died[0] - entered[0]);
+    // must still be able to save a cornered rider at the cap. The zone is
+    // wide at 3x and its outer ~4 ticks are free, so 16 ticks from entry is
+    // about 13 ticks of real contact.
+    assert!(died[0] - entered[0] >= 16, "{} ticks", died[0] - entered[0]);
+}
+
+/// Terminal speed of one wall touching a rider: what rim riding can reach.
+fn rim_cap() -> f32 {
+    1.0 + shared::GRIND_ACCEL_PER_SEC / shared::SPEED_DECAY_PER_SEC * shared::ARENA_WALL_GRIND
 }
 
 #[test]
-fn trails_pay_out_over_the_full_slide_distance() {
+fn trails_pay_out_over_the_full_grind_range() {
     let scenario = load("trail_grind");
     let mut lab = Lab::new(&scenario);
     lab.run(200, 0);
-    // 12 u of a 24 u range: halfway to the cap.
+    // A trail 12 u away pays more than any wall can, but less than touching.
     let target = lab.rider("a").unwrap().target;
-    let expected = 1.0 + (shared::MAX_SPEED_MULT - 1.0) * 0.5;
-    assert!((target - expected).abs() < 0.01, "target {target}");
+    assert!(target > rim_cap() && target < 2.0, "target {target}");
 }
 
-/// Highest cruise speed `rider` reaches while the scenario plays out.
-fn peak_target(name: &str, rider: &str) -> f32 {
+/// Highest cruise speed `rider` reaches up to tick `until` of the scenario.
+fn peak_target_until(name: &str, rider: &str, until: u32) -> f32 {
     let scenario = load(name);
     let mut lab = Lab::new(&scenario);
     let mut peak = 1.0_f32;
-    for tick in 1..=scenario.until {
+    for tick in 1..=until {
         lab.run(tick, 0);
         peak = peak.max(lab.rider(rider).unwrap().target);
     }
     peak
 }
 
+/// Highest cruise speed `rider` reaches while the scenario plays out.
+fn peak_target(name: &str, rider: &str) -> f32 {
+    peak_target_until(name, rider, load(name).until)
+}
+
 #[test]
-fn own_trail_never_grinds() {
-    // Double-tap U-turns leave the rider ~3 u from its own trail in open space.
-    assert_eq!(peak_target("self_grind", "a"), 1.0);
+fn own_trail_grinds_but_not_the_leg_a_double_tap_uturn_leaves() {
+    // Riding back along the outbound leg 3 u away is a free ride in open
+    // space: that leg is too close to the head in trail order to pay.
+    assert_eq!(peak_target_until("self_grind", "a", 380), 1.0);
+    // The second U-turn rides along the outbound leg again, now an older leg.
+    assert!(peak_target("self_grind", "a") > 1.2);
 }
 
 #[test]
 fn edge_riding_pays_far_less_than_trail_grinding() {
-    let arena_cap = 1.0 + (shared::MAX_SPEED_MULT - 1.0) * shared::ARENA_WALL_GRIND;
     let edge = peak_target("edge_ride", "a");
-    assert!(edge > 1.0 && edge <= arena_cap + 1e-3, "edge {edge}");
+    assert!(edge > 1.0 && edge <= rim_cap() + 1e-3, "edge {edge}");
     let trail = peak_target("trail_grind", "a");
     assert!(trail > edge + 0.1, "trail {trail} vs edge {edge}");
 }

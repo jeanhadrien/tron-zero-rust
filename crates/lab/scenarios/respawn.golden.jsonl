@@ -2,10 +2,10 @@
 {"tick":0,"rider":"b","event":"sample","at":[-900.0,-600.0],"heading":"+y","speed":1.0,"target":1.0,"rubber":120.0,"sliding":false,"colliding":false,"trail":0.0}
 {"tick":60,"rider":"a","event":"sample","at":[1080.0,0.0],"heading":"+x","speed":1.0,"target":1.0,"rubber":120.0,"sliding":false,"colliding":false,"trail":180.0}
 {"tick":60,"rider":"b","event":"sample","at":[-900.0,-420.0],"heading":"+y","speed":1.0,"target":1.0,"rubber":120.0,"sliding":false,"colliding":false,"trail":180.0}
-{"tick":97,"rider":"a","event":"enter_rubber_zone","at":[1194.0,0.0],"rubber":117.12}
-{"tick":120,"rider":"a","event":"sample","at":[1198.34,0.0],"heading":"+x","speed":0.011,"target":1.0,"rubber":53.76,"sliding":false,"colliding":true,"trail":298.34}
+{"tick":97,"rider":"a","event":"enter_rubber_zone","at":[1193.52,0.0],"rubber":119.136}
+{"tick":120,"rider":"a","event":"sample","at":[1199.995,0.0],"heading":"+x","speed":0.001,"target":1.0,"rubber":13.295,"sliding":false,"colliding":true,"trail":299.995}
 {"tick":120,"rider":"b","event":"sample","at":[-900.0,-240.0],"heading":"+y","speed":1.0,"target":1.0,"rubber":120.0,"sliding":false,"colliding":false,"trail":360.0}
-{"tick":138,"rider":"a","event":"death","at":[1198.729,0.0],"cause":"wall"}
+{"tick":122,"rider":"a","event":"death","at":[1199.998,0.0],"cause":"wall"}
 {"tick":180,"rider":"b","event":"sample","at":[-900.0,-60.0],"heading":"+y","speed":1.0,"target":1.0,"rubber":120.0,"sliding":false,"colliding":false,"trail":540.0}
 {"tick":200,"rider":"a","event":"respawn","at":[-282.192,1095.869],"heading":"-y"}
 {"tick":240,"rider":"a","event":"sample","at":[-282.192,975.869],"heading":"-y","speed":1.0,"target":1.0,"rubber":120.0,"sliding":false,"colliding":false,"trail":120.0}

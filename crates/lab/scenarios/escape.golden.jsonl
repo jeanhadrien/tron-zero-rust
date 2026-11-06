@@ -1,9 +1,9 @@
 {"tick":0,"rider":"a","event":"sample","at":[900.0,0.0],"heading":"+x","speed":1.0,"target":1.0,"rubber":120.0,"sliding":false,"colliding":false,"trail":0.0}
 {"tick":60,"rider":"a","event":"sample","at":[1080.0,0.0],"heading":"+x","speed":1.0,"target":1.0,"rubber":120.0,"sliding":false,"colliding":false,"trail":180.0}
-{"tick":97,"rider":"a","event":"enter_rubber_zone","at":[1194.0,0.0],"rubber":117.12}
-{"tick":110,"rider":"a","event":"turn","at":[1197.862,0.0],"heading":"+y"}
-{"tick":110,"rider":"a","event":"leave_rubber_zone","at":[1197.862,3.0],"rubber":82.71}
-{"tick":110,"rider":"a","event":"slide_start","at":[1197.862,3.0],"target":1.004}
-{"tick":120,"rider":"a","event":"sample","at":[1197.862,30.563],"heading":"+y","speed":1.038,"target":1.042,"rubber":84.06,"sliding":true,"colliding":false,"trail":328.425}
-{"tick":180,"rider":"a","event":"sample","at":[1197.862,240.188],"heading":"+y","speed":1.288,"target":1.292,"rubber":93.06,"sliding":true,"colliding":false,"trail":538.05}
-{"tick":240,"rider":"a","event":"sample","at":[1197.862,483.761],"heading":"+y","speed":1.364,"target":1.364,"rubber":102.06,"sliding":true,"colliding":false,"trail":781.624}
+{"tick":97,"rider":"a","event":"enter_rubber_zone","at":[1193.52,0.0],"rubber":119.136}
+{"tick":110,"rider":"a","event":"turn","at":[1199.874,0.0],"heading":"+y"}
+{"tick":110,"rider":"a","event":"leave_rubber_zone","at":[1199.874,2.85],"rubber":66.174}
+{"tick":110,"rider":"a","event":"slide_start","at":[1199.874,2.85],"target":0.955}
+{"tick":120,"rider":"a","event":"sample","at":[1199.874,29.073],"heading":"+y","speed":0.986,"target":0.989,"rubber":66.776,"sliding":true,"colliding":false,"trail":328.947}
+{"tick":180,"rider":"a","event":"sample","at":[1199.874,220.024],"heading":"+y","speed":1.123,"target":1.125,"rubber":70.625,"sliding":true,"colliding":false,"trail":519.898}
+{"tick":240,"rider":"a","event":"sample","at":[1199.874,430.994],"heading":"+y","speed":1.214,"target":1.215,"rubber":74.194,"sliding":true,"colliding":false,"trail":730.868}

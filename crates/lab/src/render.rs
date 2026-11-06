@@ -159,8 +159,11 @@ pub fn render(lab: &Lab, view: View, pixels: u32) -> Pixmap {
         );
     }
 
-    let zone_px = shared::SLOW_DOWN_DISTANCE * canvas.scale();
     for rider in lab.riders() {
+        // The rubber zone widens with speed: it is the step it would cancel.
+        let step = shared::BASE_SPEED * rider.target * shared::TICK_SECS;
+        let zone = shared::SLOW_DOWN_DISTANCE.max(step / shared::RUBBER_APPROACH);
+        let zone_px = zone * canvas.scale();
         let rgb = PALETTE[rider.index % PALETTE.len()].1;
         for death in &rider.deaths {
             let (d, r) = (*death, 5.0 / canvas.scale());

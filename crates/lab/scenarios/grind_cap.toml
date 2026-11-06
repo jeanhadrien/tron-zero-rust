@@ -1,6 +1,6 @@
 # Five-second grinds under a parallel arena-class wall at several distances
 # (2, 4, 6, 9, 12 u, and a control with no wall). Boundary walls count as
-# pay ARENA_WALL_GRIND of the trail strength over the full SLIDE_DISTANCE.
+# pay ARENA_WALL_GRIND of the trail strength over the full GRIND_RANGE.
 # Terminal target speed should rise with closeness and stay under the arena cap.
 arena = [8000, 8000]
 until = 900

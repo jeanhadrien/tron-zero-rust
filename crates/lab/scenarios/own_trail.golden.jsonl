@@ -1,7 +1,7 @@
 {"tick":0,"rider":"a","event":"sample","at":[0.0,0.0],"heading":"+x","speed":1.0,"target":1.0,"rubber":120.0,"sliding":false,"colliding":false,"trail":0.0}
 {"tick":20,"rider":"a","event":"turn","at":[60.0,0.0],"heading":"+y"}
-{"tick":40,"rider":"a","event":"turn","at":[60.0,60.0],"heading":"-x"}
-{"tick":60,"rider":"a","event":"sample","at":[0.0,60.0],"heading":"-x","speed":1.0,"target":1.0,"rubber":120.0,"sliding":false,"colliding":false,"trail":180.0}
-{"tick":60,"rider":"a","event":"turn","at":[0.0,60.0],"heading":"-y"}
-{"tick":77,"rider":"a","event":"enter_rubber_zone","at":[0.0,6.0],"rubber":117.12}
-{"tick":118,"rider":"a","event":"death","at":[0.0,1.271],"cause":"own_trail"}
+{"tick":40,"rider":"a","event":"turn","at":[60.0,57.937],"heading":"-x"}
+{"tick":60,"rider":"a","event":"sample","at":[2.9,57.937],"heading":"-x","speed":0.969,"target":0.97,"rubber":120.0,"sliding":false,"colliding":false,"trail":175.037}
+{"tick":60,"rider":"a","event":"turn","at":[2.9,57.937],"heading":"-y"}
+{"tick":77,"rider":"a","event":"enter_rubber_zone","at":[2.9,7.09],"rubber":119.764}
+{"tick":103,"rider":"a","event":"death","at":[2.9,0.002],"cause":"own_trail"}

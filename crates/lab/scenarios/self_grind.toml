@@ -1,4 +1,5 @@
-# Open-space self-grind: ride, then U-turn (two lefts one tick apart) and ride back along own trail.
+# Open-space self-grind: ride, then U-turn (two lefts one tick apart) and ride back along own trail:
+# the outbound leg is too close in trail order to pay, the second U-turn rides an older leg.
 arena = [2000, 2000]
 until = 520
 

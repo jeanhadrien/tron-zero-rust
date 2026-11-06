@@ -131,12 +131,14 @@ fn nearest_contact(
     best
 }
 
-/// Grind strength in `0..=1` for a side ray: 1 touching an obstacle, falling
-/// linearly to 0 at `SLIDE_DISTANCE`. Grinding rewards risk near *other*
-/// riders' trails, so:
-/// - the rider's own trail never counts (a U-turn corridor is a free farm);
-/// - arena walls pay at most `ARENA_WALL_GRIND` of the full strength, so edge
-///   riding is a weak accelerator even at contact.
+/// Grind strength in `0..=1` for one side ray: 1 touching an obstacle,
+/// falling hyperbolically (`1/(d + GRIND_OFFSET)`, Armagetron's wall
+/// acceleration profile) to 0 at `GRIND_RANGE`. The two sides are summed by
+/// the caller. Rules:
+/// - the rider's own trail counts, but only from `OWN_GRIND_MIN_FROM_HEAD`
+///   segments behind the head, so a U-turn's outbound leg (one step away)
+///   is not a free farm while a spiral's previous loop still pays;
+/// - arena walls pay `ARENA_WALL_GRIND` of the full strength.
 fn grind_proximity(
     obstacles: &[Segment],
     owner: Option<u64>,
@@ -144,9 +146,14 @@ fn grind_proximity(
     direction: Vec2,
 ) -> f32 {
     contacts(obstacles, owner, origin, direction, true)
-        .filter(|(_, segment)| owner.is_none() || segment.owner != owner)
+        .filter(|(_, segment)| {
+            owner.is_none()
+                || segment.owner != owner
+                || segment.from_head >= OWN_GRIND_MIN_FROM_HEAD
+        })
         .map(|(hit, segment)| {
-            let strength = (1.0 - hit / SLIDE_DISTANCE).max(0.0);
+            let falloff = 1.0 / (hit + GRIND_OFFSET) - 1.0 / (GRIND_RANGE + GRIND_OFFSET);
+            let strength = (falloff * GRIND_NORM).max(0.0);
             match segment.owner {
                 Some(_) => strength,
                 None => strength * ARENA_WALL_GRIND,
@@ -179,6 +186,11 @@ pub struct StepOutcome {
     /// the rider's own bits = its own trail). Rubber only drains against this
     /// contact, so on a death it is the cause. Meaningless when nothing is ahead.
     pub front_owner: Option<u64>,
+    /// Cruise multiplier the tick was driven at (after the turn penalty) and
+    /// the distance it would have covered unobstructed: what a crossing stop
+    /// needs to price the distance it takes away.
+    pub cruise: f32,
+    pub normal_step: f32,
 }
 
 /// Turn → sense → move → rubber for one rider against immutable start-of-tick
@@ -204,10 +216,12 @@ pub(crate) fn step_rider(
         PlayerInput::TurnLeft | PlayerInput::TurnLeftFor(_) => {
             trail.turn(position);
             direction = rotate_left(direction);
+            target_speed = turn_penalty(target_speed);
         }
         PlayerInput::TurnRight | PlayerInput::TurnRightFor(_) => {
             trail.turn(position);
             direction = rotate_right(direction);
+            target_speed = turn_penalty(target_speed);
         }
     }
     let origin = position;
@@ -215,23 +229,26 @@ pub(crate) fn step_rider(
     let (front, front_owner) = nearest_contact(obstacles, owner, origin, heading);
     let cruise = target_speed;
     let normal_step = BASE_SPEED * cruise * TICK_SECS;
-    let colliding = front < SLOW_DOWN_DISTANCE;
+    // The rubber zone is as wide as the step it would cancel, at least
+    // `SLOW_DOWN_DISTANCE`: in it the rider closes a fixed fraction of the gap
+    // per tick (exponential approach) and pays rubber for the lost distance.
+    let zone = SLOW_DOWN_DISTANCE.max(normal_step / RUBBER_APPROACH);
+    let colliding = front < zone;
+    let reach = (front - EPSILON).max(0.0);
     let step = if colliding {
-        let fraction = front / SLOW_DOWN_DISTANCE;
-        let ratio = fraction * fraction;
-        rubber -= crash_drain(cruise);
-        // Zeno decay may never exceed cruise speed: at the zone edge it would
-        // otherwise lurch the rider forward (~12 u in one tick at base speed).
-        (front * ratio)
-            .min(normal_step)
-            .min((front - EPSILON).max(0.0))
+        // Swept sensing: even arbitrarily high speeds cannot tunnel.
+        normal_step.min(front * RUBBER_APPROACH).min(reach)
     } else {
-        rubber = (rubber + RUBBER_REGEN).min(BASE_RUBBER);
-        // Swept sensing: even arbitrarily high slide speeds cannot tunnel.
-        normal_step.min((front - EPSILON).max(0.0))
+        normal_step.min(reach)
     };
-    rubber = rubber.clamp(0.0, BASE_RUBBER);
-    if rubber == 0.0 {
+    let used = if colliding {
+        rubber_cost(cruise, normal_step - step)
+    } else {
+        0.0
+    };
+    // Regen runs every tick, grinding included; the drain is applied after it.
+    rubber = rubber + (BASE_RUBBER - rubber) * RUBBER_REGEN - used;
+    if rubber <= 0.0 {
         return StepOutcome {
             position,
             direction,
@@ -243,22 +260,23 @@ pub(crate) fn step_rider(
             colliding: false,
             died: true,
             front_owner,
+            cruise,
+            normal_step,
         };
     }
-    // Inertia: cruise speed chases a grind-dependent goal at bounded rates.
-    // Everything here is + - * / only, so it is bit-identical across platforms.
-    let grind = grind_proximity(obstacles, owner, origin, rotate_left(heading)).max(
-        grind_proximity(obstacles, owner, origin, rotate_right(heading)),
-    );
+    rubber = rubber.min(BASE_RUBBER);
+    // Inertia: both sides' grind accelerates the cruise speed, which fades
+    // exponentially toward 1.0. Everything here is + - * / only, so it is
+    // bit-identical across platforms.
+    let grind = grind_proximity(obstacles, owner, origin, rotate_left(heading))
+        + grind_proximity(obstacles, owner, origin, rotate_right(heading));
     let sliding = grind > 0.0;
-    let goal = 1.0 + (MAX_SPEED_MULT - 1.0) * grind;
-    target_speed = if colliding {
-        crash_brake(cruise)
-    } else if cruise < goal {
-        (cruise + SLIDE_ACCEL).min(goal)
+    let rate = if cruise < 1.0 {
+        SPEED_RECOVER
     } else {
-        (cruise - COAST_DECEL).max(goal)
+        SPEED_DECAY
     };
+    target_speed = (cruise + GRIND_ACCEL * grind + (1.0 - cruise) * rate).min(MAX_SPEED_MULT);
     let speed = step / (BASE_SPEED * TICK_SECS);
     let position = position + heading * step;
     trail.advance(position, TRAIL_MAX_LENGTH);
@@ -273,6 +291,8 @@ pub(crate) fn step_rider(
         colliding,
         died: false,
         front_owner,
+        cruise,
+        normal_step,
     }
 }
 
@@ -353,18 +373,20 @@ pub fn step_riders(riders: &mut [RiderStep], obstacles: &[Segment]) -> Vec<StepO
             continue;
         };
         // Being stopped is a collision: it costs rubber like facing a wall,
-        // or two riders tied at a crossing would wait there forever.
+        // or two riders tied at a crossing would wait there forever. The cost
+        // is recomputed from the start-of-tick rubber so it is charged once.
         let (rider, outcome, m) = (&mut riders[i], &mut outcomes[i], moves[i]);
-        let (target_speed, rubber) = crash(rider.state.target_speed, rider.state.rubber);
-        if rubber == 0.0 {
+        let start = rider.state.rubber;
+        let rubber = start + (BASE_RUBBER - start) * RUBBER_REGEN
+            - rubber_cost(outcome.cruise, outcome.normal_step - length);
+        if rubber <= 0.0 {
             outcome.died = true;
             continue;
         }
         outcome.position = m.from + m.direction * length;
         outcome.step = length;
         outcome.speed = length / (BASE_SPEED * TICK_SECS);
-        outcome.target_speed = target_speed;
-        outcome.rubber = rubber;
+        outcome.rubber = rubber.min(BASE_RUBBER);
         outcome.sliding = false;
         outcome.colliding = true;
         rider.trail.advance(outcome.position, TRAIL_MAX_LENGTH);
@@ -372,25 +394,17 @@ pub fn step_riders(riders: &mut [RiderStep], obstacles: &[Segment]) -> Vec<StepO
     outcomes
 }
 
-/// Rubber one tick stuck facing an obstacle costs at cruise multiplier `cruise`.
-fn crash_drain(cruise: f32) -> f32 {
-    let load = 1.0 + cruise;
-    RUBBER_DRAIN * load * load * load
+/// Rubber lost for `lost` units of distance not travelled at cruise
+/// multiplier `cruise`. Faster riders pay less per unit (`2 / (1 + cruise)`)
+/// but lose more units, so they still die sooner.
+fn rubber_cost(cruise: f32, lost: f32) -> f32 {
+    lost * RUBBER_COST * 2.0 / (1.0 + cruise)
 }
 
-/// Cruise multiplier after one tick stuck facing an obstacle.
-fn crash_brake(cruise: f32) -> f32 {
-    (cruise - CRASH_BRAKE).max(1.0)
-}
-
-/// `(target_speed, rubber)` for a rider that entered the tick with `cruise`
-/// and `rubber` and was stopped by `resolve_crossings`: the same cost as a
-/// tick spent facing an obstacle, replacing whatever `step_rider` decided.
-fn crash(cruise: f32, rubber: f32) -> (f32, f32) {
-    (
-        crash_brake(cruise),
-        (rubber - crash_drain(cruise)).clamp(0.0, BASE_RUBBER),
-    )
+/// Cruise multiplier after an executed turn: x`TURN_SPEED_FACTOR`, but never
+/// pushed below `MIN_SPEED_MULT` (a speed already lower stays as it is).
+fn turn_penalty(cruise: f32) -> f32 {
+    (cruise * TURN_SPEED_FACTOR).max(cruise.min(MIN_SPEED_MULT))
 }
 
 /// One rider's straight movement during a tick: `length` units along
