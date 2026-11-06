@@ -18,12 +18,15 @@ export function newHumanRating(accountId: string, displayName: string): RatingDo
   };
 }
 
-/** A bot identity (`bot:<personality>:<knob fingerprint>`) starts like any newcomer. */
+/** Bot ids are `bot:<name>:<fingerprint>`; the leaderboard shows the name. */
+const botDisplayName = (id: string): string => id.split(':')[1] || id;
+
+/** A bot identity starts like any newcomer. */
 export function newBotRating(id: string): RatingDoc {
   return {
     id,
     kind: 'bot',
-    displayName: id.slice('bot:'.length).replace(':', ' '),
+    displayName: botDisplayName(id),
     rating: RATING_CONFIG.startRating,
     ratedEvents: 0,
     eligible: false,

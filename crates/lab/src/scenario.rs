@@ -191,7 +191,7 @@ impl RiderSpec {
         };
         let mut knobs = Difficulty(self.difficulty).knobs(personality);
         self.knobs.apply(&mut knobs);
-        Ok(Some(BotBuild::new(personality, knobs)))
+        Ok(Some(BotBuild::new(self.name.clone(), personality, knobs)))
     }
 
     /// Parse `"<tick> <action>"` entries into one action per tick. The sim

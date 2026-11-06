@@ -82,15 +82,15 @@ question). The rules above do not change if it is added.
 
 ### Bots
 
-- A bot is its personality plus a set of named policy knobs (reaction,
-  look-ahead, mistake rate, aggression, caution, ...). Its rating identity is
-  `bot:<personality>:<knob fingerprint>`: **one shared rating per identity**,
-  however many instances run, and a retuned knob is a new bot with a new rating.
+- A bot is a hardcoded build: a name, a personality and a set of named policy
+  knobs (reaction, look-ahead, mistake rate, aggression, caution, ...). The name
+  is its display name in game and on the leaderboard.
+- Its rating identity is `bot:<name>:<fingerprint of personality and knobs>`:
+  **one shared rating per identity**, however many instances run. Renaming or
+  retuning a build makes it a new bot with a new rating.
 - Bots carry no declared skill. A new bot identity starts at the same rating as
   a newcomer (1500); the pool measures where it really belongs. Bots are chosen
   for a lobby by measured rating.
-- A bot's display name is drawn at random from a list and is unique among the
-  riders in the room; it carries no information about the build.
 - Only results from **official** servers move bot ratings.
 
 ## Trust

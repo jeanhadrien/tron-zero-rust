@@ -1,6 +1,6 @@
 //! Per-bot policy configuration.
 //!
-//! A bot is its personality plus a set of named policy knobs (reaction,
+//! A bot is a name, a personality and a set of named policy knobs (reaction,
 //! horizon, mistake rate, weighting). Physics is never touched. The knobs are
 //! the bot's whole definition; how good it *is* is measured by the matchmaking
 //! rating, never declared here. [`Difficulty`] is only a convenience for
@@ -54,9 +54,9 @@ pub struct BotKnobs {
 }
 
 impl BotKnobs {
-    /// Stable 32-bit FNV-1a hash of every knob. Two builds with the same
-    /// personality and the same knobs are the same bot, wherever they run.
-    fn fingerprint(&self) -> u32 {
+    /// Stable 32-bit FNV-1a hash of the personality and every knob. Two builds
+    /// with the same personality and knobs are the same bot, wherever they run.
+    fn fingerprint(&self, personality: Personality) -> u32 {
         let words = [
             self.reaction_ticks,
             self.lookahead_ticks,
@@ -67,9 +67,10 @@ impl BotKnobs {
             self.bfs_budget,
             self.strategy_mix.to_bits(),
         ];
-        words
-            .iter()
-            .flat_map(|word| word.to_le_bytes())
+        personality
+            .label()
+            .bytes()
+            .chain(words.iter().flat_map(|word| word.to_le_bytes()))
             .fold(0x811c_9dc5_u32, |hash, byte| {
                 (hash ^ u32::from(byte)).wrapping_mul(0x0100_0193)
             })
@@ -87,31 +88,42 @@ impl BotKnobs {
     }
 }
 
-/// What defines a bot: a personality and its knobs. Nothing else.
+/// What defines a bot: a name, a personality and its knobs. The name is both
+/// its display name in game and its label on the leaderboard.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct BotBuild {
+    pub name: String,
     pub personality: Personality,
     pub knobs: BotKnobs,
 }
 
 impl BotBuild {
-    pub fn new(personality: Personality, knobs: BotKnobs) -> Self {
-        Self { personality, knobs }
+    pub fn new(name: impl Into<String>, personality: Personality, knobs: BotKnobs) -> Self {
+        Self {
+            name: name.into(),
+            personality,
+            knobs,
+        }
     }
 
     /// A build whose knobs come from a point on the authoring curve.
-    pub fn from_difficulty(personality: Personality, difficulty: Difficulty) -> Self {
-        Self::new(personality, difficulty.knobs(personality))
+    pub fn from_difficulty(
+        name: impl Into<String>,
+        personality: Personality,
+        difficulty: Difficulty,
+    ) -> Self {
+        Self::new(name, personality, difficulty.knobs(personality))
     }
 
     /// Stable identity of this build in the rating pool:
-    /// `bot:<personality>:<knob fingerprint>`. Every instance of the build
-    /// shares one rating, which starts like any newcomer's and is measured.
+    /// `bot:<name>:<fingerprint of personality and knobs>`. Every instance of
+    /// the build shares one rating, which starts like any newcomer's and is
+    /// measured. Renaming or retuning a build makes it a new rated bot.
     pub fn rating_id(&self) -> String {
         format!(
             "bot:{}:{:08x}",
-            self.personality.label(),
-            self.knobs.fingerprint()
+            self.name.replace(':', "-"),
+            self.knobs.fingerprint(self.personality)
         )
     }
 }
@@ -253,14 +265,16 @@ fn interp(values: &[f32; 5], level: u32) -> f32 {
 /// weak bot is not farmed.
 pub fn default_builds() -> Vec<BotBuild> {
     [
-        (Personality::Survivalist, 1000),
-        (Personality::Adaptive, 1500),
-        (Personality::Territorialist, 2000),
-        (Personality::Duelist, 2250),
-        (Personality::Trapper, 2500),
+        ("Bastion", Personality::Survivalist, 1000),
+        ("Chameleon", Personality::Adaptive, 1500),
+        ("Warden", Personality::Territorialist, 2000),
+        ("Rapier", Personality::Duelist, 2250),
+        ("Sentinelle", Personality::Trapper, 2500),
     ]
     .into_iter()
-    .map(|(personality, level)| BotBuild::from_difficulty(personality, Difficulty(level)))
+    .map(|(name, personality, level)| {
+        BotBuild::from_difficulty(name, personality, Difficulty(level))
+    })
     .collect()
 }
 
@@ -269,11 +283,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn rating_id_follows_personality_and_knobs() {
-        let build = BotBuild::from_difficulty(Personality::Trapper, Difficulty(2500));
-        let same = BotBuild::from_difficulty(Personality::Trapper, Difficulty(2500));
+    fn rating_id_follows_name_personality_and_knobs() {
+        let build = BotBuild::from_difficulty("Sentinelle", Personality::Trapper, Difficulty(2500));
+        let same = BotBuild::from_difficulty("Sentinelle", Personality::Trapper, Difficulty(2500));
         assert_eq!(build.rating_id(), same.rating_id());
-        assert!(build.rating_id().starts_with("bot:trapper:"));
+        assert!(build.rating_id().starts_with("bot:Sentinelle:"));
+
+        let other_personality =
+            BotBuild::from_difficulty("Sentinelle", Personality::Duelist, Difficulty(2500));
+        assert_ne!(build.rating_id(), other_personality.rating_id());
 
         let mut tweaked = build.clone();
         tweaked.knobs.reaction_ticks += 1;
@@ -281,10 +299,12 @@ mod tests {
     }
 
     #[test]
-    fn roster_builds_have_distinct_identities() {
-        let ids: std::collections::HashSet<_> =
-            default_builds().iter().map(BotBuild::rating_id).collect();
-        assert_eq!(ids.len(), default_builds().len());
+    fn roster_builds_have_distinct_names_and_identities() {
+        let builds = default_builds();
+        let ids: std::collections::HashSet<_> = builds.iter().map(BotBuild::rating_id).collect();
+        let names: std::collections::HashSet<_> = builds.iter().map(|b| &b.name).collect();
+        assert_eq!(ids.len(), builds.len());
+        assert_eq!(names.len(), builds.len());
     }
 
     #[test]

@@ -6,9 +6,6 @@
 //! and always writes every alive bot's `ActionState`, caching between epochs.
 
 pub(crate) mod debug;
-mod names;
-
-use std::collections::HashSet;
 
 use bevy::prelude::*;
 use bots::Brain;
@@ -18,7 +15,6 @@ use bots::schedule::{Tier, should_redecide};
 use bots::strategy::{Action, strategy_for};
 use bots::world::WorldSnapshotBuilder;
 use lightyear::prelude::*;
-use names::pick_name;
 use shared::{
     ActionState, Direction, DisplayName, IsAlive, Player, PlayerColor, PlayerInput, Position,
     SpeedMult, Trail, Velocity,
@@ -55,8 +51,6 @@ pub struct BotManager {
 struct BotSlot {
     entity: Option<Entity>,
     bot_number: u32,
-    /// Display name, kept across respawns and redrawn when the slot cycles.
-    name: String,
     build_index: usize,
     ticks_alive: u32,
     respawn_ticks: Option<u32>,
@@ -65,22 +59,15 @@ struct BotSlot {
 /// Spawn the heterogeneous roster from `default_builds`.
 pub fn setup_bots(mut commands: Commands) {
     let builds = default_builds();
-    let mut taken = HashSet::new();
     let slots = builds
         .iter()
         .enumerate()
-        .map(|(index, _)| {
-            let bot_number = (index + 1) as u32;
-            let name = pick_name(&taken, bot_number);
-            taken.insert(name.to_lowercase());
-            BotSlot {
-                entity: None,
-                bot_number,
-                name,
-                build_index: index,
-                ticks_alive: 0,
-                respawn_ticks: None,
-            }
+        .map(|(index, _)| BotSlot {
+            entity: None,
+            bot_number: (index + 1) as u32,
+            build_index: index,
+            ticks_alive: 0,
+            respawn_ticks: None,
         })
         .collect();
     let next_bot_number = (builds.len() + 1) as u32;
@@ -93,8 +80,7 @@ pub fn setup_bots(mut commands: Commands) {
     for index in 0..manager.slots.len() {
         let build = manager.builds[manager.slots[index].build_index].clone();
         let number = manager.slots[index].bot_number;
-        let name = manager.slots[index].name.clone();
-        let entity = spawn_bot_entity(&mut commands, number, &name, &build, index);
+        let entity = spawn_bot_entity(&mut commands, number, &build, index);
         manager.slots[index].entity = Some(entity);
     }
     commands.insert_resource(manager);
@@ -214,7 +200,6 @@ pub fn bot_spawner(
     mut commands: Commands,
     mut manager: ResMut<BotManager>,
     bots: Query<(Entity, &IsAlive), (With<BotBrain>, With<Player>)>,
-    humans: Query<&DisplayName, (With<Player>, Without<BotBrain>)>,
 ) {
     let BotManager {
         slots,
@@ -224,46 +209,25 @@ pub fn bot_spawner(
     } = &mut *manager;
     let mut number = *next_bot_number;
 
-    for index in 0..slots.len() {
-        slots[index].ticks_alive += 1;
+    for (index, slot) in slots.iter_mut().enumerate() {
+        slot.ticks_alive += 1;
 
-        // Full cycle: despawn old entity, replace with a fresh bot number and
-        // a fresh name that no other bot or human is using.
-        if slots[index].ticks_alive >= CYCLE_DURATION_TICKS {
-            if let Some(entity) = slots[index].entity {
+        // Full cycle: despawn old entity, replace with a fresh bot number.
+        if slot.ticks_alive >= CYCLE_DURATION_TICKS {
+            if let Some(entity) = slot.entity {
                 commands.entity(entity).despawn();
             }
             let assigned = number;
             number += 1;
-            let taken: HashSet<String> = humans
-                .iter()
-                .map(|name| name.0.to_lowercase())
-                .chain(
-                    slots
-                        .iter()
-                        .enumerate()
-                        .filter(|(other, _)| *other != index)
-                        .map(|(_, other)| other.name.to_lowercase()),
-                )
-                .collect();
-            let name = pick_name(&taken, assigned);
-            let slot = &mut slots[index];
-            let entity = spawn_bot_entity(
-                &mut commands,
-                assigned,
-                &name,
-                &builds[slot.build_index],
-                index,
-            );
+            let entity =
+                spawn_bot_entity(&mut commands, assigned, &builds[slot.build_index], index);
             slot.entity = Some(entity);
             slot.bot_number = assigned;
-            slot.name = name;
             slot.ticks_alive = 0;
             slot.respawn_ticks = None;
             continue;
         }
 
-        let slot = &mut slots[index];
         let Some(entity) = slot.entity else {
             continue;
         };
@@ -280,7 +244,6 @@ pub fn bot_spawner(
                 let new_entity = spawn_bot_entity(
                     &mut commands,
                     slot.bot_number,
-                    &slot.name,
                     &builds[slot.build_index],
                     index,
                 );
@@ -300,7 +263,6 @@ pub fn bot_spawner(
 fn spawn_bot_entity(
     commands: &mut Commands,
     bot_number: u32,
-    name: &str,
     build: &BotBuild,
     slot_index: usize,
 ) -> Entity {
@@ -315,7 +277,7 @@ fn spawn_bot_entity(
                 slot_index,
             },
             shared::PlayerId(format!("bot-{}", bot_number)),
-            DisplayName(name.to_owned()),
+            DisplayName(build.name.clone()),
             Position(pos),
             Direction(dir),
             Velocity(Vec2::ZERO),
