@@ -199,7 +199,7 @@ fn rubber_regen_runs_while_grinding_and_is_proportional_to_what_is_left() {
 
 /// Grind strength of a trail `d` units to the side, as the sim defines it.
 fn strength_at(d: f32) -> f32 {
-    (1.0 / (d + GRIND_OFFSET) - 1.0 / (GRIND_RANGE + GRIND_OFFSET)) * GRIND_NORM
+    crate::physics::grind_strength(d)
 }
 
 #[test]

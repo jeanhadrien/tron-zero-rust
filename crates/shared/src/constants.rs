@@ -36,9 +36,8 @@ pub const GRIND_RANGE: f32 = 72.0;
 /// Offset of the hyperbolic grind falloff `1/(d + GRIND_OFFSET)`: smaller is
 /// more convex (touching pays much more than hovering).
 pub const GRIND_OFFSET: f32 = 24.0;
-/// `1 / (1/GRIND_OFFSET - 1/(GRIND_RANGE + GRIND_OFFSET))`, so a grind of
-/// `(1/(d + OFFSET) - 1/(RANGE + OFFSET)) * NORM` is 1 touching, 0 at range.
-pub const GRIND_NORM: f32 = 32.0;
+/// Scales `1/(d + OFFSET) - 1/(RANGE + OFFSET)` to 1 touching (0 at range).
+pub const GRIND_NORM: f32 = 1.0 / (1.0 / GRIND_OFFSET - 1.0 / (GRIND_RANGE + GRIND_OFFSET));
 /// Boundary walls pay this fraction of the grind strength a trail would at
 /// the same distance, so one side at contact tops out at
 /// `1 + GRIND_ACCEL_PER_SEC / SPEED_DECAY_PER_SEC * ARENA_WALL_GRIND`.

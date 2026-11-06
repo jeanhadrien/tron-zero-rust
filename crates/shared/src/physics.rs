@@ -67,8 +67,9 @@ fn contacts(
         if own && segment.from_head == 0 && (side || direction.dot(segment.b - segment.a) >= 0.0) {
             return None;
         }
-        // The newest corner is a departure junction, not a sliding wall.
-        if own && side && segment.from_head == 1 {
+        // The newest legs are a departure junction and a U-turn's outbound
+        // leg, not sliding walls: only older own legs may be ground.
+        if own && side && segment.from_head < OWN_GRIND_MIN_FROM_HEAD {
             return None;
         }
         let hit = ray_hit(origin, direction, segment.a, segment.b)?;
@@ -131,13 +132,33 @@ fn nearest_contact(
     best
 }
 
+/// Grind strength in `0..=1` of an obstacle `hit` units to the side: 1 at
+/// contact, 1/3 at `GRIND_OFFSET`, 0 from `GRIND_RANGE` on.
+pub fn grind_strength(hit: f32) -> f32 {
+    if hit >= GRIND_RANGE {
+        return 0.0;
+    }
+    (1.0 / (hit + GRIND_OFFSET) - 1.0 / (GRIND_RANGE + GRIND_OFFSET)) * GRIND_NORM
+}
+
+/// Distance the rubber zone in front of a rider cruising at `cruise` reaches:
+/// as wide as the step it would cancel, at least `SLOW_DOWN_DISTANCE`.
+pub fn rubber_zone(cruise: f32) -> f32 {
+    SLOW_DOWN_DISTANCE.max(normal_step(cruise) / RUBBER_APPROACH)
+}
+
+/// Distance a rider cruising at `cruise` covers in one unobstructed tick.
+pub fn normal_step(cruise: f32) -> f32 {
+    BASE_SPEED * cruise * TICK_SECS
+}
+
 /// Grind strength in `0..=1` for one side ray: 1 touching an obstacle,
 /// falling hyperbolically (`1/(d + GRIND_OFFSET)`, Armagetron's wall
 /// acceleration profile) to 0 at `GRIND_RANGE`. The two sides are summed by
 /// the caller. Rules:
 /// - the rider's own trail counts, but only from `OWN_GRIND_MIN_FROM_HEAD`
-///   segments behind the head, so a U-turn's outbound leg (one step away)
-///   is not a free farm while a spiral's previous loop still pays;
+///   segments behind the head (see `contacts`), so a U-turn's outbound leg is
+///   not a free farm while a spiral's previous loop still pays;
 /// - arena walls pay `ARENA_WALL_GRIND` of the full strength.
 fn grind_proximity(
     obstacles: &[Segment],
@@ -146,14 +167,8 @@ fn grind_proximity(
     direction: Vec2,
 ) -> f32 {
     contacts(obstacles, owner, origin, direction, true)
-        .filter(|(_, segment)| {
-            owner.is_none()
-                || segment.owner != owner
-                || segment.from_head >= OWN_GRIND_MIN_FROM_HEAD
-        })
         .map(|(hit, segment)| {
-            let falloff = 1.0 / (hit + GRIND_OFFSET) - 1.0 / (GRIND_RANGE + GRIND_OFFSET);
-            let strength = (falloff * GRIND_NORM).max(0.0);
+            let strength = grind_strength(hit);
             match segment.owner {
                 Some(_) => strength,
                 None => strength * ARENA_WALL_GRIND,
@@ -186,11 +201,9 @@ pub struct StepOutcome {
     /// the rider's own bits = its own trail). Rubber only drains against this
     /// contact, so on a death it is the cause. Meaningless when nothing is ahead.
     pub front_owner: Option<u64>,
-    /// Cruise multiplier the tick was driven at (after the turn penalty) and
-    /// the distance it would have covered unobstructed: what a crossing stop
-    /// needs to price the distance it takes away.
+    /// Cruise multiplier the tick was driven at (after the turn penalty): what
+    /// a crossing stop needs to price the distance it takes away.
     pub cruise: f32,
-    pub normal_step: f32,
 }
 
 /// Turn → sense → move → rubber for one rider against immutable start-of-tick
@@ -206,7 +219,7 @@ pub(crate) fn step_rider(
         position,
         mut direction,
         mut target_speed,
-        mut rubber,
+        rubber,
     } = state;
     if trail.0.is_empty() {
         *trail = Trail::new(position);
@@ -228,27 +241,19 @@ pub(crate) fn step_rider(
     let heading = direction;
     let (front, front_owner) = nearest_contact(obstacles, owner, origin, heading);
     let cruise = target_speed;
-    let normal_step = BASE_SPEED * cruise * TICK_SECS;
-    // The rubber zone is as wide as the step it would cancel, at least
-    // `SLOW_DOWN_DISTANCE`: in it the rider closes a fixed fraction of the gap
-    // per tick (exponential approach) and pays rubber for the lost distance.
-    let zone = SLOW_DOWN_DISTANCE.max(normal_step / RUBBER_APPROACH);
-    let colliding = front < zone;
+    let normal = normal_step(cruise);
+    // In the rubber zone the rider closes a fixed fraction of the gap per tick
+    // (exponential approach) and pays rubber for the distance it loses.
+    let colliding = front < rubber_zone(cruise);
     let reach = (front - EPSILON).max(0.0);
-    let step = if colliding {
-        // Swept sensing: even arbitrarily high speeds cannot tunnel.
-        normal_step.min(front * RUBBER_APPROACH).min(reach)
+    // Swept sensing: even arbitrarily high speeds cannot tunnel.
+    let (step, lost) = if colliding {
+        let step = normal.min(front * RUBBER_APPROACH).min(reach);
+        (step, normal - step)
     } else {
-        normal_step.min(reach)
+        (normal.min(reach), 0.0)
     };
-    let used = if colliding {
-        rubber_cost(cruise, normal_step - step)
-    } else {
-        0.0
-    };
-    // Regen runs every tick, grinding included; the drain is applied after it.
-    rubber = rubber_regen(rubber) - used;
-    if rubber <= 0.0 {
+    let Some(rubber) = settle_rubber(rubber, cruise, lost) else {
         return StepOutcome {
             position,
             direction,
@@ -261,10 +266,8 @@ pub(crate) fn step_rider(
             died: true,
             front_owner,
             cruise,
-            normal_step,
         };
-    }
-    rubber = rubber.min(BASE_RUBBER);
+    };
     // Inertia: both sides' grind accelerates the cruise speed, which fades
     // exponentially toward 1.0. Everything here is + - * / only, so it is
     // bit-identical across platforms.
@@ -292,7 +295,6 @@ pub(crate) fn step_rider(
         died: false,
         front_owner,
         cruise,
-        normal_step,
     }
 }
 
@@ -376,17 +378,15 @@ pub fn step_riders(riders: &mut [RiderStep], obstacles: &[Segment]) -> Vec<StepO
         // or two riders tied at a crossing would wait there forever. The cost
         // is recomputed from the start-of-tick rubber so it is charged once.
         let (rider, outcome, m) = (&mut riders[i], &mut outcomes[i], moves[i]);
-        let start = rider.state.rubber;
-        let rubber =
-            rubber_regen(start) - rubber_cost(outcome.cruise, outcome.normal_step - length);
-        if rubber <= 0.0 {
+        let lost = normal_step(outcome.cruise) - length;
+        let Some(rubber) = settle_rubber(rider.state.rubber, outcome.cruise, lost) else {
             outcome.died = true;
             continue;
-        }
+        };
         outcome.position = m.from + m.direction * length;
         outcome.step = length;
         outcome.speed = length / (BASE_SPEED * TICK_SECS);
-        outcome.rubber = rubber.min(BASE_RUBBER);
+        outcome.rubber = rubber;
         outcome.sliding = false;
         outcome.colliding = true;
         rider.trail.advance(outcome.position, TRAIL_MAX_LENGTH);
@@ -394,11 +394,14 @@ pub fn step_riders(riders: &mut [RiderStep], obstacles: &[Segment]) -> Vec<StepO
     outcomes
 }
 
-/// Rubber after one tick of regen: proportional to what is left (plus a
-/// floor), so heavily spent rubber recovers slowly. May exceed `BASE_RUBBER`
-/// before the caller's clamp.
-fn rubber_regen(rubber: f32) -> f32 {
-    rubber + (rubber + RUBBER_REGEN_FLOOR) * RUBBER_REGEN
+/// Rubber after one tick that lost `lost` units of distance, or `None` when it
+/// runs out. Regen runs every tick, grinding included, before the drain: it is
+/// proportional to what is left (plus a floor), so heavily spent rubber
+/// recovers slowly.
+fn settle_rubber(rubber: f32, cruise: f32, lost: f32) -> Option<f32> {
+    let regen = rubber + (rubber + RUBBER_REGEN_FLOOR) * RUBBER_REGEN;
+    let left = regen - rubber_cost(cruise, lost);
+    (left > 0.0).then_some(left.min(BASE_RUBBER))
 }
 
 /// Rubber lost for `lost` units of distance not travelled at cruise

@@ -155,14 +155,12 @@ fn run_and_check(walls: Vec<[f32; 4]>, plans: Vec<RiderPlan>) -> Result<(), Test
             let position = world.get::<Position>(entity).unwrap().0;
             let direction = world.get::<Direction>(entity).unwrap().0;
             let speed = world.get::<SpeedMult>(entity).unwrap().0;
-            let colliding = world.get::<IsColliding>(entity).unwrap().0;
             prop_assert!(
                 CARDINALS.contains(&direction),
                 "tick {tick}: heading {direction}"
             );
             // Neither the zone's exponential approach nor the turn penalty can
             // push a step above the cruise speed the tick started with.
-            let _ = colliding;
             prop_assert!(
                 speed <= before.target_speed + 1e-4,
                 "tick {tick}: speed {speed} above target {}",
