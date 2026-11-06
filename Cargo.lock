@@ -4937,8 +4937,6 @@ dependencies = [
 [[package]]
 name = "lightyear_transport"
 version = "0.28.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f5a2263fb8894355217420cb49a0a25fc74aaa5638dbf58e519bb2660c91ae83"
 dependencies = [
  "bevy_app",
  "bevy_ecs",
@@ -8335,9 +8333,9 @@ dependencies = [
 
 [[package]]
 name = "web-sys-stream-utils"
-version = "0.2.5"
+version = "0.2.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "90a913a6d558dbf153010d8add2f27bf5964427aa395299b57a7680a5e971cc7"
+checksum = "90af4c6d9515017d34626c0a1e5570cf44ca5f99dde4b88a406c033d8d9bba94"
 dependencies = [
  "js-sys",
  "wasm-bindgen",
@@ -9085,8 +9083,6 @@ checksum = "647e17b66bd49bfebe8fe73d327358432f298bb41227600f47fb07fa4f7c1eef"
 [[package]]
 name = "xwt-web"
 version = "0.15.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f80997b90d89451537f2866130f52b1e4be4d29cfadf9183081b24542f1abdf0"
 dependencies = [
  "js-sys",
  "thiserror 2.0.18",
