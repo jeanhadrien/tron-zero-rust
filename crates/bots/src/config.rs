@@ -24,7 +24,7 @@ const STRATEGY_MIX: [f32; 5] = [0.0, 0.25, 0.5, 0.8, 1.0];
 /// Authoring preset: a point on the difficulty curve that expands into a
 /// coherent set of knobs. Not stored on a bot, not rated, never shown; once
 /// expanded, the knobs are the bot.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Difficulty(pub u32);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

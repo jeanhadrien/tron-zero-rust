@@ -164,11 +164,12 @@ Rules around it:
 
 ## Validation
 
-Simulate bots of known `skill` against each other with the same rating rules and
-check that (1) the resulting order matches the skill order and (2) ratings
-converge at the chosen `K`. Use it to tune `K`, the ranked threshold, the
-suicide factor and the bot remap, and to see how large a share suicides take in
-the rating moves.
+Simulate the bot roster against each other in the lab with the same rating
+rules (`crates/lab/validation/ratings.toml`, replayed by
+`server-manager/src/rating/replay.ts`) and check that (1) the measured order
+matches the order the builds were authored in and (2) ratings converge at the
+chosen `K`. Use it to tune `K`, the leaderboard threshold and the suicide
+factor, and to see how large a share suicides take in the rating moves.
 
 ## Out of scope (v1)
 

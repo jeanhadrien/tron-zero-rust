@@ -85,8 +85,8 @@ pub fn draw_players(
 /// Spawn/update one world-space `Text2d` label per rider.
 ///
 /// Local-only: labels are never replicated. Text comes from the replicated
-/// `DisplayName` (server-set; `"Player"` for humans, `{strategy}-{elo} #{N}`
-/// for bots) with a hardcoded `"Player"` fallback while it is missing.
+/// `DisplayName` (server-set; the chosen name for humans, the build's name for
+/// bots) with a hardcoded `"Player"` fallback while it is missing.
 #[allow(clippy::type_complexity)]
 pub fn sync_name_labels(
     mut commands: Commands,
