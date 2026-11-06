@@ -20,7 +20,8 @@ use tracing::trace;
 #[cfg(feature = "trace")]
 use tracing::{Level, instrument};
 
-pub const MAX_PACKET_SIZE: usize = 1200;
+// TRON PATCH: 1024 (was 1200), keep in sync with `packet.rs`.
+pub const MAX_PACKET_SIZE: usize = 1024;
 pub const MAX_UNFRAGMENTED_PAYLOAD_SIZE: usize = FRAGMENT_SIZE;
 
 pub type Payload = Vec<u8>;

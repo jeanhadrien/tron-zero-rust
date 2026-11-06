@@ -61,8 +61,9 @@ impl xwt_core::endpoint::connect::Connecting for Connecting {
         let datagram_read_buffer_size = 65536; // 65k buffers as per spec recommendation
 
         let datagrams = transport.datagrams();
-        let datagram_readable_stream_reader =
-            web_sys_stream_utils::get_reader_byob(datagrams.readable());
+        // TRON PATCH: Firefox's datagram stream is not a byte stream, so a BYOB
+        // reader is refused; fall back to a default reader there.
+        let datagram_readable_stream_reader = DatagramsReader::open(datagrams.readable());
         let datagram_writable_stream_writer =
             web_sys_stream_utils::get_writer(datagrams.writable());
 
@@ -80,6 +81,27 @@ impl xwt_core::endpoint::connect::Connecting for Connecting {
     }
 }
 
+/// TRON PATCH: the reader of incoming datagrams. Chromium offers a byte stream
+/// (BYOB reads into our buffer); Firefox (before 160, and without the
+/// `datagramsReadableType: "bytes"` option) a default stream.
+#[derive(Debug)]
+pub enum DatagramsReader {
+    /// Zero-copy reads into a caller-owned buffer.
+    Byob(web_sys::ReadableStreamByobReader),
+    /// One chunk per datagram, allocated by the browser.
+    Default(web_sys::ReadableStreamDefaultReader),
+}
+
+impl DatagramsReader {
+    /// A BYOB reader when the stream supports it, a default reader otherwise.
+    fn open(stream: web_sys::ReadableStream) -> Self {
+        match web_sys_stream_utils::try_get_reader_byob(stream.clone()) {
+            Ok(reader) => Self::Byob(reader),
+            Err(_) => Self::Default(web_sys_stream_utils::get_reader(stream)),
+        }
+    }
+}
+
 /// Session holds the [`web_wt_sys::WebTransport`] and is responsible for
 /// providing access to the Web API of WebTransport in a way that is portable.
 /// It also holds handles to the datagram reader and writer, as well as
@@ -89,7 +111,7 @@ pub struct Session {
     /// The WebTransport instance.
     pub transport: Rc<web_wt_sys::WebTransport>,
     /// The datagram reader.
-    pub datagram_readable_stream_reader: web_sys::ReadableStreamByobReader,
+    pub datagram_readable_stream_reader: DatagramsReader,
     /// The datagram writer.
     pub datagram_writable_stream_writer: web_sys::WritableStreamDefaultWriter,
     /// The desired size of the datagram read buffer.
@@ -455,15 +477,25 @@ impl Session {
             .unwrap_or_else(|| js_sys::ArrayBuffer::new(self.datagram_read_buffer_size));
         let view = js_sys::Uint8Array::new(&buffer);
 
-        let maybe_view =
-            web_sys_stream_utils::read_byob(&self.datagram_readable_stream_reader, view).await?;
-        let Some(mut view) = maybe_view else {
-            return Err(wasm_bindgen::JsError::new("unexpected stream termination").into());
-        };
+        // TRON PATCH: a default-reader chunk is exactly one datagram and arrives in
+        // its own array, so the pre-allocated buffer is only used by BYOB.
+        let mut view = match &self.datagram_readable_stream_reader {
+            DatagramsReader::Byob(reader) => {
+                web_sys_stream_utils::read_byob(reader, view).await?
+            }
+            DatagramsReader::Default(reader) => {
+                // Hand the unused buffer back so it is not lost.
+                *buffer_guard = Some(buffer);
+                web_sys_stream_utils::read_uint8array(reader).await?
+            }
+        }
+        .ok_or_else(|| wasm_bindgen::JsError::new("unexpected stream termination"))?;
 
         let result = f(&mut view);
 
-        *buffer_guard = Some(view.buffer());
+        if matches!(self.datagram_readable_stream_reader, DatagramsReader::Byob(_)) {
+            *buffer_guard = Some(view.buffer());
+        }
         Ok(result)
     }
 }

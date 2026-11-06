@@ -34,3 +34,8 @@ opt-level = 3
 lto = "fat"
 codegen-units = 1
 panic = "abort"
+
+# Vendored dependency patches (see vendor/README.md).
+[patch.crates-io]
+lightyear_transport = { path = "vendor/lightyear_transport" }
+xwt-web = { path = "vendor/xwt-web" }

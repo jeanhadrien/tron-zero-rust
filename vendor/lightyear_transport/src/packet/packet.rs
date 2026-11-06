@@ -10,7 +10,9 @@ use lightyear_utils::wrapping_id;
 // Internal id that we assign to each packet sent over the network
 wrapping_id!(PacketId);
 
-pub(crate) const MAX_PACKET_SIZE: usize = 1200;
+// TRON PATCH: 1024 (was 1200). Firefox reports `maxDatagramSize` 1024 for WebTransport
+// and silently drops larger datagrams. Changes the wire format (FRAGMENT_SIZE).
+pub(crate) const MAX_PACKET_SIZE: usize = 1024;
 /// Number of bytes written by [`PacketHeader::to_bytes`].
 ///
 /// Keep this in sync with `PacketHeader` because [`FRAGMENT_SIZE`] depends on it.
