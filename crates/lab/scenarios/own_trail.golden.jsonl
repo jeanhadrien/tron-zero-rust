@@ -3,5 +3,5 @@
 {"tick":40,"rider":"a","event":"turn","at":[60.0,57.937],"heading":"-x"}
 {"tick":60,"rider":"a","event":"sample","at":[2.9,57.937],"heading":"-x","speed":0.969,"target":0.97,"rubber":120.0,"sliding":false,"colliding":false,"trail":175.037}
 {"tick":60,"rider":"a","event":"turn","at":[2.9,57.937],"heading":"-y"}
-{"tick":77,"rider":"a","event":"enter_rubber_zone","at":[2.9,7.09],"rubber":119.764}
+{"tick":77,"rider":"a","event":"enter_rubber_zone","at":[2.9,7.09],"rubber":120.0}
 {"tick":103,"rider":"a","event":"death","at":[2.9,0.002],"cause":"own_trail"}

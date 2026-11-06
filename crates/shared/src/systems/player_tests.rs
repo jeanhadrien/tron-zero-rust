@@ -114,7 +114,7 @@ fn wall_rubber_drains_then_death_clears_trail_once() {
     // One unit from the wall the rider closes 28% of the gap and pays for the
     // rest of its 3-unit step.
     let lost = 3.0 - RUBBER_APPROACH;
-    let expected = 10.0 + 110.0 * RUBBER_REGEN - lost * RUBBER_COST;
+    let expected = 10.0 + (10.0 + RUBBER_REGEN_FLOOR) * RUBBER_REGEN - lost * RUBBER_COST;
     near(world.get::<Rubber>(entity).unwrap().0, expected);
     for _ in 0..3 {
         schedule.run(&mut world);
@@ -171,7 +171,7 @@ fn escape_regenerates_rubber_and_keeps_the_speed() {
 }
 
 #[test]
-fn rubber_regen_runs_while_grinding_and_is_proportional_to_what_is_missing() {
+fn rubber_regen_runs_while_grinding_and_is_proportional_to_what_is_left() {
     let (mut world, mut schedule) = setup();
     let entity = cycle(
         &mut world,
@@ -183,14 +183,18 @@ fn rubber_regen_runs_while_grinding_and_is_proportional_to_what_is_missing() {
     assert!(world.get::<IsSliding>(entity).unwrap().0);
     near(
         world.get::<Rubber>(entity).unwrap().0,
-        20.0 + 100.0 * RUBBER_REGEN,
+        20.0 + (20.0 + RUBBER_REGEN_FLOOR) * RUBBER_REGEN,
     );
-    world.get_mut::<Rubber>(entity).unwrap().0 = 110.0;
+    // More left means faster, and the meter never exceeds its maximum.
+    world.get_mut::<Rubber>(entity).unwrap().0 = 100.0;
     schedule.run(&mut world);
     near(
         world.get::<Rubber>(entity).unwrap().0,
-        110.0 + 10.0 * RUBBER_REGEN,
+        100.0 + (100.0 + RUBBER_REGEN_FLOOR) * RUBBER_REGEN,
     );
+    world.get_mut::<Rubber>(entity).unwrap().0 = BASE_RUBBER - 0.01;
+    schedule.run(&mut world);
+    assert_eq!(world.get::<Rubber>(entity).unwrap().0, BASE_RUBBER);
 }
 
 /// Grind strength of a trail `d` units to the side, as the sim defines it.

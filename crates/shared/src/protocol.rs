@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 /// handling, anything in `simulate_players`) are NOT captured by the constant
 /// fingerprint and REQUIRE a manual bump here: otherwise mixed builds connect
 /// fine and then silently mispredict.
-pub const PROTOCOL_VERSION: u32 = 6;
+pub const PROTOCOL_VERSION: u32 = 7;
 
 /// Name and value of every constant the client and server must agree on to
 /// simulate identically (`constants.rs` in full, plus the turn timing rules).
@@ -57,6 +57,7 @@ sim_constants! {
     MIN_SPEED_MULT => MIN_SPEED_MULT.to_bits() as u64,
     RUBBER_APPROACH => RUBBER_APPROACH.to_bits() as u64,
     RUBBER_COST => RUBBER_COST.to_bits() as u64,
+    RUBBER_REGEN_FLOOR => RUBBER_REGEN_FLOOR.to_bits() as u64,
     RUBBER_REGEN_PER_SEC => RUBBER_REGEN_PER_SEC.to_bits() as u64,
     RUBBER_REGEN => RUBBER_REGEN.to_bits() as u64,
     TURN_LATE_WINDOW_TICKS => TURN_LATE_WINDOW_TICKS as u64,

@@ -247,7 +247,7 @@ pub(crate) fn step_rider(
         0.0
     };
     // Regen runs every tick, grinding included; the drain is applied after it.
-    rubber = rubber + (BASE_RUBBER - rubber) * RUBBER_REGEN - used;
+    rubber = rubber_regen(rubber) - used;
     if rubber <= 0.0 {
         return StepOutcome {
             position,
@@ -377,8 +377,8 @@ pub fn step_riders(riders: &mut [RiderStep], obstacles: &[Segment]) -> Vec<StepO
         // is recomputed from the start-of-tick rubber so it is charged once.
         let (rider, outcome, m) = (&mut riders[i], &mut outcomes[i], moves[i]);
         let start = rider.state.rubber;
-        let rubber = start + (BASE_RUBBER - start) * RUBBER_REGEN
-            - rubber_cost(outcome.cruise, outcome.normal_step - length);
+        let rubber =
+            rubber_regen(start) - rubber_cost(outcome.cruise, outcome.normal_step - length);
         if rubber <= 0.0 {
             outcome.died = true;
             continue;
@@ -392,6 +392,13 @@ pub fn step_riders(riders: &mut [RiderStep], obstacles: &[Segment]) -> Vec<StepO
         rider.trail.advance(outcome.position, TRAIL_MAX_LENGTH);
     }
     outcomes
+}
+
+/// Rubber after one tick of regen: proportional to what is left (plus a
+/// floor), so heavily spent rubber recovers slowly. May exceed `BASE_RUBBER`
+/// before the caller's clamp.
+fn rubber_regen(rubber: f32) -> f32 {
+    rubber + (rubber + RUBBER_REGEN_FLOOR) * RUBBER_REGEN
 }
 
 /// Rubber lost for `lost` units of distance not travelled at cruise

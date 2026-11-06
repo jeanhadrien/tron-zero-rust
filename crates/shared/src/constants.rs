@@ -71,7 +71,11 @@ pub const RUBBER_APPROACH: f32 = 0.28;
 /// `2 / (1 + cruise)` so faster riders pay less per unit but still die sooner:
 /// ~22 ticks at base, ~14 at the cap, both after contact.
 pub const RUBBER_COST: f32 = 1.8;
-/// Fraction of the missing rubber regained per second, always (also while
-/// grinding): fast when the meter is empty, slow when nearly full.
-pub const RUBBER_REGEN_PER_SEC: f32 = 0.15;
+/// Rubber regained per second is `(rubber + RUBBER_REGEN_FLOOR) * this`,
+/// always (also while grinding): proportional to what is left, so a burned
+/// rider recovers slowly and a barely scratched one is topped up fast.
+pub const RUBBER_REGEN_PER_SEC: f32 = 0.3;
+/// Keeps a near-empty rider recovering at all (regen is proportional to
+/// `rubber + floor`): 8 rubber is about 1.5 ticks of drain at the wall.
+pub const RUBBER_REGEN_FLOOR: f32 = 8.0;
 pub const RUBBER_REGEN: f32 = RUBBER_REGEN_PER_SEC * TICK_SECS;
