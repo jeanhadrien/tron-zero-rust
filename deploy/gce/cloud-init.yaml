@@ -32,6 +32,7 @@ write_files:
         image="$(md attributes/tron-image)"; \
         if [ -z "$ip" ] || [ -z "$manager" ] || [ -z "$image" ]; then echo "missing instance metadata" >&2; exit 1; fi; \
         exec /usr/bin/docker run --rm --name tron-zero --network host \
+          --memory 1536m --memory-swap 1536m \
           -e ADVERTISED_HOST="$ip" \
           -e SERVER_NAME="$(md attributes/tron-server-name)" \
           -e MAX_PLAYERS="$(md attributes/tron-max-players)" \

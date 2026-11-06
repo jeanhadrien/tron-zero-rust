@@ -279,10 +279,63 @@ pub fn on_client_disconnected(
     }
 }
 
+/// Despawns client links whose transport died underneath us (a browser tab
+/// closed or throttled without a `Leave`). Lightyear only despawns links that
+/// carry `Disconnecting`, and our lease timeout only sees `Connected` links, so
+/// a link that went `Unlinked`/`Disconnected` on its own would otherwise stay
+/// forever, still replicated to by replicon and buffering messages.
+#[allow(clippy::type_complexity)]
+pub fn reap_dead_links(
+    dead: Query<
+        Entity,
+        (
+            With<LinkOf>,
+            Or<(With<Unlinked>, With<Disconnected>)>,
+            Without<lightyear::connection::client::Disconnecting>,
+        ),
+    >,
+    mut commands: Commands,
+) {
+    for link in &dead {
+        // Lightyear may despawn the same link in this `Last` pass.
+        commands.entity(link).try_despawn();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use shared::*;
+
+    #[test]
+    fn dead_links_are_reaped_and_live_ones_are_not() {
+        use bevy::ecs::system::RunSystemOnce;
+        let mut world = World::new();
+        // A relationship whose target is missing removes itself, so use a real one.
+        let server = world.spawn_empty().id();
+        let live = world
+            .spawn((LinkOf { server }, RemoteId(PeerId::Local(1)), Connected))
+            .id();
+        let unlinked = world.spawn((LinkOf { server }, Unlinked::default())).id();
+        let dropped = world
+            .spawn((LinkOf { server }, Disconnected::default()))
+            .id();
+        let closing = world
+            .spawn((
+                LinkOf { server },
+                Disconnected::default(),
+                lightyear::connection::client::Disconnecting,
+            ))
+            .id();
+        world.run_system_once(reap_dead_links).unwrap();
+        assert!(world.get_entity(live).is_ok());
+        assert!(
+            world.get_entity(closing).is_ok(),
+            "Lightyear's own path owns it"
+        );
+        assert!(world.get_entity(unlinked).is_err());
+        assert!(world.get_entity(dropped).is_err());
+    }
 
     fn setup() -> (World, Entity, Entity) {
         let mut world = World::new();

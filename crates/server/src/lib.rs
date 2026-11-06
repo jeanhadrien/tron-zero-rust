@@ -72,6 +72,11 @@ pub fn add_core(app: &mut App, port: u16) {
             session::close_sessions.after(lightyear::prelude::LinkSystems::Send),
         ),
     );
+    // Links that die without a clean leave are never despawned by Lightyear.
+    // Unordered against Lightyear's own `Last` disconnect on purpose: links it
+    // is closing carry `Disconnecting` and are skipped, and the despawn is a
+    // `try_despawn`, so either order is safe.
+    app.add_systems(Last, systems::reap_dead_links);
 
     // `apply_turn_commands` runs after Lightyear's `UpdateActionState`
     // (FixedPreUpdate) and overwrites its native-input fallback for human
