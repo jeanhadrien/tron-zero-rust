@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.10.0](https://github.com/jeanhadrien/tron-zero-rust/compare/client-v0.9.0...client-v0.10.0) (2026-11-06)
+
+
+### Features
+
+* **client:** lighter HUD: frameless meter, no speed readout, no name in badge ([d898e25](https://github.com/jeanhadrien/tron-zero-rust/commit/d898e25d31696bf5d3f075f6e9dc83f55ca354ff))
+* **client:** restructure main menu, leaderboard side panel ([e15211f](https://github.com/jeanhadrien/tron-zero-rust/commit/e15211fa3b0a1da64f398219993720656f62d749))
+
 ## [0.9.0](https://github.com/jeanhadrien/tron-zero-rust/compare/client-v0.8.0...client-v0.9.0) (2026-11-05)
 
 
