@@ -1,9 +1,11 @@
 # Matchmaking and Elo — core design
 
-Status: draft 2026-11-04. Nothing here is implemented. This spec describes the
-**algorithm and the rules** only: what is rated, how ratings move, who may
-report results, where players are placed. Implementation choices (services,
-storage, wire format) are deliberately left out and decided later.
+Status: implemented in `server-manager/src/rating/` (rules, constants in
+`config.ts`), `results.ts` (result intake and trust checks) and `placement.ts`;
+the game server reports eliminations from `crates/server/src/ranked.rs`. Still
+open: the community-server question, attribution beyond trail owner, and the
+validation run. This spec describes the **algorithm and the rules**: what is
+rated, how ratings move, who may report results, where players are placed.
 
 ## Goals
 
@@ -36,8 +38,10 @@ Standard Elo, chess scale.
 - Start rating **1500**. Expected score `E(a, b) = 1 / (1 + 10^((Rb - Ra) / 400))`.
 - The unit of play is the **elimination**. Each one is decided and applied
   immediately.
-- `K` is per player: **16** for the first 100 rated events, **6** afterwards.
-  Both are starting values, to be tuned (see *Validation*).
+- `K` is per rider. Humans: **40** for the first 20 rated events, **16**
+  afterwards (deliberately high for the MVP, so a little play moves far). Bots:
+  **16** for the first 100 events, **6** afterwards, so they stay a stable
+  reference. All are tunable (see *Validation*).
 - Bots and humans use the same formulas.
 - The rating gap matters through `E`: beating a stronger player gains more,
   losing to a weaker one costs more. A server never restricts who can join
@@ -59,7 +63,7 @@ ratings, no information).
 **Suicide.** There is no opponent, so the victim is compared against the
 *field*: `F` = mean rating of the other riders alive at that moment.
 
-- `loss = 0.5 * K_victim * E(victim, F)`. The 0.5 reflects that a suicide is
+- `loss = 0.33 * K_victim * E(victim, F)`. The 0.33 reflects that a suicide is
   weaker evidence than a loss to an opponent.
 - `E` grows with the victim's rating, so **a high-rated player loses more than a
   low-rated one** for the same mistake. This is intended.
@@ -151,7 +155,7 @@ Rules around it:
 ## Leaderboard
 
 - Ordered by rating, descending, including bots.
-- A player appears once they have enough rated events (100, to tune), so
+- A player appears once they have enough rated events (3 for the MVP, to tune), so
   provisional ratings never show.
 - A player's rank is the number of eligible players above them plus one.
 - v1 has no decay and no inactivity filter.

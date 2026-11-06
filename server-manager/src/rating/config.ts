@@ -6,12 +6,20 @@ export const RATING_CONFIG = {
   startRating: 1500,
   /** Elo scale: a 400-point gap means ~10:1 expected odds. */
   scale: 400,
-  /** K while a player is still provisional. */
-  kProvisional: 16,
-  /** K once a player has settled. */
-  kSettled: 6,
-  /** Rated events after which K drops and the leaderboard lists the player. */
-  settledAfterEvents: 100,
+  /** Human K while still provisional. High on purpose (MVP): a little play moves far. */
+  kProvisional: 40,
+  /** Human K once settled. */
+  kSettled: 16,
+  /** Rated events after which a human's K drops from provisional to settled. */
+  settledAfterEvents: 20,
+  /** Bot K while provisional. Bots are the stable reference: kept at the original values. */
+  kBotProvisional: 16,
+  /** Bot K once settled. */
+  kBotSettled: 6,
+  /** Rated events after which a bot's K drops. */
+  botSettledAfterEvents: 100,
+  /** Rated events after which the leaderboard lists a rider (low for the MVP). */
+  leaderboardMinEvents: 3,
   /** A suicide is weaker evidence than a loss to an opponent. */
-  suicideFactor: 0.5,
+  suicideFactor: 0.33,
 } as const;

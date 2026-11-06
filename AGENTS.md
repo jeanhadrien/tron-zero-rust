@@ -66,7 +66,7 @@ Code style (comments, newtypes, errors, constants, logging, fmt/clippy) is in `S
 ## Doc map
 
 - `docs/specs/core-gameplay-mechanics.md` — gameplay rules, respect at all times.
-- `docs/specs/matchmaking-elo.md` — draft design: accounts, continuous Elo, matchmaker API (not implemented).
+- `docs/specs/matchmaking-elo.md` — continuous Elo, leaderboard and placement. Implemented in `server-manager/src/rating/`, `results.ts`, `placement.ts`; the server reports eliminations from `crates/server/src/ranked.rs`. Tuning constants live in `rating/config.ts`.
 - `docs/specs/netcode-design.md` — implemented netcode contract and measurements.
 - `NETWORK.md` — open netcode/ops backlog.
 - `docs/guides/run.md` — which commands to start for each way of running the game (local, web, prod lobby, GCP, release); start here.

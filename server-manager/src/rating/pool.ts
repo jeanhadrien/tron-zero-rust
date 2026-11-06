@@ -2,10 +2,10 @@ import { RATING_CONFIG } from './config.js';
 import { isEligible } from './elo.js';
 import type { RatingDoc } from '../store/types';
 
+export { isBotId } from './elo.js';
+
 /** Rating row id of a human account. */
 export const humanRatingId = (accountId: string): string => `acct:${accountId}`;
-
-export const isBotId = (id: string): boolean => id.startsWith('bot:');
 
 /** Skill knob range of the bots crate (`ELO_ANCHORS` ends) and its rating remap. */
 const SKILL_RANGE = [500, 4000] as const;
