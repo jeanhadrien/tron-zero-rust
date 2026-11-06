@@ -115,7 +115,7 @@ pub fn insert_if_enabled(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bots::config::{Elo, Personality};
+    use bots::config::{Difficulty, Personality};
     use bots::forecast::PhysicsForecaster;
     use bots::perceive::RAY_COUNT;
     use bots::strategy::strategy_for;
@@ -179,7 +179,7 @@ mod tests {
     #[test]
     fn build_debug_values_are_sane() {
         let world = head_on_world();
-        let knobs = Elo(2000).knobs(Personality::Duelist);
+        let knobs = Difficulty(2000).knobs(Personality::Duelist);
         let perception = Perception {
             rays: [120.0; RAY_COUNT],
             freedom: 400,

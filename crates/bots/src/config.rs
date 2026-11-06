@@ -1,14 +1,17 @@
-//! Bot difficulty curve and per-bot policy configuration.
+//! Per-bot policy configuration.
 //!
-//! Difficulty is expressed only through *policy* knobs (reaction, horizon,
-//! mistake rate, weighting). Physics is never touched.
+//! A bot is a name, a personality and a set of named policy knobs (reaction,
+//! horizon, mistake rate, weighting). Physics is never touched. The knobs are
+//! the bot's whole definition; how good it *is* is measured by the matchmaking
+//! rating, never declared here. [`Difficulty`] is only a convenience for
+//! authoring a coherent set of knobs.
 
 use serde::{Deserialize, Serialize};
 
-/// Rating anchors. `Elo::knobs` interpolates policy between them.
-pub const ELO_ANCHORS: [u32; 5] = [500, 1000, 1500, 2500, 4000];
+/// Anchors of the authoring curve. `Difficulty::knobs` interpolates between them.
+const DIFFICULTY_ANCHORS: [u32; 5] = [500, 1000, 1500, 2500, 4000];
 
-/// Policy curve sampled at `ELO_ANCHORS`; smoothstep-eased between anchors.
+/// Policy curve sampled at `DIFFICULTY_ANCHORS`; smoothstep-eased between anchors.
 const REACTION_TICKS: [f32; 5] = [24.0, 16.0, 10.0, 5.0, 2.0];
 const LOOKAHEAD_TICKS: [f32; 5] = [2.0, 4.0, 6.0, 10.0, 16.0];
 const MISTAKE_PROB: [f32; 5] = [0.30, 0.15, 0.07, 0.02, 0.003];
@@ -18,8 +21,11 @@ const CAUTION: [f32; 5] = [0.95, 0.80, 0.60, 0.35, 0.15];
 const BFS_BUDGET: [f32; 5] = [64.0, 128.0, 256.0, 512.0, 800.0];
 const STRATEGY_MIX: [f32; 5] = [0.0, 0.25, 0.5, 0.8, 1.0];
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Elo(pub u32);
+/// Authoring preset: a point on the difficulty curve that expands into a
+/// coherent set of knobs. Not stored on a bot, not rated, never shown; once
+/// expanded, the knobs are the bot.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Difficulty(pub u32);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Personality {
@@ -48,6 +54,28 @@ pub struct BotKnobs {
 }
 
 impl BotKnobs {
+    /// Stable 32-bit FNV-1a hash of the personality and every knob. Two builds
+    /// with the same personality and knobs are the same bot, wherever they run.
+    fn fingerprint(&self, personality: Personality) -> u32 {
+        let words = [
+            self.reaction_ticks,
+            self.lookahead_ticks,
+            self.mistake_prob.to_bits(),
+            self.greed.to_bits(),
+            self.aggression.to_bits(),
+            self.caution.to_bits(),
+            self.bfs_budget,
+            self.strategy_mix.to_bits(),
+        ];
+        personality
+            .label()
+            .bytes()
+            .chain(words.iter().flat_map(|word| word.to_le_bytes()))
+            .fold(0x811c_9dc5_u32, |hash, byte| {
+                (hash ^ u32::from(byte)).wrapping_mul(0x0100_0193)
+            })
+    }
+
     fn clamp(&mut self) {
         self.reaction_ticks = self.reaction_ticks.max(1);
         self.lookahead_ticks = self.lookahead_ticks.max(1);
@@ -60,42 +88,88 @@ impl BotKnobs {
     }
 }
 
+/// What defines a bot: a name, a personality and its knobs. The name is both
+/// its display name in game and its label on the leaderboard.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct BotBuild {
-    pub elo: Elo,
+    pub name: String,
     pub personality: Personality,
     pub knobs: BotKnobs,
 }
 
 impl BotBuild {
-    pub fn new(elo: Elo, personality: Personality) -> Self {
+    pub fn new(name: impl Into<String>, personality: Personality, knobs: BotKnobs) -> Self {
         Self {
-            elo,
+            name: name.into(),
             personality,
-            knobs: elo.knobs(personality),
+            knobs,
         }
     }
 
-    /// Stable identity of this build in the rating pool: `bot:<personality>:<skill>`.
-    /// Every instance of the build shares one rating. The skill is a hidden
-    /// input; the measured rating is what the pool reports.
+    /// A build whose knobs come from a point on the authoring curve.
+    pub fn from_difficulty(
+        name: impl Into<String>,
+        personality: Personality,
+        difficulty: Difficulty,
+    ) -> Self {
+        Self::new(name, personality, difficulty.knobs(personality))
+    }
+
+    /// Stable identity of this build in the rating pool:
+    /// `bot:<name>:<fingerprint of personality and knobs>`. Every instance of
+    /// the build shares one rating, which starts like any newcomer's and is
+    /// measured. Renaming or retuning a build makes it a new rated bot.
     pub fn rating_id(&self) -> String {
-        format!("bot:{}:{}", self.personality.label(), self.elo.0)
+        format!(
+            "bot:{}:{:08x}",
+            self.name.replace(':', "-"),
+            self.knobs.fingerprint(self.personality)
+        )
     }
 }
 
-/// Rating range the skill knob is remapped onto for a bot's first rating.
-const INITIAL_RATING_RANGE: (f32, f32) = (800.0, 2500.0);
+/// Optional per-knob overrides on top of a preset (scenario files).
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct KnobOverrides {
+    pub reaction_ticks: Option<u32>,
+    pub lookahead_ticks: Option<u32>,
+    pub mistake_prob: Option<f32>,
+    pub greed: Option<f32>,
+    pub aggression: Option<f32>,
+    pub caution: Option<f32>,
+    pub bfs_budget: Option<u32>,
+    pub strategy_mix: Option<f32>,
+}
 
-impl Elo {
-    /// Starting rating for a new bot identity: the skill knob mapped linearly
-    /// (monotone) from the anchor range onto `INITIAL_RATING_RANGE`.
-    /// Measurement corrects it over time.
-    pub fn initial_rating(self) -> u32 {
-        let (lo, hi) = (ELO_ANCHORS[0] as f32, ELO_ANCHORS[4] as f32);
-        let t = ((self.0 as f32 - lo) / (hi - lo)).clamp(0.0, 1.0);
-        let (from, to) = INITIAL_RATING_RANGE;
-        (from + (to - from) * t).round() as u32
+impl KnobOverrides {
+    /// Apply the set overrides to `knobs`, then re-clamp.
+    pub fn apply(&self, knobs: &mut BotKnobs) {
+        if let Some(v) = self.reaction_ticks {
+            knobs.reaction_ticks = v;
+        }
+        if let Some(v) = self.lookahead_ticks {
+            knobs.lookahead_ticks = v;
+        }
+        if let Some(v) = self.mistake_prob {
+            knobs.mistake_prob = v;
+        }
+        if let Some(v) = self.greed {
+            knobs.greed = v;
+        }
+        if let Some(v) = self.aggression {
+            knobs.aggression = v;
+        }
+        if let Some(v) = self.caution {
+            knobs.caution = v;
+        }
+        if let Some(v) = self.bfs_budget {
+            knobs.bfs_budget = v;
+        }
+        if let Some(v) = self.strategy_mix {
+            knobs.strategy_mix = v;
+        }
+        knobs.clamp();
     }
 }
 
@@ -113,20 +187,20 @@ impl Personality {
     }
 }
 
-impl Elo {
-    /// Interpolate the policy curve at this rating, then apply personality
+impl Difficulty {
+    /// Interpolate the policy curve at this point, then apply personality
     /// biases. Static per bot: no adaptive difficulty drift.
     pub fn knobs(self, personality: Personality) -> BotKnobs {
-        let elo = self.0;
+        let level = self.0;
         let mut knobs = BotKnobs {
-            reaction_ticks: interp(&REACTION_TICKS, elo).round() as u32,
-            lookahead_ticks: interp(&LOOKAHEAD_TICKS, elo).round() as u32,
-            mistake_prob: interp(&MISTAKE_PROB, elo),
-            greed: interp(&GREED, elo),
-            aggression: interp(&AGGRESSION, elo),
-            caution: interp(&CAUTION, elo),
-            bfs_budget: interp(&BFS_BUDGET, elo).round() as u32,
-            strategy_mix: interp(&STRATEGY_MIX, elo),
+            reaction_ticks: interp(&REACTION_TICKS, level).round() as u32,
+            lookahead_ticks: interp(&LOOKAHEAD_TICKS, level).round() as u32,
+            mistake_prob: interp(&MISTAKE_PROB, level),
+            greed: interp(&GREED, level),
+            aggression: interp(&AGGRESSION, level),
+            caution: interp(&CAUTION, level),
+            bfs_budget: interp(&BFS_BUDGET, level).round() as u32,
+            strategy_mix: interp(&STRATEGY_MIX, level),
         };
         personality.apply(&mut knobs);
         knobs.clamp();
@@ -159,7 +233,7 @@ impl Personality {
                 knobs.caution -= 0.15;
                 knobs.greed += 0.05;
             }
-            // Adaptive deliberately keeps the Elo-derived `strategy_mix`, and
+            // Adaptive deliberately keeps the curve's `strategy_mix`, and
             // remaining placeholders share the base curve until implemented.
             Personality::Adaptive | Personality::Roamer => {}
         }
@@ -168,18 +242,18 @@ impl Personality {
 
 /// Smoothstep easing keeps the curve "logistic-ish" without a table of match
 /// arms. Clamps to the end anchors outside the sampled range.
-fn interp(values: &[f32; 5], elo: u32) -> f32 {
-    if elo <= ELO_ANCHORS[0] {
+fn interp(values: &[f32; 5], level: u32) -> f32 {
+    if level <= DIFFICULTY_ANCHORS[0] {
         return values[0];
     }
-    if elo >= ELO_ANCHORS[4] {
+    if level >= DIFFICULTY_ANCHORS[4] {
         return values[4];
     }
     for i in 0..4 {
-        let low = ELO_ANCHORS[i];
-        let high = ELO_ANCHORS[i + 1];
-        if elo <= high {
-            let t = (elo - low) as f32 / (high - low) as f32;
+        let low = DIFFICULTY_ANCHORS[i];
+        let high = DIFFICULTY_ANCHORS[i + 1];
+        if level <= high {
+            let t = (level - low) as f32 / (high - low) as f32;
             let eased = t * t * (3.0 - 2.0 * t);
             return values[i] + (values[i + 1] - values[i]) * eased;
         }
@@ -190,11 +264,59 @@ fn interp(values: &[f32; 5], elo: u32) -> f32 {
 /// Default arena roster: graded difficulty and mixed personalities so a single
 /// weak bot is not farmed.
 pub fn default_builds() -> Vec<BotBuild> {
-    vec![
-        BotBuild::new(Elo(1000), Personality::Survivalist),
-        BotBuild::new(Elo(1500), Personality::Adaptive),
-        BotBuild::new(Elo(2000), Personality::Territorialist),
-        BotBuild::new(Elo(2250), Personality::Duelist),
-        BotBuild::new(Elo(2500), Personality::Trapper),
+    [
+        ("Bastion", Personality::Survivalist, 1000),
+        ("Chameleon", Personality::Adaptive, 1500),
+        ("Warden", Personality::Territorialist, 2000),
+        ("Rapier", Personality::Duelist, 2250),
+        ("Sentinelle", Personality::Trapper, 2500),
     ]
+    .into_iter()
+    .map(|(name, personality, level)| {
+        BotBuild::from_difficulty(name, personality, Difficulty(level))
+    })
+    .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rating_id_follows_name_personality_and_knobs() {
+        let build = BotBuild::from_difficulty("Sentinelle", Personality::Trapper, Difficulty(2500));
+        let same = BotBuild::from_difficulty("Sentinelle", Personality::Trapper, Difficulty(2500));
+        assert_eq!(build.rating_id(), same.rating_id());
+        assert!(build.rating_id().starts_with("bot:Sentinelle:"));
+
+        let other_personality =
+            BotBuild::from_difficulty("Sentinelle", Personality::Duelist, Difficulty(2500));
+        assert_ne!(build.rating_id(), other_personality.rating_id());
+
+        let mut tweaked = build.clone();
+        tweaked.knobs.reaction_ticks += 1;
+        assert_ne!(build.rating_id(), tweaked.rating_id());
+    }
+
+    #[test]
+    fn roster_builds_have_distinct_names_and_identities() {
+        let builds = default_builds();
+        let ids: std::collections::HashSet<_> = builds.iter().map(BotBuild::rating_id).collect();
+        let names: std::collections::HashSet<_> = builds.iter().map(|b| &b.name).collect();
+        assert_eq!(ids.len(), builds.len());
+        assert_eq!(names.len(), builds.len());
+    }
+
+    #[test]
+    fn overrides_replace_only_the_set_knobs() {
+        let mut knobs = Difficulty(1500).knobs(Personality::Adaptive);
+        let before = knobs.clone();
+        KnobOverrides {
+            reaction_ticks: Some(3),
+            ..KnobOverrides::default()
+        }
+        .apply(&mut knobs);
+        assert_eq!(knobs.reaction_ticks, 3);
+        assert_eq!(knobs.lookahead_ticks, before.lookahead_ticks);
+    }
 }

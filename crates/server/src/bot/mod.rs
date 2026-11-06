@@ -256,17 +256,6 @@ pub fn bot_spawner(
     *next_bot_number = number;
 }
 
-/// Pure bot label: `{strategy}-{elo} #{N}` (e.g. `trapper-2500 #3`).
-/// Display-only; `PlayerId` stays the stable identity.
-pub(crate) fn format_bot_name(build: &BotBuild, bot_number: u32) -> String {
-    format!(
-        "{}-{} #{}",
-        strategy_for(build.personality).name(),
-        build.elo.0,
-        bot_number
-    )
-}
-
 /// Spawn a bot `Player` entity at a random position with the given number.
 ///
 /// Inserts a default [`shared::BotDebug`] only when `TRON_BOT_DEBUG` is truthy;
@@ -288,7 +277,7 @@ fn spawn_bot_entity(
                 slot_index,
             },
             shared::PlayerId(format!("bot-{}", bot_number)),
-            DisplayName(format_bot_name(build, bot_number)),
+            DisplayName(build.name.clone()),
             Position(pos),
             Direction(dir),
             Velocity(Vec2::ZERO),
@@ -326,34 +315,4 @@ fn random_spawn() -> (Vec2, Vec2) {
     };
 
     (pos, dir)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use bots::config::{Elo, Personality};
-
-    #[test]
-    fn bot_name_uses_strategy_elo_and_number() {
-        let build = BotBuild::new(Elo(2500), Personality::Trapper);
-        assert_eq!(format_bot_name(&build, 3), "trapper-2500 #3");
-    }
-
-    #[test]
-    fn bot_name_covers_roster_personalities() {
-        let cases = [
-            (Personality::Survivalist, 1000, 1, "survivalist-1000 #1"),
-            (Personality::Adaptive, 1500, 2, "adaptive-1500 #2"),
-        ];
-        for (personality, elo, number, expected) in cases {
-            let build = BotBuild::new(Elo(elo), personality);
-            assert_eq!(format_bot_name(&build, number), expected);
-        }
-    }
-
-    #[test]
-    fn bot_name_uses_territorialist_label() {
-        let build = BotBuild::new(Elo(2000), Personality::Territorialist);
-        assert_eq!(format_bot_name(&build, 7), "territorialist-2000 #7");
-    }
 }

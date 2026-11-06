@@ -6,29 +6,29 @@ seed = 1
 [[rider]]
 name = "survivalist"
 bot = "survivalist"
-elo = 1000
+difficulty = 1000
 respawn_after = 240
 
 [[rider]]
 name = "adaptive"
 bot = "adaptive"
-elo = 1500
+difficulty = 1500
 respawn_after = 240
 
 [[rider]]
 name = "territorialist"
 bot = "territorialist"
-elo = 2000
+difficulty = 2000
 respawn_after = 240
 
 [[rider]]
 name = "duelist"
 bot = "duelist"
-elo = 2250
+difficulty = 2250
 respawn_after = 240
 
 [[rider]]
 name = "trapper"
 bot = "trapper"
-elo = 2500
+difficulty = 2500
 respawn_after = 240

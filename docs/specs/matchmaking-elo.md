@@ -1,9 +1,11 @@
 # Matchmaking and Elo — core design
 
-Status: draft 2026-11-04. Nothing here is implemented. This spec describes the
-**algorithm and the rules** only: what is rated, how ratings move, who may
-report results, where players are placed. Implementation choices (services,
-storage, wire format) are deliberately left out and decided later.
+Status: implemented in `server-manager/src/rating/` (rules, constants in
+`config.ts`), `results.ts` (result intake and trust checks) and `placement.ts`;
+the game server reports eliminations from `crates/server/src/ranked.rs`. Still
+open: the community-server question, attribution beyond trail owner, and the
+validation run. This spec describes the **algorithm and the rules**: what is
+rated, how ratings move, who may report results, where players are placed.
 
 ## Goals
 
@@ -36,8 +38,10 @@ Standard Elo, chess scale.
 - Start rating **1500**. Expected score `E(a, b) = 1 / (1 + 10^((Rb - Ra) / 400))`.
 - The unit of play is the **elimination**. Each one is decided and applied
   immediately.
-- `K` is per player: **16** for the first 100 rated events, **6** afterwards.
-  Both are starting values, to be tuned (see *Validation*).
+- `K` is per rider. Humans: **40** for the first 20 rated events, **16**
+  afterwards (deliberately high for the MVP, so a little play moves far). Bots:
+  **16** for the first 100 events, **6** afterwards, so they stay a stable
+  reference. All are tunable (see *Validation*).
 - Bots and humans use the same formulas.
 - The rating gap matters through `E`: beating a stronger player gains more,
   losing to a weaker one costs more. A server never restricts who can join
@@ -59,7 +63,7 @@ ratings, no information).
 **Suicide.** There is no opponent, so the victim is compared against the
 *field*: `F` = mean rating of the other riders alive at that moment.
 
-- `loss = 0.5 * K_victim * E(victim, F)`. The 0.5 reflects that a suicide is
+- `loss = 0.33 * K_victim * E(victim, F)`. The 0.33 reflects that a suicide is
   weaker evidence than a loss to an opponent.
 - `E` grows with the victim's rating, so **a high-rated player loses more than a
   low-rated one** for the same mistake. This is intended.
@@ -78,13 +82,15 @@ question). The rules above do not change if it is added.
 
 ### Bots
 
-- A bot has a stable identity `bot:<personality>:<skill>` and **one shared
-  rating per identity**, however many instances run.
-- The existing `Elo` knob in `crates/bots` becomes a hidden `skill` input. The
-  *rating* is what the pool measures. Bots are chosen for a lobby by measured
-  rating, not by the knob.
-- Initial ratings come from a monotone remap of the old anchors (`500..4000`
-  onto about `800..2500`); measurement corrects it over time.
+- A bot is a hardcoded build: a name, a personality and a set of named policy
+  knobs (reaction, look-ahead, mistake rate, aggression, caution, ...). The name
+  is its display name in game and on the leaderboard.
+- Its rating identity is `bot:<name>:<fingerprint of personality and knobs>`:
+  **one shared rating per identity**, however many instances run. Renaming or
+  retuning a build makes it a new bot with a new rating.
+- Bots carry no declared skill. A new bot identity starts at the same rating as
+  a newcomer (1500); the pool measures where it really belongs. Bots are chosen
+  for a lobby by measured rating.
 - Only results from **official** servers move bot ratings.
 
 ## Trust
@@ -151,18 +157,19 @@ Rules around it:
 ## Leaderboard
 
 - Ordered by rating, descending, including bots.
-- A player appears once they have enough rated events (100, to tune), so
+- A player appears once they have enough rated events (3 for the MVP, to tune), so
   provisional ratings never show.
 - A player's rank is the number of eligible players above them plus one.
 - v1 has no decay and no inactivity filter.
 
 ## Validation
 
-Simulate bots of known `skill` against each other with the same rating rules and
-check that (1) the resulting order matches the skill order and (2) ratings
-converge at the chosen `K`. Use it to tune `K`, the ranked threshold, the
-suicide factor and the bot remap, and to see how large a share suicides take in
-the rating moves.
+Simulate the bot roster against each other in the lab with the same rating
+rules (`crates/lab/validation/ratings.toml`, replayed by
+`server-manager/src/rating/replay.ts`) and check that (1) the measured order
+matches the order the builds were authored in and (2) ratings converge at the
+chosen `K`. Use it to tune `K`, the leaderboard threshold and the suicide
+factor, and to see how large a share suicides take in the rating moves.
 
 ## Out of scope (v1)
 

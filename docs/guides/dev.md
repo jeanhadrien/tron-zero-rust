@@ -183,7 +183,7 @@ also counts kills and groups deaths by cause.
 
 ### Bot arenas
 
-A rider with `bot = "<personality>"` (and `elo`) is driven by the same brain
+A rider with `bot = "<personality>"` (and `difficulty`, plus optional per-knob overrides in `[rider.knobs]`) is driven by the same brain
 and decision schedule as the server's bots; leave out `at`/`heading` and it
 gets a seeded safe spawn. `respawn_after = 240` mirrors the server's bot
 respawn delay. `scenarios/bot_arena.toml` is the default five-bot roster:

@@ -23,14 +23,20 @@ export function expected(ra: number, rb: number): number {
   return 1 / (1 + 10 ** ((rb - ra) / C.scale));
 }
 
-/** Per-player K: large while provisional, small once settled. */
-export function kFor(ratedEvents: number): number {
-  return ratedEvents < C.settledAfterEvents ? C.kProvisional : C.kSettled;
+/** Bot ids are `bot:<personality>:<skill>`; humans are `acct:<uuid>`. */
+export const isBotId = (id: string): boolean => id.startsWith('bot:');
+
+/** Per-rider K: large while provisional, small once settled. Bots have their own, slower curve. */
+export function kFor(rider: Rated): number {
+  if (isBotId(rider.id)) {
+    return rider.ratedEvents < C.botSettledAfterEvents ? C.kBotProvisional : C.kBotSettled;
+  }
+  return rider.ratedEvents < C.settledAfterEvents ? C.kProvisional : C.kSettled;
 }
 
-/** Whether the player is settled enough to appear on the leaderboard. */
+/** Whether the rider has enough rated events to appear on the leaderboard. */
 export function isEligible(ratedEvents: number): boolean {
-  return ratedEvents >= C.settledAfterEvents;
+  return ratedEvents >= C.leaderboardMinEvents;
 }
 
 /** Each side moves by K * (S - E) against the other, with its own K. */
@@ -38,8 +44,8 @@ function duel(a: Rated, b: Rated, scoreA: number): Change[] {
   const ea = expected(a.rating, b.rating);
   const eb = 1 - ea;
   return [
-    { id: a.id, delta: kFor(a.ratedEvents) * (scoreA - ea), countsAsEvent: true },
-    { id: b.id, delta: kFor(b.ratedEvents) * (1 - scoreA - eb), countsAsEvent: true },
+    { id: a.id, delta: kFor(a) * (scoreA - ea), countsAsEvent: true },
+    { id: b.id, delta: kFor(b) * (1 - scoreA - eb), countsAsEvent: true },
   ];
 }
 
@@ -67,7 +73,7 @@ export function applySuicide(victim: Rated, alive: Rated[]): Change[] {
   const others = alive.filter((r) => r.id !== victim.id);
   if (others.length === 0) return [];
   const field = others.reduce((sum, r) => sum + r.rating, 0) / others.length;
-  const loss = C.suicideFactor * kFor(victim.ratedEvents) * expected(victim.rating, field);
+  const loss = C.suicideFactor * kFor(victim) * expected(victim.rating, field);
   const share = loss / others.length;
   return [
     { id: victim.id, delta: -loss, countsAsEvent: true },

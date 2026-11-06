@@ -22,7 +22,7 @@ manually (Space). Enter opens the player chat.
 `crates/` (all lib + bin pairs keep logic in the lib so `nettest` can run the real apps):
 
 - **`shared/` (lib)** — the simulation core and wire protocol. Pure Bevy ECS: no rendering, no wall clock. Both sides run `simulate_players` at **120 Hz** (`TICK_HZ`). `physics.rs` (`step_rider`, pure), `constants.rs` (gameplay numbers), `systems/` (turn → sense → move → rubber; order is load-bearing), `components/` (incl. `trail.rs`, the rollbackable trail), `spawn.rs`, `math.rs` (rotations, arena walls, seeded spawn), `polyline.rs` (render-only arc-length helpers), `probe.rs` (UDP server-discovery datagram), `protocol.rs` (components, messages, channels, `PROTOCOL_ID`, turn constants).
-- **`bots/` (lib)** — bot brain over a `WorldSnapshot` (sensing, memory, forecast, territory, strategies, Elo knobs). Deterministic: no `rand`, no wall clock. Shared by the server and the lab.
+- **`bots/` (lib)** — bot brain over a `WorldSnapshot` (sensing, memory, forecast, territory, strategies, named policy knobs). Deterministic: no `rand`, no wall clock. Shared by the server and the lab.
 - **`server/` (lib + bin)** — headless authoritative server. `add_core` (lib.rs) wires Lightyear and the chain `handle_respawns → apply_turn_commands → simulate_players`; `main.rs` adds bots, logging and the announcer. Modules: `admission` (hello handshake, capacity), `session` (heartbeat/leave/lease), `turns` (sequenced turn commands, acks), `budget` (per-link abuse limits), `systems` (connect/disconnect, arena, respawn queue), `announce` (manager HTTP), `bot/` (ECS glue).
 - **`client/` (lib + bin)** — desktop client (UDP) and browser client (wasm32, WebTransport; `platform.rs` holds the target splits, build with `web/build.ps1` or `web/build.sh`, design in `docs/specs/web.md`). `connection` (lifecycle, readiness, autoconnect, quit), `input/` (keyboard queue, `TurnOutbox` redundant delivery), `menu`/`settings`/`browser`/`config` (UI, key bindings, room list, persisted preferences), `sim` (latency simulator), `render/` (arena, trails, riders, camera, HUD, death, bot debug).
 - **`lab/` (lib + bin)** — headless deterministic scenario runner over the real `simulate_players`. TOML scenarios in `crates/lab/scenarios/` (goldens `*.golden.jsonl`); JSONL trace + PNG output. **This is how an agent "plays" the game**: edit a scenario, re-run from tick 0, read trace and PNG. See `docs/guides/dev.md` § Lab.
@@ -66,7 +66,7 @@ Code style (comments, newtypes, errors, constants, logging, fmt/clippy) is in `S
 ## Doc map
 
 - `docs/specs/core-gameplay-mechanics.md` — gameplay rules, respect at all times.
-- `docs/specs/matchmaking-elo.md` — draft design: accounts, continuous Elo, matchmaker API (not implemented).
+- `docs/specs/matchmaking-elo.md` — continuous Elo, leaderboard and placement. Implemented in `server-manager/src/rating/`, `results.ts`, `placement.ts`; the server reports eliminations from `crates/server/src/ranked.rs`. Tuning constants live in `rating/config.ts`.
 - `docs/specs/netcode-design.md` — implemented netcode contract and measurements.
 - `NETWORK.md` — open netcode/ops backlog.
 - `docs/guides/run.md` — which commands to start for each way of running the game (local, web, prod lobby, GCP, release); start here.

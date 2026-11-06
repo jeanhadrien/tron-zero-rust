@@ -203,7 +203,7 @@ impl Strategy for Adaptive {
         ];
         // A physics rollout through the shared step: moves that end in a
         // projected death are penalised. This is where the forecaster earns
-        // its keep in v1, and where Elo's horizon knob takes effect.
+        // its keep in v1, and where the look-ahead knob takes effect.
         for action in [Action::Hold, Action::Left, Action::Right] {
             scores[action.index()] += lookahead_safety(perception, world, forecast, action, knobs);
         }
@@ -313,7 +313,7 @@ impl Strategy for Territorialist {
 /// rubber costs nothing, only a projected death is penalised.
 pub struct Duelist;
 
-/// Duel range before Elo-horizon stretch; matches `DUEL_THREAT` below.
+/// Duel range before look-ahead stretch; matches `DUEL_THREAT` below.
 const DUEL_RANGE: f32 = 480.0;
 /// `1 - DUEL_RANGE / 600`, the threat proxy `mode` uses for "converging".
 const DUEL_THREAT: f32 = 0.2;

@@ -8,7 +8,7 @@
 > - Turns are sequenced `TurnCommand`s in redundant unreliable `TurnBatch`es with acks and a late window, not plain Lightyear inputs (`docs/specs/netcode-design.md`).
 > - Transport is raw UDP (unauthenticated); WebTransport, connect tokens and the WASM client are not wired. Audio and chat are not implemented (`bevy_kira_audio` was dropped).
 > - Manager HTTP uses `ureq` on a detached announcer thread (no `reqwest`/async runtime); the client uses `ehttp`.
-> - Bots are a separate deterministic `bots` crate with Elo-scaled strategies (`BOT-AI-*.md`).
+> - Bots are a separate deterministic `bots` crate with difficulty-scaled strategies (`BOT-AI-*.md`).
 > - Library versions in the tables below are stale (Bevy 0.19, Lightyear 0.28, `bevy_egui` 0.41, `glam` 0.32). Gameplay numbers changed in the 2026-11 physics retune; `docs/specs/core-gameplay-mechanics.md` is normative.
 
 ## Architecture Overview

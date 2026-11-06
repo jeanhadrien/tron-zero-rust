@@ -1,5 +1,5 @@
 # Rating validation arena: one rider per distinct bot build, so the pool is
-# measured against a known skill order. Run in batch mode, for example:
+# measured against a known difficulty order (the order of this file). Run in batch mode, for example:
 #   cargo run --release -p tron-zero-lab -- crates/lab/validation/ratings.toml \
 #     --seeds 200 --eliminations ratings.jsonl
 # then replay it through the rating core (server-manager/src/rating/replay.ts).
@@ -9,29 +9,29 @@ seed = 1
 [[rider]]
 name = "survivalist1000"
 bot = "survivalist"
-elo = 1000
+difficulty = 1000
 respawn_after = 240
 
 [[rider]]
 name = "adaptive1500"
 bot = "adaptive"
-elo = 1500
+difficulty = 1500
 respawn_after = 240
 
 [[rider]]
 name = "territorialist2000"
 bot = "territorialist"
-elo = 2000
+difficulty = 2000
 respawn_after = 240
 
 [[rider]]
 name = "duelist2250"
 bot = "duelist"
-elo = 2250
+difficulty = 2250
 respawn_after = 240
 
 [[rider]]
 name = "trapper2500"
 bot = "trapper"
-elo = 2500
+difficulty = 2500
 respawn_after = 240
