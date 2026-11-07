@@ -14,50 +14,110 @@ use shared::protocol::{
 /// a client that never learns why it was refused.
 pub const REJECTION_LINGER_SECS: f64 = 1.0;
 
-#[derive(Component, Default)]
+/// Where a session is in its life. `Closing` is absorbing: nothing revives it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Liveness {
+    /// Serving. The first heartbeat binds `nonce`; later requests must match it.
+    Open { nonce: Option<u64> },
+    /// The join was refused: stay open `left` more seconds so the refusal can
+    /// be delivered, then close (sooner if the client says goodbye).
+    Lingering { left: f64 },
+    /// Marked for disconnection (see [`close_sessions`]).
+    Closing,
+}
+
+#[derive(Component)]
 pub struct SessionLease {
-    nonce: Option<u64>,
+    liveness: Liveness,
     idle_secs: f64,
-    leaving: bool,
-    /// Seconds left before a refused link is closed regardless.
-    linger_secs: Option<f64>,
     /// Seconds until the next heartbeat may be answered.
     reply_cooldown_secs: f64,
+}
+
+impl Default for SessionLease {
+    fn default() -> Self {
+        Self {
+            liveness: Liveness::Open { nonce: None },
+            idle_secs: 0.0,
+            reply_cooldown_secs: 0.0,
+        }
+    }
 }
 
 impl SessionLease {
     /// Mark the session for closing at once (stalled join, abusive client).
     pub fn close(&mut self) {
-        self.leaving = true;
+        self.liveness = Liveness::Closing;
     }
 
     /// Close after a refusal has had a chance to be delivered: when the client
     /// answers with its `Leave`, or after [`REJECTION_LINGER_SECS`].
     pub fn close_after_rejection(&mut self) {
-        self.linger_secs.get_or_insert(REJECTION_LINGER_SECS);
+        if matches!(self.liveness, Liveness::Open { .. }) {
+            self.liveness = Liveness::Lingering {
+                left: REJECTION_LINGER_SECS,
+            };
+        }
     }
 
     /// Whether the link is being, or is about to be, closed.
     pub fn is_closing(&self) -> bool {
-        self.leaving || self.linger_secs.is_some()
+        !matches!(self.liveness, Liveness::Open { .. })
+    }
+
+    /// Whether the link must be disconnected now. Unlike [`is_closing`], a
+    /// lingering link is still open.
+    ///
+    /// [`is_closing`]: SessionLease::is_closing
+    fn is_closed(&self) -> bool {
+        self.liveness == Liveness::Closing
+    }
+
+    /// Whether the first heartbeat has yet to bind the session's nonce.
+    fn awaiting_first_heartbeat(&self) -> bool {
+        self.liveness == Liveness::Open { nonce: None }
+    }
+
+    /// Advance the timers by `dt`: idle and reply clocks run, and a lingering
+    /// link closes when its grace is spent.
+    fn tick(&mut self, dt: f64) {
+        self.idle_secs += dt;
+        self.reply_cooldown_secs = (self.reply_cooldown_secs - dt).max(0.0);
+        if let Liveness::Lingering { left } = &mut self.liveness {
+            *left -= dt;
+            if *left <= 0.0 {
+                self.liveness = Liveness::Closing;
+            }
+        }
+    }
+
+    /// Close a session (open or lingering) that has been idle for
+    /// [`SESSION_TIMEOUT_SECS`]. Returns whether it did.
+    fn expire_if_idle(&mut self) -> bool {
+        let timed_out = !self.is_closed() && self.idle_secs >= SESSION_TIMEOUT_SECS;
+        if timed_out {
+            self.liveness = Liveness::Closing;
+        }
+        timed_out
     }
 
     fn receive(&mut self, request: SessionRequest) -> Option<SessionReply> {
-        if self.leaving {
-            return None;
-        }
-        if self.linger_secs.is_some() {
-            // A refused client that says goodbye has received the refusal.
-            if matches!(request, SessionRequest::Leave { .. }) {
-                self.leaving = true;
+        let nonce = match &mut self.liveness {
+            Liveness::Closing => return None,
+            Liveness::Lingering { .. } => {
+                // A refused client that says goodbye has received the refusal.
+                if matches!(request, SessionRequest::Leave { .. }) {
+                    self.liveness = Liveness::Closing;
+                }
+                return None;
             }
-            return None;
-        }
+            Liveness::Open { nonce } => nonce,
+        };
         match request {
-            SessionRequest::Heartbeat { nonce }
-                if self.nonce.is_none_or(|current| current == nonce) =>
+            SessionRequest::Heartbeat { nonce: sent }
+                if nonce.is_none_or(|bound| bound == sent) =>
             {
-                self.nonce = Some(nonce);
+                *nonce = Some(sent);
                 self.idle_secs = 0.0;
                 // Replies ride a reliable channel; bounding their rate bounds
                 // what a client that never acknowledges them can make us buffer.
@@ -65,10 +125,10 @@ impl SessionLease {
                     return None;
                 }
                 self.reply_cooldown_secs = SESSION_HEARTBEAT_SECS / 2.0;
-                Some(SessionReply { nonce })
+                Some(SessionReply { nonce: sent })
             }
-            SessionRequest::Leave { nonce } if self.nonce == Some(nonce) => {
-                self.leaving = true;
+            SessionRequest::Leave { nonce: sent } if *nonce == Some(sent) => {
+                self.liveness = Liveness::Closing;
                 None
             }
             _ => {
@@ -96,21 +156,14 @@ pub fn receive_session_requests(
     let dt = time.delta_secs_f64();
     let now = time.elapsed_secs_f64();
     for (entity, mut lease, mut budget, mut receiver, mut sender) in &mut clients {
-        lease.idle_secs += dt;
-        lease.reply_cooldown_secs = (lease.reply_cooldown_secs - dt).max(0.0);
-        if let Some(left) = lease.linger_secs.as_mut() {
-            *left -= dt;
-            if *left <= 0.0 {
-                lease.leaving = true;
-            }
-        }
+        lease.tick(dt);
         for request in receiver.receive() {
             if !budget.spend(Meter::SessionRequests, 1, now) {
                 warn!(?entity, "Session message flood; closing the link");
-                lease.leaving = true;
+                lease.close();
                 break;
             }
-            let first_heartbeat = lease.nonce.is_none();
+            let first_heartbeat = lease.awaiting_first_heartbeat();
             if let Some(reply) = lease.receive(request) {
                 if first_heartbeat {
                     info!(?entity, "Client session heartbeat established");
@@ -118,9 +171,9 @@ pub fn receive_session_requests(
                 sender.send::<SessionChannel>(reply);
             }
         }
-        if !lease.leaving && lease.idle_secs >= SESSION_TIMEOUT_SECS {
+        // After the requests: a heartbeat arriving this frame keeps it alive.
+        if lease.expire_if_idle() {
             warn!(?entity, "Client heartbeat timed out");
-            lease.leaving = true;
         }
     }
 }
@@ -130,7 +183,7 @@ pub fn close_sessions(
     mut commands: Commands,
 ) {
     for (entity, lease) in &clients {
-        if lease.leaving {
+        if lease.is_closed() {
             info!(?entity, "Closing client session");
             // Lightyear performs disconnect observers and link despawn in Last.
             commands.entity(entity).insert(Disconnecting);
@@ -148,7 +201,7 @@ mod tests {
     fn lease_accepts_only_its_session_and_cannot_be_revived_after_leave() {
         let mut lease = SessionLease::default();
         assert!(lease.receive(SessionRequest::Leave { nonce: 1 }).is_none());
-        assert!(!lease.leaving);
+        assert!(!lease.is_closing());
         assert_eq!(
             lease
                 .receive(SessionRequest::Heartbeat { nonce: 1 })
@@ -171,7 +224,7 @@ mod tests {
         );
         assert_eq!(lease.idle_secs, 0.0);
         lease.receive(SessionRequest::Leave { nonce: 1 });
-        assert!(lease.leaving);
+        assert!(lease.is_closed());
         assert!(
             lease
                 .receive(SessionRequest::Heartbeat { nonce: 1 })
@@ -204,17 +257,20 @@ mod tests {
         let mut lease = SessionLease::default();
         lease.close_after_rejection();
         assert!(lease.is_closing());
-        assert!(!lease.leaving, "still open to retransmit the refusal");
+        assert!(
+            matches!(lease.liveness, Liveness::Lingering { .. }),
+            "still open to retransmit the refusal"
+        );
         // Chatter does not close it or get answered...
         assert!(
             lease
                 .receive(SessionRequest::Heartbeat { nonce: 1 })
                 .is_none()
         );
-        assert!(!lease.leaving);
+        assert!(!lease.is_closed());
         // ...the client's goodbye does.
         lease.receive(SessionRequest::Leave { nonce: 99 });
-        assert!(lease.leaving);
+        assert!(lease.is_closed());
     }
 
     #[test]
@@ -237,12 +293,12 @@ mod tests {
             .resource_mut::<Time<Real>>()
             .advance_by(Duration::from_millis(900));
         world.run_system_once(receive_session_requests).unwrap();
-        assert!(!world.get::<SessionLease>(entity).unwrap().leaving);
+        assert!(!world.get::<SessionLease>(entity).unwrap().is_closed());
         world
             .resource_mut::<Time<Real>>()
             .advance_by(Duration::from_millis(100));
         world.run_system_once(receive_session_requests).unwrap();
-        assert!(world.get::<SessionLease>(entity).unwrap().leaving);
+        assert!(world.get::<SessionLease>(entity).unwrap().is_closed());
     }
 
     #[test]
@@ -263,12 +319,12 @@ mod tests {
             .resource_mut::<Time<Real>>()
             .advance_by(Duration::from_millis(4999));
         world.run_system_once(receive_session_requests).unwrap();
-        assert!(!world.get::<SessionLease>(entity).unwrap().leaving);
+        assert!(!world.get::<SessionLease>(entity).unwrap().is_closed());
         world
             .resource_mut::<Time<Real>>()
             .advance_by(Duration::from_millis(1));
         world.run_system_once(receive_session_requests).unwrap();
-        assert!(world.get::<SessionLease>(entity).unwrap().leaving);
+        assert!(world.get::<SessionLease>(entity).unwrap().is_closed());
         world.run_system_once(close_sessions).unwrap();
         assert!(world.get::<Disconnecting>(entity).is_some());
         assert!(world.get::<Connected>(entity).is_none());
