@@ -19,8 +19,9 @@ use shared::protocol::{
 };
 
 use crate::connection::{ConnectionPhase, Session};
+use crate::look::Look;
 use crate::menu::MenuState;
-use crate::theme::Theme;
+use crate::theme::{Rgb, Theme};
 
 /// Lines kept in memory.
 const LOG_CAP: usize = 50;
@@ -59,7 +60,7 @@ impl ChatState {
 pub struct ChatEntry {
     pub name: String,
     pub text: String,
-    /// Sender color (packed RGB); not drawn yet.
+    /// Sender color (packed RGB).
     pub color: u32,
     pub at: f64,
 }
@@ -196,6 +197,8 @@ pub fn receive_chat(
 
 /// Top-left chat overlay: no background, a one-pixel shadow keeps the text
 /// legible over the arena. Non-interactive, so clicks fall through.
+// Bevy injects each resource as its own parameter; the count is structural.
+#[allow(clippy::too_many_arguments)]
 pub fn chat_ui(
     mut contexts: EguiContexts,
     time: Res<Time<Real>>,
@@ -204,6 +207,7 @@ pub fn chat_ui(
     theme: Res<Theme>,
     chat: Res<ChatState>,
     log: Res<ChatLog>,
+    look: Res<Look>,
 ) {
     if session.phase() != ConnectionPhase::Playing || menu.open {
         return;
@@ -224,7 +228,10 @@ pub fn chat_ui(
                 let name = format!("{}: ", entry.name);
                 shadowed_line(
                     ui,
-                    (&name, theme.accent.egui().gamma_multiply(alpha)),
+                    (
+                        &name,
+                        Rgb::from_u32(entry.color).egui().gamma_multiply(alpha),
+                    ),
                     (&entry.text, theme.body.egui().gamma_multiply(alpha)),
                 );
             }
@@ -233,7 +240,7 @@ pub fn chat_ui(
                 let typed = format!("{}|", chat.buffer);
                 shadowed_line(
                     ui,
-                    (&prompt, theme.accent.egui()),
+                    (&prompt, Rgb::from_u32(look.color).egui()),
                     (&typed, theme.body.egui()),
                 );
             }

@@ -25,11 +25,17 @@ fn main() {
     add_network(&mut app);
 
     // Saved preferences (name, key bindings, manager URL); never fatal.
-    let (preferences, saved) = config::Preferences::load();
+    let (mut preferences, saved) = config::Preferences::load();
     app.insert_resource(saved.name());
     app.insert_resource(saved.bindings());
     app.insert_resource(saved.theme());
     app.insert_resource(saved.fx());
+    let (look, rolled) = saved.look();
+    if rolled {
+        // First launch (or an unreadable part): keep the roll across launches.
+        preferences.mark_dirty();
+    }
+    app.insert_resource(look);
     app.insert_resource(browser::ManagerConfig::from_env_and_saved(
         saved.manager_url.clone(),
     ));

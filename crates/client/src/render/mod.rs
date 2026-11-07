@@ -6,6 +6,7 @@ pub mod fx;
 pub mod hud;
 pub mod layers;
 pub mod player;
+pub mod shape;
 pub mod smooth;
 
 pub use arena::{apply_world_theme, draw_arena, spawn_grid};

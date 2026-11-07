@@ -5,8 +5,9 @@
 //! [`Theme::from_id`] turns it into the full token set. Adding a theme means
 //! adding a variant and one constructor here, nothing else.
 //!
-//! Rider and trail colors are not tokens: the server assigns them
-//! (`PlayerColor`) and they must stay recognizable whatever the theme.
+//! Rider and trail colors are not tokens: each player picks their own
+//! (`PlayerColor`, see `look`), and they must stay recognizable whatever the
+//! theme, so no theme restyles them.
 
 use bevy::prelude::{Color, DetectChanges, Local, Res, Resource};
 use bevy_egui::{EguiContexts, egui};
@@ -26,6 +27,11 @@ const DIM_ALPHA: u8 = 184;
 pub struct Rgb(pub u8, pub u8, pub u8);
 
 impl Rgb {
+    /// From packed `0xRRGGBB` (the high byte is ignored).
+    pub fn from_u32(packed: u32) -> Self {
+        Self((packed >> 16) as u8, (packed >> 8) as u8, packed as u8)
+    }
+
     pub fn egui(self) -> egui::Color32 {
         egui::Color32::from_rgb(self.0, self.1, self.2)
     }

@@ -1,13 +1,14 @@
 //! Lightcycle + trail rendering.
 
 use bevy::prelude::*;
-use shared::{Direction, DisplayName, IsAlive, Player, PlayerColor};
+use shared::{Direction, DisplayName, IsAlive, Player, PlayerColor, RiderShape};
 
 use super::layers::Z_LABEL;
+use super::shape;
 use super::smooth::Rendered;
 use crate::theme::Theme;
 
-/// Radius of the circle drawn for a lightcycle, in world units.
+/// Radius of the outline drawn for a lightcycle, in world units.
 pub(super) const RIDER_RADIUS: f32 = 14.0;
 /// Trail points closer than this to the previous one are dropped before
 /// drawing: a zero-length segment gives a line joint no direction.
@@ -55,22 +56,26 @@ fn without_degenerate_segments(points: &[Vec2]) -> impl Iterator<Item = Vec2> + 
     })
 }
 
-/// Draw every lightcycle: a filled circle plus a short heading line.
+/// Draw every lightcycle: its shape outline plus a short heading line.
 pub fn draw_players(
-    players: Query<(&Rendered, &Direction, &PlayerColor, &IsAlive), With<Player>>,
+    players: Query<(&Rendered, &Direction, &PlayerColor, &RiderShape, &IsAlive), With<Player>>,
     theme: Res<Theme>,
     mut gizmos: Gizmos,
 ) {
-    for (rendered, dir, color, alive) in &players {
+    for (rendered, dir, color, rider_shape, alive) in &players {
         let head = rendered.head;
+        let heading = rendered.heading(dir.0);
         let body = if alive.0 {
             Color::srgb_u32(color.0)
         } else {
             theme.dead_rider.bevy()
         };
-        gizmos.circle_2d(head, RIDER_RADIUS, body).resolution(24);
+        gizmos.linestrip_2d(
+            shape::placed(*rider_shape, head, heading, RIDER_RADIUS),
+            body,
+        );
         if alive.0 {
-            gizmos.line_2d(head, head + rendered.heading(dir.0) * 28.0, body);
+            gizmos.line_2d(head, head + heading * 28.0, body);
         } else {
             gizmos.line_2d(head - Vec2::splat(18.0), head + Vec2::splat(18.0), body);
             gizmos.line_2d(

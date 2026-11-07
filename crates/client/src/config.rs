@@ -1,4 +1,4 @@
-//! Persisted client preferences (name, key bindings, manager URL).
+//! Persisted client preferences (name, key bindings, rider look, manager URL).
 //!
 //! A small JSON file in the platform config dir (override with
 //! `TRON_CONFIG_FILE`). Reading or writing it can fail for ordinary reasons
@@ -10,9 +10,11 @@ use std::path::{Path, PathBuf};
 
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
+use shared::RiderShape;
 use shared::protocol::sanitize_name;
 
 use crate::account::{Accounts, SavedAccount};
+use crate::look::{Look, random_look};
 use crate::render::FxSettings;
 use crate::settings::{Binding, PlayerName, TurnBindings};
 use crate::theme::{Theme, ThemeId};
@@ -33,20 +35,28 @@ pub struct SavedConfig {
     /// Lobby manager base URL; the `MANAGER_URL` env var still wins.
     pub manager_url: Option<String>,
     /// Selected visual theme; `None` (or an unknown name) means the default.
-    #[serde(deserialize_with = "lenient_theme")]
+    #[serde(deserialize_with = "lenient")]
     pub theme: Option<ThemeId>,
     /// Particle effects on or off; `None` means on.
     pub effects: Option<bool>,
+    /// Rider color (packed RGB); `None` means "roll one on first launch".
+    #[serde(deserialize_with = "lenient")]
+    pub rider_color: Option<u32>,
+    /// Rider shape; `None` (or an unknown name) means "roll one".
+    #[serde(deserialize_with = "lenient")]
+    pub rider_shape: Option<RiderShape>,
     /// Anonymous ranked accounts, by manager base URL.
     pub accounts: BTreeMap<String, SavedAccount>,
 }
 
-/// A theme name this build does not know (saved by another version, or typed
-/// by hand) reads as "not set" instead of failing the whole file, which would
-/// throw away the name and key bindings too.
-fn lenient_theme<'de, D: serde::Deserializer<'de>>(
-    deserializer: D,
-) -> Result<Option<ThemeId>, D::Error> {
+/// A value this build cannot read (an unknown theme or shape saved by another
+/// version, a typo) reads as "not set" instead of failing the whole file, which
+/// would throw away the name and key bindings too.
+fn lenient<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: serde::de::DeserializeOwned,
+{
     let raw = Option::<serde_json::Value>::deserialize(deserializer)?;
     Ok(raw.and_then(|value| serde_json::from_value(value).ok()))
 }
@@ -62,6 +72,25 @@ impl SavedConfig {
     /// The theme to start with.
     pub fn theme(&self) -> Theme {
         Theme::from_id(self.theme.unwrap_or_default())
+    }
+
+    /// The look to start with. Missing parts are rolled randomly; the flag says
+    /// whether anything was rolled, so the caller can save it (a look that is
+    /// not saved would change on every launch).
+    pub fn look(&self) -> (Look, bool) {
+        let rolled = (self.rider_color.is_none() || self.rider_shape.is_none()).then(random_look);
+        let look = Look {
+            color: self
+                .rider_color
+                .map(|color| color & 0xFF_FFFF)
+                .or(rolled.map(|r| r.color))
+                .unwrap_or_default(),
+            shape: self
+                .rider_shape
+                .or(rolled.map(|r| r.shape))
+                .unwrap_or_default(),
+        };
+        (look, rolled.is_some())
     }
 
     /// The name to start with (sanitized so a bad file cannot poison it).
@@ -189,6 +218,12 @@ impl Preferences {
         };
         (prefs, saved)
     }
+
+    /// Schedule a save for something the preference systems cannot see change
+    /// (a look rolled at startup: the first run of the persist system is skipped).
+    pub fn mark_dirty(&mut self) {
+        self.dirty_since.get_or_insert(0.0);
+    }
 }
 
 /// Save name and bindings once they have stopped changing for
@@ -202,6 +237,7 @@ pub fn persist_preferences(
     bindings: Res<TurnBindings>,
     theme: Res<Theme>,
     fx: Res<FxSettings>,
+    look: Res<Look>,
     accounts: Res<Accounts>,
     time: Res<Time<Real>>,
     mut exits: MessageReader<AppExit>,
@@ -215,6 +251,7 @@ pub fn persist_preferences(
         || bindings.is_changed()
         || theme.is_changed()
         || fx.is_changed()
+        || look.is_changed()
         || accounts.is_changed()
     {
         prefs.dirty_since = Some(now);
@@ -236,6 +273,8 @@ pub fn persist_preferences(
         manager_url: prefs.manager_url.clone(),
         theme: Some(theme.id),
         effects: Some(fx.enabled),
+        rider_color: Some(look.color),
+        rider_shape: Some(look.shape),
         accounts: accounts.0.clone(),
     };
     if let Err(err) = save_to(path, &config) {
@@ -266,6 +305,8 @@ mod tests {
             manager_url: Some("http://lobby.example:3001".into()),
             theme: Some(ThemeId::Grid82),
             effects: Some(false),
+            rider_color: Some(0x12_34AB),
+            rider_shape: Some(RiderShape::Hexagon),
             accounts: BTreeMap::from([(
                 "http://lobby.example:3001".into(),
                 SavedAccount {
@@ -279,6 +320,10 @@ mod tests {
         assert_eq!(loaded, config);
         assert_eq!(loaded.name().0, "Neo");
         assert_eq!(loaded.bindings(), bindings);
+        let (look, rolled) = loaded.look();
+        assert!(!rolled, "a complete saved look is never re-rolled");
+        assert_eq!(look.color, 0x12_34AB);
+        assert_eq!(look.shape, RiderShape::Hexagon);
         let _ = std::fs::remove_dir_all(path.parent().unwrap().parent().unwrap());
     }
 
@@ -290,6 +335,71 @@ mod tests {
         assert_eq!(config.theme().id, ThemeId::default());
         assert_eq!(config.name().0, "Neo");
         assert_eq!(config.effects, Some(false));
+    }
+
+    #[test]
+    fn an_unknown_shape_or_bad_color_is_rolled_without_losing_the_file() {
+        let text = r#"{ "player_name": "Neo", "rider_shape": "Blob", "rider_color": -4 }"#;
+        let config: SavedConfig = serde_json::from_str(text).unwrap();
+        assert_eq!((config.rider_shape, config.rider_color), (None, None));
+        assert_eq!(config.name().0, "Neo");
+        let (_, rolled) = config.look();
+        assert!(rolled);
+    }
+
+    #[test]
+    fn only_the_missing_part_of_the_look_is_rolled() {
+        let color_only = SavedConfig {
+            rider_color: Some(0xABCDEF),
+            ..Default::default()
+        };
+        let (look, rolled) = color_only.look();
+        assert!(rolled);
+        assert_eq!(look.color, 0xABCDEF);
+        let shape_only = SavedConfig {
+            rider_shape: Some(RiderShape::Chevron),
+            ..Default::default()
+        };
+        let (look, rolled) = shape_only.look();
+        assert!(rolled);
+        assert_eq!(look.shape, RiderShape::Chevron);
+        // The wire only carries 24 bits; a hand-edited wider value is masked.
+        let wide = SavedConfig {
+            rider_color: Some(0xFF12_3456),
+            rider_shape: Some(RiderShape::Circle),
+            ..Default::default()
+        };
+        assert_eq!(wide.look().0.color, 0x12_3456);
+    }
+
+    #[test]
+    fn a_rolled_look_is_saved_even_though_the_first_run_is_skipped() {
+        let path = temp_file("rolled");
+        let mut world = persist_world(path.clone());
+        world.resource_mut::<Preferences>().mark_dirty();
+        let mut schedule = Schedule::default();
+        schedule.add_systems(persist_preferences);
+        frame(&mut world, &mut schedule, 1);
+        assert!(!path.exists(), "still debounced");
+        frame(&mut world, &mut schedule, 600);
+        let saved = load_from(&path);
+        assert_eq!(saved.rider_color, Some(Look::default().color));
+        assert_eq!(saved.rider_shape, Some(Look::default().shape));
+        let _ = std::fs::remove_dir_all(path.parent().unwrap().parent().unwrap());
+    }
+
+    #[test]
+    fn changing_the_look_saves_it() {
+        let path = temp_file("look-change");
+        let mut world = persist_world(path.clone());
+        let mut schedule = Schedule::default();
+        schedule.add_systems(persist_preferences);
+        frame(&mut world, &mut schedule, 1);
+        world.resource_mut::<Look>().shape = RiderShape::Diamond;
+        frame(&mut world, &mut schedule, 100);
+        frame(&mut world, &mut schedule, 600);
+        assert_eq!(load_from(&path).rider_shape, Some(RiderShape::Diamond));
+        let _ = std::fs::remove_dir_all(path.parent().unwrap().parent().unwrap());
     }
 
     #[test]
@@ -322,6 +432,7 @@ mod tests {
         world.insert_resource(PlayerName("Neo".into()));
         world.init_resource::<Theme>();
         world.init_resource::<FxSettings>();
+        world.init_resource::<Look>();
         world.init_resource::<Accounts>();
         world.insert_resource(Preferences {
             path: Some(path),
@@ -384,6 +495,8 @@ mod tests {
             manager_url: None,
             theme: None,
             effects: None,
+            rider_color: None,
+            rider_shape: None,
             accounts: BTreeMap::new(),
         };
         assert_eq!(config.bindings(), TurnBindings::default());

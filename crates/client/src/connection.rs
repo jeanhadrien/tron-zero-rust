@@ -402,6 +402,17 @@ impl Session {
             .map(|link| link.client)
     }
 
+    /// The client entity once the hello has been queued on it (any phase from
+    /// `Handshaking` to `Playing`); what `send_look` keys on.
+    pub(crate) fn hello_link(&self) -> Option<Entity> {
+        match &self.state {
+            State::Handshaking { link, .. }
+            | State::Synchronizing { link, .. }
+            | State::Playing { link, .. } => Some(link.client),
+            _ => None,
+        }
+    }
+
     fn is_dialing(&self) -> bool {
         matches!(self.state, State::Dialing { .. })
     }
@@ -588,6 +599,9 @@ impl Session {
 /// (`menu_controls`, `chat_controls`) `.after(monitor_connection)` and
 /// `.before(input::buffer_keyboard_input)`.
 pub fn add_lifecycle_systems(app: &mut App) {
+    // `Look` keeps a value inserted earlier (the configured one).
+    app.init_resource::<crate::look::Look>();
+    app.init_resource::<crate::look::LookSync>();
     // Frame start: raw input is read, the monitor then sees this frame's
     // network messages and replicated entities.
     app.add_systems(
@@ -596,6 +610,9 @@ pub fn add_lifecycle_systems(app: &mut App) {
             crate::menu::begin_input_frame,
             crate::attach_local_input,
             monitor_connection,
+            // Right after the hello is queued: SetLook follows it on the same
+            // ordered channel.
+            crate::look::send_look,
         )
             .chain()
             .after(bevy::input::InputSystems)
@@ -1289,6 +1306,39 @@ mod tests {
         let session = world.resource::<Session>();
         assert!(!session.is_dialing());
         assert!(session.state.link().unwrap().last_send.is_some());
+    }
+
+    #[test]
+    fn the_hello_link_exists_from_the_handshake_on() {
+        let client = Entity::from_raw_u32(7).unwrap();
+        for (state, expected) in [
+            (State::default(), None),
+            (
+                State::Dialing {
+                    link: link(client),
+                    since: 0.0,
+                    ticket: None,
+                },
+                None,
+            ),
+            (
+                State::Handshaking {
+                    link: link(client),
+                    since: 0.0,
+                },
+                Some(client),
+            ),
+            (playing(client), Some(client)),
+            (
+                State::Leaving {
+                    link: link(client),
+                    refusal: None,
+                },
+                None,
+            ),
+        ] {
+            assert_eq!(session_in(state).hello_link(), expected);
+        }
     }
 
     #[test]
