@@ -83,7 +83,8 @@ impl TurnOutbox {
 
     /// The batch to send at client tick `now`: everything still unacked, at
     /// most once per tick. Commands stamped more than `TURN_RESEND_TICKS` ago
-    /// are dropped first; the server would reject them as too late anyway.
+    /// are dropped first; for a lead up to `TURN_RESEND_TICKS` minus the late
+    /// window the server would reject them as too late anyway.
     pub fn batch(&mut self, now: u32) -> Option<TurnBatch> {
         self.unacked
             .retain(|command| Tick(now) - Tick(command.tick) <= TURN_RESEND_TICKS as i32);

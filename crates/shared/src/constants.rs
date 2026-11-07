@@ -6,6 +6,22 @@ pub const TICK_HZ: f64 = 120.0;
 pub const TICK_SECS: f32 = 1.0 / 120.0;
 pub const TICK_MS: f32 = 1000.0 / 120.0;
 
+// `TICK_SECS` and `TICK_MS` stay separate literals (rewriting them as
+// expressions could shift their last bit and invalidate every golden), so
+// this pins them to `TICK_HZ`.
+const _: () = {
+    let secs = TICK_SECS as f64 - 1.0 / TICK_HZ;
+    let millis = TICK_MS as f64 - 1000.0 / TICK_HZ;
+    assert!(
+        secs < 1e-9 && secs > -1e-9,
+        "TICK_SECS disagrees with TICK_HZ"
+    );
+    assert!(
+        millis < 1e-6 && millis > -1e-6,
+        "TICK_MS disagrees with TICK_HZ"
+    );
+};
+
 pub const BASE_SPEED: f32 = 360.0;
 pub const BASE_RUBBER: f32 = 120.0;
 /// Minimum width of the rubber zone in front of a rider; the zone widens with
@@ -78,3 +94,12 @@ pub const RUBBER_REGEN_PER_SEC: f32 = 0.3;
 /// `rubber + floor`): 8 rubber is about 1.5 ticks of drain at the wall.
 pub const RUBBER_REGEN_FLOOR: f32 = 8.0;
 pub const RUBBER_REGEN: f32 = RUBBER_REGEN_PER_SEC * TICK_SECS;
+
+// --- Contact tolerances (physics.rs) ----------------------------------------
+
+/// Slack, in units, for ray/segment contact and collinearity tests.
+pub const CONTACT_EPSILON: f32 = 0.001;
+/// How far short of another rider's new trail a crossing stops a rider. It
+/// must stay well outside `ray_hit`'s `CONTACT_EPSILON` bands, or a turn from
+/// there would read as collinear with that trail and could never escape.
+pub const STOP_MARGIN: f32 = 10.0 * CONTACT_EPSILON;

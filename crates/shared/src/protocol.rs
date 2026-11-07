@@ -17,54 +17,77 @@ use serde::{Deserialize, Serialize};
 /// Physics/simulation *logic* changes (grind rules, collision, rubber, turn
 /// handling, anything in `simulate_players`) are NOT captured by the constant
 /// fingerprint and REQUIRE a manual bump here: otherwise mixed builds connect
-/// fine and then silently mispredict.
+/// fine and then silently mispredict. The lab's golden traces back this up:
+/// blessing changed goldens fails unless this was bumped (see
+/// `golden_traces_match` and `scenarios/goldens.protocol`).
 pub const PROTOCOL_VERSION: u32 = 7;
+
+/// Bits of one sim constant, checked against its declared type: a constant
+/// listed under the wrong type does not compile.
+macro_rules! sim_bits {
+    (f32, $name:ident) => {{
+        let value: f32 = $name;
+        value.to_bits() as u64
+    }};
+    (f64, $name:ident) => {{
+        let value: f64 = $name;
+        value.to_bits()
+    }};
+    ($int:ident, $name:ident) => {{
+        let value: $int = $name;
+        value as u64
+    }};
+}
 
 /// Name and value of every constant the client and server must agree on to
 /// simulate identically (`constants.rs` in full, plus the turn timing rules).
-/// A test fails when a `pub const` in `constants.rs` is missing from this list,
-/// so a retune cannot silently stay wire-compatible.
+/// Each entry is `NAME: type`; the name is both the label and the value read,
+/// so the two cannot disagree. Tests fail when a `pub const` in `constants.rs`
+/// or a `TURN_*` timing constant is missing, so a retune cannot silently stay
+/// wire-compatible.
 macro_rules! sim_constants {
-    ($($name:ident => $bits:expr),+ $(,)?) => {
-        pub const SIM_CONSTANTS: &[(&str, u64)] = &[$((stringify!($name), $bits)),+];
+    ($($name:ident : $ty:ident),+ $(,)?) => {
+        pub const SIM_CONSTANTS: &[(&str, u64)] = &[$((stringify!($name), sim_bits!($ty, $name))),+];
     };
 }
 
 sim_constants! {
-    TICK_HZ => TICK_HZ.to_bits(),
-    TICK_SECS => TICK_SECS.to_bits() as u64,
-    TICK_MS => TICK_MS.to_bits() as u64,
-    BASE_SPEED => BASE_SPEED.to_bits() as u64,
-    BASE_RUBBER => BASE_RUBBER.to_bits() as u64,
-    SLOW_DOWN_DISTANCE => SLOW_DOWN_DISTANCE.to_bits() as u64,
-    TRAIL_MAX_LENGTH => TRAIL_MAX_LENGTH.to_bits() as u64,
-    ROTATION_ANGLE => ROTATION_ANGLE.to_bits() as u64,
-    ARENA_WIDTH => ARENA_WIDTH.to_bits() as u64,
-    ARENA_HEIGHT => ARENA_HEIGHT.to_bits() as u64,
-    MAX_SPEED_MULT => MAX_SPEED_MULT.to_bits() as u64,
-    GRIND_RANGE => GRIND_RANGE.to_bits() as u64,
-    GRIND_OFFSET => GRIND_OFFSET.to_bits() as u64,
-    GRIND_NORM => GRIND_NORM.to_bits() as u64,
-    ARENA_WALL_GRIND => ARENA_WALL_GRIND.to_bits() as u64,
-    OWN_GRIND_MIN_FROM_HEAD => OWN_GRIND_MIN_FROM_HEAD as u64,
-    GRIND_ACCEL_PER_SEC => GRIND_ACCEL_PER_SEC.to_bits() as u64,
-    SPEED_DECAY_PER_SEC => SPEED_DECAY_PER_SEC.to_bits() as u64,
-    SPEED_RECOVER_PER_SEC => SPEED_RECOVER_PER_SEC.to_bits() as u64,
-    GRIND_ACCEL => GRIND_ACCEL.to_bits() as u64,
-    SPEED_DECAY => SPEED_DECAY.to_bits() as u64,
-    SPEED_RECOVER => SPEED_RECOVER.to_bits() as u64,
-    TURN_SPEED_FACTOR => TURN_SPEED_FACTOR.to_bits() as u64,
-    MIN_SPEED_MULT => MIN_SPEED_MULT.to_bits() as u64,
-    RUBBER_APPROACH => RUBBER_APPROACH.to_bits() as u64,
-    RUBBER_COST => RUBBER_COST.to_bits() as u64,
-    RUBBER_REGEN_FLOOR => RUBBER_REGEN_FLOOR.to_bits() as u64,
-    RUBBER_REGEN_PER_SEC => RUBBER_REGEN_PER_SEC.to_bits() as u64,
-    RUBBER_REGEN => RUBBER_REGEN.to_bits() as u64,
-    TURN_LATE_WINDOW_TICKS => TURN_LATE_WINDOW_TICKS as u64,
-    TURN_MAX_LEAD_TICKS => TURN_MAX_LEAD_TICKS as u64,
-    TURN_QUEUE_CAP => TURN_QUEUE_CAP as u64,
-    TURN_BATCH_MAX => TURN_BATCH_MAX as u64,
-    TURN_RESEND_TICKS => TURN_RESEND_TICKS as u64,
+    TICK_HZ: f64,
+    TICK_SECS: f32,
+    TICK_MS: f32,
+    BASE_SPEED: f32,
+    BASE_RUBBER: f32,
+    SLOW_DOWN_DISTANCE: f32,
+    TRAIL_MAX_LENGTH: f32,
+    ROTATION_ANGLE: f32,
+    ARENA_WIDTH: f32,
+    ARENA_HEIGHT: f32,
+    MAX_SPEED_MULT: f32,
+    GRIND_RANGE: f32,
+    GRIND_OFFSET: f32,
+    GRIND_NORM: f32,
+    ARENA_WALL_GRIND: f32,
+    OWN_GRIND_MIN_FROM_HEAD: usize,
+    GRIND_ACCEL_PER_SEC: f32,
+    SPEED_DECAY_PER_SEC: f32,
+    SPEED_RECOVER_PER_SEC: f32,
+    GRIND_ACCEL: f32,
+    SPEED_DECAY: f32,
+    SPEED_RECOVER: f32,
+    TURN_SPEED_FACTOR: f32,
+    MIN_SPEED_MULT: f32,
+    RUBBER_APPROACH: f32,
+    RUBBER_COST: f32,
+    RUBBER_REGEN_FLOOR: f32,
+    RUBBER_REGEN_PER_SEC: f32,
+    RUBBER_REGEN: f32,
+    CONTACT_EPSILON: f32,
+    STOP_MARGIN: f32,
+    TURN_LATE_WINDOW_TICKS: u32,
+    TURN_MAX_LEAD_TICKS: i32,
+    TURN_QUEUE_CAP: usize,
+    TURN_BATCH_MAX: usize,
+    TURN_RESEND_TICKS: u32,
 }
 
 /// 64-bit FNV-1a over the version and every [`SIM_CONSTANTS`] value, folded to
@@ -398,8 +421,13 @@ pub const TURN_QUEUE_CAP: usize = 32;
 /// Most commands in one [`TurnBatch`]; also the client's outbox size.
 pub const TURN_BATCH_MAX: usize = 16;
 /// The client stops repeating a command this many ticks after its stamp
-/// (400 ms): by then the server would reject it as too late anyway.
+/// (400 ms). A command is useful until the server is [`TURN_LATE_WINDOW_TICKS`]
+/// past its intended tick, i.e. until `late window + client lead` ticks after
+/// the stamp, so this covers a lead of up to `48 - 12 = 36` ticks (the server
+/// accepts up to [`TURN_MAX_LEAD_TICKS`]). A larger lead loses the tail of the
+/// redundancy, never correctness: the server decides each seq once.
 pub const TURN_RESEND_TICKS: u32 = 48;
+const _: () = assert!(TURN_RESEND_TICKS > TURN_LATE_WINDOW_TICKS);
 /// How far past its intended tick a turn may still execute (100 ms at 120 Hz).
 /// Late execution shifts the corner by `lateness * 3` units and costs the
 /// client a correction; beyond the window the turn is rejected instead.
@@ -571,6 +599,24 @@ mod tests {
             .collect();
         assert!(declared.len() > 10, "constants.rs was not parsed");
         for name in declared {
+            assert!(
+                SIM_CONSTANTS.iter().any(|(listed, _)| *listed == name),
+                "{name} is not in SIM_CONSTANTS: add it so a retune changes PROTOCOL_ID"
+            );
+        }
+    }
+
+    #[test]
+    fn every_turn_timing_constant_is_part_of_the_protocol_id() {
+        let source = include_str!("protocol.rs");
+        let declared: Vec<&str> = source
+            .lines()
+            .filter_map(|line| line.strip_prefix("pub const TURN_"))
+            .filter_map(|rest| rest.split(':').next())
+            .collect();
+        assert!(declared.len() >= 5, "protocol.rs was not parsed");
+        for suffix in declared {
+            let name = format!("TURN_{suffix}");
             assert!(
                 SIM_CONSTANTS.iter().any(|(listed, _)| *listed == name),
                 "{name} is not in SIM_CONSTANTS: add it so a retune changes PROTOCOL_ID"

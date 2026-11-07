@@ -9,11 +9,7 @@ use glam::Vec2;
 
 use crate::*;
 
-const EPSILON: f32 = 0.001;
-/// How far short of another rider's new trail a crossing stops a rider. It
-/// must stay well outside `ray_hit`'s `EPSILON` bands, or a turn from there
-/// would read as collinear with that trail and could never escape.
-const STOP_MARGIN: f32 = 10.0 * EPSILON;
+const EPSILON: f32 = CONTACT_EPSILON;
 
 /// A ray blocker: an arena wall or a rider trail segment.
 #[derive(Clone, Copy, Debug)]

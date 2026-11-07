@@ -55,25 +55,122 @@ fn golden_traces_match() {
         .collect();
     entries.sort();
     assert!(!entries.is_empty());
-    let mut stale = Vec::new();
-    for path in entries {
-        let actual = trace(&Scenario::load(&path).unwrap(), SAMPLE);
-        let golden = path.with_extension("golden.jsonl");
-        if bless {
-            std::fs::write(&golden, &actual).unwrap();
-            continue;
-        }
-        let expected = std::fs::read_to_string(&golden)
-            .unwrap_or_default()
-            .replace("\r\n", "\n");
-        if actual != expected {
-            stale.push(path.file_name().unwrap().to_string_lossy().into_owned());
-        }
+    let traces: Vec<(PathBuf, String)> = entries
+        .into_iter()
+        .map(|path| {
+            let actual = trace(&Scenario::load(&path).unwrap(), SAMPLE);
+            (path, actual)
+        })
+        .collect();
+
+    if bless {
+        bless_goldens(&traces);
+        return;
     }
+    let stale: Vec<String> = traces
+        .iter()
+        .filter(|(path, actual)| {
+            let expected = std::fs::read_to_string(path.with_extension("golden.jsonl"))
+                .unwrap_or_default()
+                .replace("\r\n", "\n");
+            *actual != expected
+        })
+        .map(|(path, _)| path.file_name().unwrap().to_string_lossy().into_owned())
+        .collect();
     assert!(
         stale.is_empty(),
         "traces changed for {stale:?}; inspect with `cargo run -p tron-zero-lab -- \
          <scenario> --sample {SAMPLE}` and bless with LAB_BLESS=1 if intended"
+    );
+}
+
+/// FNV-1a over every trace (name and content), in scenario order.
+fn digest(traces: &[(PathBuf, String)]) -> u64 {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for (path, trace) in traces {
+        let name = path.file_name().unwrap().to_string_lossy();
+        for byte in name.bytes().chain([0]).chain(trace.bytes()).chain([0]) {
+            hash = (hash ^ u64::from(byte)).wrapping_mul(0x0000_0100_0000_01b3);
+        }
+    }
+    hash
+}
+
+/// Writes the goldens and stamps them with the protocol version they belong
+/// to. Traces that changed (the sim now behaves differently) are only blessed
+/// once `PROTOCOL_VERSION` was bumped, or when `LAB_BLESS_NO_BUMP=1` says the
+/// change cannot affect a peer (new scenario only, trace format, ...).
+fn bless_goldens(traces: &[(PathBuf, String)]) {
+    let stamp_path = scenarios_dir().join("goldens.protocol");
+    let stamp = std::fs::read_to_string(&stamp_path).unwrap_or_default();
+    let field = |key: &str| {
+        stamp
+            .lines()
+            .find_map(|line| line.strip_prefix(key))
+            .and_then(|v| v.trim().parse::<u64>().ok())
+    };
+    let changed_existing = traces.iter().any(|(path, actual)| {
+        std::fs::read_to_string(path.with_extension("golden.jsonl"))
+            .map(|old| old.replace("\r\n", "\n") != *actual)
+            .unwrap_or(false)
+    });
+    let bumped =
+        field("protocol_version = ") != Some(u64::from(shared::protocol::PROTOCOL_VERSION));
+    let no_bump = std::env::var("LAB_BLESS_NO_BUMP").is_ok_and(|v| v == "1");
+    assert!(
+        !changed_existing || bumped || no_bump,
+        "existing goldens changed: the sim behaves differently, so bump PROTOCOL_VERSION \
+         (crates/shared/src/protocol.rs) before blessing, or set LAB_BLESS_NO_BUMP=1 if no \
+         peer could be affected"
+    );
+    for (path, actual) in traces {
+        std::fs::write(path.with_extension("golden.jsonl"), actual).unwrap();
+    }
+    std::fs::write(
+        stamp_path,
+        format!(
+            "protocol_version = {}\ndigest = {}\n",
+            shared::protocol::PROTOCOL_VERSION,
+            digest(traces)
+        ),
+    )
+    .unwrap();
+}
+
+/// A golden edited or blessed without the stamp (or a stamp left behind by a
+/// merge) means the version decision was skipped.
+#[test]
+fn goldens_are_stamped_with_a_protocol_version() {
+    let stamp = std::fs::read_to_string(scenarios_dir().join("goldens.protocol"))
+        .expect("goldens.protocol missing: bless with LAB_BLESS=1");
+    let goldens: Vec<(PathBuf, String)> = {
+        let mut paths: Vec<_> = std::fs::read_dir(scenarios_dir())
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .filter(|p| p.extension().is_some_and(|e| e == "toml"))
+            .collect();
+        paths.sort();
+        paths
+            .into_iter()
+            .map(|path| {
+                let golden = std::fs::read_to_string(path.with_extension("golden.jsonl"))
+                    .unwrap()
+                    .replace("\r\n", "\n");
+                (path, golden)
+            })
+            .collect()
+    };
+    assert!(
+        stamp.contains(&format!("digest = {}\n", digest(&goldens))),
+        "goldens do not match goldens.protocol: re-bless with LAB_BLESS=1"
+    );
+    assert!(
+        stamp.contains(&format!(
+            "protocol_version = {}\n",
+            shared::protocol::PROTOCOL_VERSION
+        )),
+        "PROTOCOL_VERSION changed since the goldens were stamped: re-bless with LAB_BLESS=1 \
+         (LAB_BLESS_NO_BUMP=1 is not needed, the version already moved)"
     );
 }
 
@@ -217,9 +314,14 @@ fn full_speed_rubber_outlasts_the_late_turn_window() {
     let died = ticks(&lab, "a", |k| matches!(k, EventKind::Death { .. }));
     // A turn arriving up to 12 ticks late (netcode TURN_LATE_WINDOW_TICKS)
     // must still be able to save a cornered rider at the cap. The zone is
-    // wide at 3x and its outer ~4 ticks are free, so 16 ticks from entry is
-    // about 13 ticks of real contact.
-    assert!(died[0] - entered[0] >= 16, "{} ticks", died[0] - entered[0]);
+    // wide at 3x and its outer ~4 ticks are free, so the late window plus
+    // those 4 ticks from entry is about the window's worth of real contact.
+    let needed = shared::protocol::TURN_LATE_WINDOW_TICKS + 4;
+    assert!(
+        died[0] - entered[0] >= needed,
+        "{} ticks",
+        died[0] - entered[0]
+    );
 }
 
 /// Terminal speed of one wall touching a rider: what rim riding can reach.
