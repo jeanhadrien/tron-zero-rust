@@ -72,7 +72,7 @@ pub fn menu_controls(
             // Escape always converges: in a match it closes the menu from any
             // screen; offline it returns to the main screen. Either way the
             // menu reopens on the main screen.
-            menu.open = session.phase != ConnectionPhase::Playing || !menu.open;
+            menu.open = session.phase() != ConnectionPhase::Playing || !menu.open;
             menu.screen = MenuScreen::Main;
         }
         menu.block_this_frame = true;
@@ -494,7 +494,7 @@ pub fn menu_ui(
     };
     // Snapshot what the panel reads; mutations apply after `show` returns.
     let screen = menu.screen;
-    let phase = session.phase;
+    let phase = session.phase();
     let status = session.status.clone();
     let now = time.elapsed_secs_f64();
     let mut action = UiAction::None;
@@ -596,7 +596,7 @@ pub fn menu_ui(
         UiAction::RefreshBoard => standing.refresh(&config, &accounts),
         UiAction::Refresh => browser.request_refresh(&config),
         UiAction::ConnectRoom(endpoint) => {
-            if session.phase == ConnectionPhase::Offline {
+            if session.phase() == ConnectionPhase::Offline {
                 menu.screen = MenuScreen::Main;
                 menu.block_this_frame = true;
                 session.connect(endpoint, &join_name, now, &mut commands);
@@ -677,7 +677,9 @@ mod tests {
     #[test]
     fn escape_clears_queue_and_captures_the_closing_frame() {
         let mut world = test_world();
-        world.resource_mut::<Session>().phase = ConnectionPhase::Playing;
+        world
+            .resource_mut::<Session>()
+            .force_phase(ConnectionPhase::Playing);
         world
             .resource_mut::<ButtonInput<KeyCode>>()
             .press(KeyCode::Escape);
@@ -695,7 +697,9 @@ mod tests {
     #[test]
     fn escape_from_a_sub_screen_returns_to_the_game_and_resets_the_screen() {
         let mut world = test_world();
-        world.resource_mut::<Session>().phase = ConnectionPhase::Playing;
+        world
+            .resource_mut::<Session>()
+            .force_phase(ConnectionPhase::Playing);
         world.resource_mut::<MenuState>().open = true;
         world.resource_mut::<MenuState>().screen = MenuScreen::Settings;
         world
@@ -715,13 +719,18 @@ mod tests {
             .press(KeyCode::Escape);
         world.run_system_once(menu_controls).unwrap();
         assert!(world.resource::<MenuState>().open);
-        assert_eq!(world.resource::<Session>().phase, ConnectionPhase::Offline);
+        assert_eq!(
+            world.resource::<Session>().phase(),
+            ConnectionPhase::Offline
+        );
     }
 
     #[test]
     fn escape_cancels_capture_instead_of_toggling() {
         let mut world = test_world();
-        world.resource_mut::<Session>().phase = ConnectionPhase::Playing;
+        world
+            .resource_mut::<Session>()
+            .force_phase(ConnectionPhase::Playing);
         world.resource_mut::<RebindState>().capturing = Some((TurnSide::Left, 0));
         world.resource_mut::<RebindState>().error = Some("Key is already bound".into());
         world

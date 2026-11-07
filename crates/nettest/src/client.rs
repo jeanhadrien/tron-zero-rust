@@ -111,8 +111,9 @@ impl TestClient {
         );
         app.add_systems(Update, tc::connection::finish_disconnect);
         app.add_systems(Update, tc::connection::send_leave);
+        // Closes the link after the UDP client flushed the Leave (see client main.rs).
         app.add_systems(
-            PostUpdate,
+            PreUpdate,
             tc::connection::unlink_session.after(LinkSystems::Send),
         );
         tc::add_input_and_prediction(&mut app);
@@ -222,7 +223,7 @@ impl TestClient {
     }
 
     pub fn phase(&self) -> ConnectionPhase {
-        self.app.world().resource::<Session>().phase
+        self.app.world().resource::<Session>().phase()
     }
 
     pub fn is_playing(&self) -> bool {

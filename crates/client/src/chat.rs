@@ -127,10 +127,10 @@ pub fn chat_controls(
     mut senders: Query<&mut MessageSender<ChatSend>, (With<Client>, With<Connected>)>,
 ) {
     chat.swallow_this_frame = false;
-    if session.phase != ConnectionPhase::Playing || menu.open {
+    if session.phase() != ConnectionPhase::Playing || menu.open {
         chat.close();
         if matches!(
-            session.phase,
+            session.phase(),
             ConnectionPhase::Offline | ConnectionPhase::Connecting
         ) {
             log.0.clear();
@@ -202,7 +202,7 @@ pub fn chat_ui(
     chat: Res<ChatState>,
     log: Res<ChatLog>,
 ) {
-    if session.phase != ConnectionPhase::Playing || menu.open {
+    if session.phase() != ConnectionPhase::Playing || menu.open {
         return;
     }
     let lines = visible_lines(&log, time.elapsed_secs_f64(), chat.typing);
@@ -226,7 +226,7 @@ pub fn chat_ui(
                 );
             }
             if chat.typing {
-                let prompt = format!("{}: ", session.name);
+                let prompt = format!("{}: ", session.name());
                 let typed = format!("{}|", chat.buffer);
                 shadowed_line(
                     ui,

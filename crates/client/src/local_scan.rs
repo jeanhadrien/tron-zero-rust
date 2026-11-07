@@ -92,7 +92,7 @@ impl LocalServers {
 
 /// Whether the menu is up and idle: the only time scanning is worth its packets.
 fn should_scan(menu: &MenuState, session: &Session) -> bool {
-    menu.open && session.phase == ConnectionPhase::Offline
+    menu.open && session.phase() == ConnectionPhase::Offline
 }
 
 #[cfg(not(target_family = "wasm"))]
@@ -213,9 +213,9 @@ mod tests {
         let mut menu = MenuState::default();
         let mut session = Session::default();
         assert!(should_scan(&menu, &session));
-        session.phase = ConnectionPhase::Playing;
+        session.force_phase(ConnectionPhase::Playing);
         assert!(!should_scan(&menu, &session));
-        session.phase = ConnectionPhase::Offline;
+        session.force_phase(ConnectionPhase::Offline);
         menu.open = false;
         assert!(!should_scan(&menu, &session));
     }

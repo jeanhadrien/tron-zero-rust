@@ -4,6 +4,9 @@
 
 use std::time::Duration;
 
+use bevy::prelude::*;
+use lightyear::prelude::LinkSystems;
+use tron_zero_client::connection::{Session, send_leave, unlink_session};
 use tron_zero_client::sim::NetSim;
 use tron_zero_nettest::{Impairment, Net, serial};
 
@@ -31,8 +34,8 @@ fn names_are_sanitized_deduplicated_and_replicated_to_everyone() {
 
     // Whoever the server saw first keeps the plain name; the other is suffixed.
     let accepted = [
-        net.clients[a].session().name.clone(),
-        net.clients[b].session().name.clone(),
+        net.clients[a].session().name().to_owned(),
+        net.clients[b].session().name().to_owned(),
     ];
     assert_ne!(accepted[0], accepted[1]);
     assert!(
@@ -149,9 +152,72 @@ fn leaving_and_rejoining_repeatedly_cleans_up_and_renames() {
             net.server.human_names() == expected && net.clients[b].rider_names() == expected
         });
         assert!(synced, "cycle {cycle}: second client does not see {name}");
-        assert_eq!(net.clients[a].session().name, name);
+        assert_eq!(net.clients[a].session().name(), name);
     }
     assert_eq!(net.server.link_count(), 2);
+}
+
+/// Armed by the test below: the next frame, `disconnect_once_armed` fires.
+#[derive(Resource)]
+struct DisconnectArmed;
+
+/// Disconnects once armed, at whatever point of the frame it is scheduled.
+fn disconnect_once_armed(
+    armed: Option<Res<DisconnectArmed>>,
+    mut session: ResMut<Session>,
+    mut commands: Commands,
+) {
+    if armed.is_some() {
+        session.disconnect("disconnected at an awkward moment");
+        commands.remove_resource::<DisconnectArmed>();
+    }
+}
+
+/// Playing client whose `disconnect()` is forced to land where `install`
+/// schedules it; the server must learn of the Leave promptly. Raw UDP has no
+/// disconnect handshake, so without a Leave the slot is only freed by the 5 s
+/// heartbeat timeout.
+fn disconnect_lands_and_server_notices(install: impl FnOnce(&mut App)) {
+    let _guard = serial();
+    let mut net = Net::new(Impairment::NONE);
+    let a = net.add_client_with("Alpha", |_| {});
+    assert!(playing(&mut net, &[a]));
+    assert_eq!(net.server.link_count(), 1);
+    install(&mut net.clients[a].app);
+    net.clients[a].app.insert_resource(DisconnectArmed);
+    let freed = net.run_until(Duration::from_secs(2), |net| net.server.link_count() == 0);
+    assert!(
+        freed,
+        "the server kept the link: no Leave arrived (client {:?}, status {})",
+        net.clients[a].phase(),
+        net.clients[a].session().status
+    );
+}
+
+#[test]
+fn a_disconnect_right_after_send_leave_still_tells_the_server() {
+    disconnect_lands_and_server_notices(|app| {
+        app.add_systems(Update, disconnect_once_armed.after(send_leave));
+    });
+}
+
+#[test]
+fn a_disconnect_right_before_unlink_still_tells_the_server() {
+    disconnect_lands_and_server_notices(|app| {
+        app.add_systems(
+            PreUpdate,
+            disconnect_once_armed
+                .after(LinkSystems::Send)
+                .before(unlink_session),
+        );
+    });
+}
+
+#[test]
+fn a_disconnect_between_the_menu_pass_and_the_send_still_tells_the_server() {
+    disconnect_lands_and_server_notices(|app| {
+        app.add_systems(PostUpdate, disconnect_once_armed.before(LinkSystems::Send));
+    });
 }
 
 #[test]

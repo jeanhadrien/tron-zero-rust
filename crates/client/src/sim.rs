@@ -127,7 +127,7 @@ fn delay_uplink(
     session: Res<Session>,
     mut links: Query<(&mut Link, &mut UplinkDelay), With<Client>>,
 ) {
-    let flush = session.phase == ConnectionPhase::Disconnecting;
+    let flush = session.phase() == ConnectionPhase::Disconnecting;
     let now = Instant::now();
     for (mut link, mut delayed) in &mut links {
         for payload in link.send.drain().collect::<Vec<_>>() {

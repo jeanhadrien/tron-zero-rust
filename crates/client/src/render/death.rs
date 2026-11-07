@@ -67,7 +67,7 @@ pub fn death_ui(
             .find(|(_, controlled)| controlled.is_none_or(|c| c.owner == client))
     });
     let text = death_message(
-        session.phase,
+        session.phase(),
         menu.open,
         local.map(|(alive, _)| alive.0),
         &respawn,
@@ -126,7 +126,9 @@ mod tests {
                 IsAlive(false),
             ))
             .id();
-        world.resource_mut::<Session>().phase = ConnectionPhase::Playing;
+        world
+            .resource_mut::<Session>()
+            .force_phase(ConnectionPhase::Playing);
         world.resource_mut::<MenuState>().open = false;
         world.run_system_once(update_probe).unwrap();
         assert!(!world.resource::<Probe>().0.is_empty());
@@ -145,7 +147,9 @@ mod tests {
         assert!(world.resource::<Probe>().0.is_empty());
 
         world.entity_mut(rider).insert(IsAlive(false));
-        world.resource_mut::<Session>().phase = ConnectionPhase::Disconnecting;
+        world
+            .resource_mut::<Session>()
+            .force_phase(ConnectionPhase::Disconnecting);
         world.run_system_once(update_probe).unwrap();
         assert!(world.resource::<Probe>().0.is_empty());
     }
@@ -190,7 +194,7 @@ mod tests {
                 .find(|(_, controlled)| controlled.is_none_or(|c| c.owner == client))
         });
         let text = death_message(
-            session.phase,
+            session.phase(),
             menu.open,
             local.map(|(alive, _)| alive.0),
             &respawn,

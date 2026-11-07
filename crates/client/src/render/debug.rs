@@ -334,7 +334,7 @@ pub fn debug_panel_ui(
     bots: Query<(Entity, &Rendered, &BotDebug, Option<&DisplayName>, &IsAlive), DebugBot>,
     camera: Query<&Transform, With<Camera2d>>,
 ) {
-    if !overlay.enabled || menu.open || session.phase != ConnectionPhase::Playing {
+    if !overlay.enabled || menu.open || session.phase() != ConnectionPhase::Playing {
         return;
     }
     let Ok(ctx) = contexts.ctx_mut() else {

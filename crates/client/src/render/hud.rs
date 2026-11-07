@@ -52,7 +52,7 @@ pub fn status_badge_ui(
     sim: Option<Res<NetSim>>,
     links: Query<&Link, With<Client>>,
 ) {
-    if session.phase != ConnectionPhase::Playing || menu.open {
+    if session.phase() != ConnectionPhase::Playing || menu.open {
         return;
     }
     let Ok(ctx) = contexts.ctx_mut() else {
@@ -106,7 +106,11 @@ pub fn hud_ui(
             .iter()
             .find(|(_, _, owner)| owner.is_none_or(|owner| owner.owner == client))
     });
-    if !hud_visible(session.phase, menu.open, local.map(|(_, alive, _)| alive.0)) {
+    if !hud_visible(
+        session.phase(),
+        menu.open,
+        local.map(|(_, alive, _)| alive.0),
+    ) {
         return;
     }
     let Ok(ctx) = contexts.ctx_mut() else {
@@ -204,7 +208,9 @@ mod tests {
                 IsAlive(true),
             ))
             .id();
-        world.resource_mut::<Session>().phase = ConnectionPhase::Playing;
+        world
+            .resource_mut::<Session>()
+            .force_phase(ConnectionPhase::Playing);
         world.resource_mut::<MenuState>().open = false;
         world.run_system_once(update_probe).unwrap();
         let probe = world.resource::<Probe>();
@@ -232,12 +238,16 @@ mod tests {
         assert!(probe.0);
         assert_eq!(probe.1, Some(100));
 
-        world.resource_mut::<Session>().phase = ConnectionPhase::Disconnecting;
+        world
+            .resource_mut::<Session>()
+            .force_phase(ConnectionPhase::Disconnecting);
         world.run_system_once(update_probe).unwrap();
         assert!(!world.resource::<Probe>().0);
 
         world.despawn(rider);
-        world.resource_mut::<Session>().phase = ConnectionPhase::Playing;
+        world
+            .resource_mut::<Session>()
+            .force_phase(ConnectionPhase::Playing);
         world.run_system_once(update_probe).unwrap();
         assert!(!world.resource::<Probe>().0);
     }
@@ -267,7 +277,11 @@ mod tests {
                 .iter()
                 .find(|(_, _, owner)| owner.is_none_or(|owner| owner.owner == client))
         });
-        let visible = hud_visible(session.phase, menu.open, local.map(|(_, alive, _)| alive.0));
+        let visible = hud_visible(
+            session.phase(),
+            menu.open,
+            local.map(|(_, alive, _)| alive.0),
+        );
         let Some(mut probe) = probe else { return };
         probe.0 = visible;
         let Some((rubber, _, _)) = local.filter(|_| visible) else {

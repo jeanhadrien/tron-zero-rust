@@ -107,8 +107,11 @@ fn main() {
             .chain(),
     );
     app.add_systems(Update, connection::send_leave);
+    // The UDP client flushes `Link::send` in PreUpdate (not PostUpdate), so the
+    // Leave queued in Update only reaches the socket on the next frame: close
+    // the link after that flush, or the Leave is lost.
     app.add_systems(
-        PostUpdate,
+        PreUpdate,
         connection::unlink_session.after(LinkSystems::Send),
     );
 
