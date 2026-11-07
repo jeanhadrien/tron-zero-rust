@@ -28,7 +28,7 @@ Two rules explain most surprises:
 ### 1. Play against bots, desktop (the everyday loop)
 
 ```
-play-local.bat            # or: play-local.bat release
+scripts\play-local.bat            # or: scripts\play-local.bat release  (Linux/macOS: scripts/play-local.sh)
 ```
 
 Server with bots + a client that joins by itself with a simulated 20 ms ping.

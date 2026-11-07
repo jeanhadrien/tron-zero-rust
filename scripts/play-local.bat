@@ -2,12 +2,12 @@
 REM One-click local test: server (with its bot roster) + client in separate
 REM windows, the client auto-joining with a simulated ~20 ms round-trip ping.
 REM
-REM   play-local.bat            dev profile (deps are already fully optimised)
-REM   play-local.bat release    --release build (slower first build, fastest game)
+REM   scripts\play-local.bat            dev profile (deps are already fully optimised)
+REM   scripts\play-local.bat release    --release build (slower first build, fastest game)
 REM
 REM Override before running, e.g.  set TRON_SIM_LATENCY_MS=80   (0 = no simulation)
 REM Also honoured: TRON_SIM_JITTER_MS, TRON_SIM_LOSS_PCT (percent, per direction).
-cd /d "%~dp0"
+cd /d "%~dp0.."
 where cargo >nul 2>nul || (echo cargo not on PATH. Open a new shell after rustup install. & pause & exit /b 1)
 
 set "CARGO_FLAGS="

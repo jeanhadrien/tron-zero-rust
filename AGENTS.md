@@ -58,7 +58,7 @@ Code style (comments, newtypes, errors, constants, logging, fmt/clippy) is in `S
 - `cargo test -p tron-zero-shared` — sim core (unit, property, rollback); fast.
 - `cargo test -p tron-zero-lab` — mechanics + golden traces; bless intended changes with `LAB_BLESS=1`.
 - `cargo test -p tron-zero-nettest` — netcode over real UDP (about 1-2 min; serialized).
-- `play-local.bat [release]` — server + bots + auto-joining client with simulated 20 ms RTT (`TRON_SIM_*`, `TRON_AUTOCONNECT`).
+- `scripts/play-local.bat [release]` (`scripts/play-local.sh` on Linux/macOS) — server + bots + auto-joining client with simulated 20 ms RTT (`TRON_SIM_*`, `TRON_AUTOCONNECT`).
 - `dev-watch.bat` — `cargo watch` for server and client (sets `TRON_BOT_DEBUG=1`).
 - `dev-cloud.bat [name]` — local server announcing to the Cloud Run manager (`ALLOW_LOOPBACK_ANNOUNCE=1`, so it advertises 127.0.0.1 on a public list).
 - `cd server-manager && bun run dev` — local lobby on `:3001`.

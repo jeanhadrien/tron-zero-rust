@@ -66,11 +66,11 @@ If a build mysteriously rebuilds from scratch, you probably touched the repo fro
 
 The WASM web client target (`wasm32-unknown-unknown`) is not set up yet — see `docs/guides/building.md`.
 
-## One-click local test (`play-local.bat`)
+## One-click local test (`scripts\play-local.bat`, `scripts/play-local.sh`)
 
 ```
-play-local.bat            # dev profile
-play-local.bat release    # --release (longer first build, fastest game)
+scripts\play-local.bat            # dev profile
+scripts\play-local.bat release    # --release (longer first build, fastest game)
 ```
 
 Opens two windows: the server (with its bot roster) and the client, which
