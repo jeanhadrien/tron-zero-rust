@@ -8,6 +8,7 @@ use shared::protocol::{RespawnChannel, RespawnOutcome, RespawnReply, RespawnRequ
 
 use crate::admission::{AwaitingHello, MAX_UNADMITTED_LINKS};
 use crate::budget::{LinkBudget, Meter};
+use crate::look::LinkLook;
 use crate::session::SessionLease;
 
 #[derive(Component)]
@@ -107,6 +108,7 @@ pub fn on_client_connected(
         lease,
         LinkBudget::default(),
         crate::turns::TurnQueue::default(),
+        LinkLook::default(),
         AwaitingHello::default(),
     ));
 }
@@ -114,7 +116,13 @@ pub fn on_client_connected(
 /// Spawn the controlled rider for an admitted client link. Spawn allocation
 /// is serialized in FixedUpdate against live geometry (`InitialSpawn`); the
 /// rider exists even when the arena has no safe space yet.
-pub fn spawn_human(commands: &mut Commands, link: Entity, peer: PeerId, name: String) -> Entity {
+pub fn spawn_human(
+    commands: &mut Commands,
+    link: Entity,
+    peer: PeerId,
+    name: String,
+    look: LinkLook,
+) -> Entity {
     // (Split insert: the 15-component tuple Bundle limit is already reached.)
     commands
         .spawn((
@@ -127,7 +135,6 @@ pub fn spawn_human(commands: &mut Commands, link: Entity, peer: PeerId, name: St
             shared::SpeedMult(0.0),
             shared::TargetSpeedMult(0.0),
             shared::Rubber(0.0),
-            shared::PlayerColor(0x00FFCC),
             shared::IsAlive(false),
             // Replicate to all clients.
             Replicate::to_clients(NetworkTarget::All),
@@ -141,7 +148,11 @@ pub fn spawn_human(commands: &mut Commands, link: Entity, peer: PeerId, name: St
                 lifetime: Lifetime::SessionBased,
             },
         ))
-        .insert(shared::DisplayName(name))
+        .insert((
+            shared::DisplayName(name),
+            shared::PlayerColor(look.color),
+            look.shape,
+        ))
         .id()
 }
 
@@ -404,11 +415,18 @@ mod tests {
             ShouldHandleDeath(false),
             Trail(vec![Vec2::ZERO, Vec2::X]),
             ActionState(PlayerInput::TurnLeftFor(7)),
+            PlayerColor(0x123456),
+            RiderShape::Hexagon,
         ));
         let request = RespawnRequest { generation: 7 };
         assert_eq!(
             try_respawn(&mut world, owner, request),
             RespawnOutcome::Accepted
+        );
+        assert_eq!(world.get::<PlayerColor>(player).unwrap().0, 0x123456);
+        assert_eq!(
+            *world.get::<RiderShape>(player).unwrap(),
+            RiderShape::Hexagon
         );
         assert_eq!(
             world

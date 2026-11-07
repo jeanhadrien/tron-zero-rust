@@ -59,6 +59,8 @@ impl ChatState {
 pub struct ChatEntry {
     pub name: String,
     pub text: String,
+    /// Sender color (packed RGB); not drawn yet.
+    pub color: u32,
     pub at: f64,
 }
 
@@ -185,6 +187,7 @@ pub fn receive_chat(
             log.push(ChatEntry {
                 name: line.name,
                 text: line.text,
+                color: line.color,
                 at: time.elapsed_secs_f64(),
             });
         }
@@ -275,6 +278,7 @@ mod tests {
             log.push(ChatEntry {
                 name: "a".into(),
                 text: i.to_string(),
+                color: 0,
                 at: *at,
             });
         }

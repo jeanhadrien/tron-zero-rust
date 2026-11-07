@@ -3,8 +3,8 @@
 
 use bevy::prelude::*;
 use lightyear::prelude::*;
-use shared::DisplayName;
 use shared::protocol::{ChatChannel, ChatLine, ChatSend, sanitize_chat};
+use shared::{DisplayName, PlayerColor};
 
 use crate::admission::AwaitingHello;
 use crate::budget::{LinkBudget, Meter};
@@ -29,7 +29,7 @@ pub fn collect_chat(
         ),
         (With<Connected>, Without<AwaitingHello>),
     >,
-    riders: Query<(&ControlledBy, &DisplayName), With<Human>>,
+    riders: Query<(&ControlledBy, &DisplayName, &PlayerColor), With<Human>>,
     mut outgoing: Query<&mut MessageSender<ChatLine>, (With<Connected>, Without<AwaitingHello>)>,
 ) {
     let now = time.elapsed_secs_f64();
@@ -51,12 +51,14 @@ pub fn collect_chat(
             let Some(text) = sanitize_chat(&message.text) else {
                 continue;
             };
-            let Some((_, name)) = riders.iter().find(|(owner, _)| owner.owner == link) else {
+            let Some((_, name, color)) = riders.iter().find(|(owner, ..)| owner.owner == link)
+            else {
                 continue;
             };
             lines.push(ChatLine {
                 name: name.0.clone(),
                 text,
+                color: color.0,
             });
         }
     }

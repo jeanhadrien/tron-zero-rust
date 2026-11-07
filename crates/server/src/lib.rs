@@ -10,6 +10,7 @@ pub mod bot;
 pub mod budget;
 pub mod chat;
 pub mod elimination;
+pub mod look;
 pub mod probe;
 pub mod ranked;
 pub mod session;
@@ -58,6 +59,9 @@ pub fn add_core(app: &mut App, port: u16) {
             turns::collect_turn_commands,
             chat::collect_chat,
             session::receive_session_requests,
+            // Before the hello is answered: a look sent with it is on the link
+            // by the time the rider is spawned.
+            look::collect_looks.before(admission::handle_hello),
             admission::handle_hello,
             admission::discard_late_handshakes.after(admission::handle_hello),
         )

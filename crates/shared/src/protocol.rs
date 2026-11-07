@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize};
 /// fine and then silently mispredict. The lab's golden traces back this up:
 /// blessing changed goldens fails unless this was bumped (see
 /// `golden_traces_match` and `scenarios/goldens.protocol`).
-pub const PROTOCOL_VERSION: u32 = 7;
+pub const PROTOCOL_VERSION: u32 = 8;
 
 /// Bits of one sim constant, checked against its declared type: a constant
 /// listed under the wrong type does not compile.
@@ -281,6 +281,18 @@ pub struct ChatSend {
 pub struct ChatLine {
     pub name: String,
     pub text: String,
+    /// Packed RGB of the sender at send time.
+    pub color: u32,
+}
+
+/// Client -> server: the rider look the player chose. Sent on
+/// [`SessionChannel`] (ordered), so the newest value always wins. The server
+/// stores it per link; it applies to whichever rider the link owns.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SetLook {
+    /// Packed RGB; the server masks it to 24 bits.
+    pub color: u32,
+    pub shape: RiderShape,
 }
 
 /// Ordered-reliable channel for [`ChatSend`] and [`ChatLine`].
@@ -494,6 +506,9 @@ pub fn register_protocol(app: &mut App) {
         .add_direction(NetworkDirection::ClientToServer);
     app.register_message::<ChatLine>()
         .add_direction(NetworkDirection::ServerToClient);
+    // Registered last on purpose, like the ticket: appending keeps earlier ids stable.
+    app.register_message::<SetLook>()
+        .add_direction(NetworkDirection::ClientToServer);
     // --- Input ---
     app.add_plugins(InputPlugin::<PlayerInput>::default());
 
@@ -532,7 +547,10 @@ pub fn register_protocol(app: &mut App) {
     // Final at spawn: the server admits a player (fixing the name) before
     // spawning the rider, so late joiners get it with the initial state.
     app.component::<DisplayName>().replicate_once();
-    app.component::<PlayerColor>().replicate_once();
+    // Player-chosen and changeable live, so it keeps replicating (no prediction:
+    // purely cosmetic, never read by the sim).
+    app.component::<PlayerColor>().replicate();
+    app.component::<RiderShape>().replicate();
 
     app.component::<Arena>().replicate_once();
     app.component::<ArenaSize>().replicate_once();
@@ -580,6 +598,19 @@ mod tests {
             MAX_CHAT_CHARS
         );
         assert_eq!(sanitize_chat(&"a".repeat(MAX_CHAT_RAW_BYTES + 1)), None);
+    }
+
+    #[test]
+    fn set_look_round_trips_through_postcard() {
+        for shape in RiderShape::ALL {
+            let look = SetLook {
+                color: 0x12_34_56,
+                shape,
+            };
+            let mut buffer = [0u8; 16];
+            let bytes = postcard::to_slice(&look, &mut buffer).unwrap();
+            assert_eq!(postcard::from_bytes::<SetLook>(bytes).unwrap(), look);
+        }
     }
 
     #[test]

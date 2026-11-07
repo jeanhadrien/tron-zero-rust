@@ -20,6 +20,7 @@ use crate::constants::BASE_RUBBER;
     TargetSpeedMult,
     IsAlive,
     PlayerColor,
+    RiderShape,
     Rubber,
     IsSliding,
     IsColliding,
@@ -80,9 +81,48 @@ impl Default for TargetSpeedMult {
     }
 }
 
-/// Packed RGB `(r<<16)|(g<<8)|b`.
-#[derive(Component, Clone, Copy, Debug, Default, Serialize, Deserialize, Reflect)]
+/// Packed RGB `(r<<16)|(g<<8)|b`. Chosen by the player and changeable live
+/// (see `SetLook`), so it is replicated, not fixed at spawn.
+#[derive(
+    Component, Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq, Reflect,
+)]
 pub struct PlayerColor(pub u32);
+
+/// Outline drawn for a rider. Cosmetic: no hitbox, centered on the head point.
+#[derive(
+    Component, Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq, Hash, Reflect,
+)]
+pub enum RiderShape {
+    #[default]
+    Circle,
+    Triangle,
+    Square,
+    Diamond,
+    Hexagon,
+    Chevron,
+}
+
+impl RiderShape {
+    pub const ALL: [Self; 6] = [
+        Self::Circle,
+        Self::Triangle,
+        Self::Square,
+        Self::Diamond,
+        Self::Hexagon,
+        Self::Chevron,
+    ];
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Circle => "Circle",
+            Self::Triangle => "Triangle",
+            Self::Square => "Square",
+            Self::Diamond => "Diamond",
+            Self::Hexagon => "Hexagon",
+            Self::Chevron => "Chevron",
+        }
+    }
+}
 
 /// Alive flag. Toggled on death, the entity persists for respawn.
 #[derive(Component, Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Reflect)]

@@ -13,6 +13,7 @@ use shared::protocol::{
 use std::collections::HashMap;
 
 use crate::budget::{LinkBudget, Meter};
+use crate::look::LinkLook;
 use crate::ranked::{AccountId, RankedMode, RankedState, TicketClaims, now_ms, verify_ticket};
 use crate::session::SessionLease;
 use crate::systems::{Human, spawn_human};
@@ -170,6 +171,7 @@ pub fn handle_hello(
         (
             Entity,
             &RemoteId,
+            &LinkLook,
             &mut AwaitingHello,
             &mut SessionLease,
             &mut LinkBudget,
@@ -190,8 +192,17 @@ pub fn handle_hello(
     let mut taken: Vec<String> = names.iter().map(|name| name.0.clone()).collect();
     let mut connected: Vec<String> = accounts.iter().map(|a| a.id.clone()).collect();
     let now = time.elapsed_secs_f64();
-    for (link, remote, mut waiting, mut lease, mut budget, mut receiver, mut tickets, mut sender) in
-        &mut pending
+    for (
+        link,
+        remote,
+        look,
+        mut waiting,
+        mut lease,
+        mut budget,
+        mut receiver,
+        mut tickets,
+        mut sender,
+    ) in &mut pending
     {
         if lease.is_closing() {
             continue;
@@ -236,7 +247,7 @@ pub fn handle_hello(
                     .remove::<AwaitingHello>()
                     .insert(ReplicationSender);
                 refresh_link_visibility(&mut commands, link);
-                let rider = spawn_human(&mut commands, link, remote.0, name.clone());
+                let rider = spawn_human(&mut commands, link, remote.0, name.clone(), *look);
                 if let Some(account) = account {
                     connected.push(account.id.clone());
                     commands.entity(rider).insert(account);

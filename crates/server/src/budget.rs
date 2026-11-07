@@ -27,17 +27,20 @@ pub enum Meter {
     /// `ChatSend` messages. Far above the soft [`LinkBudget::allow_chat`] rate
     /// (which silently drops), so only a hostile peer reaches it.
     ChatMessages,
+    /// `SetLook` messages. A client coalesces color-picker drags to at most a
+    /// handful per second; this leaves room for bursts and reconnect resends.
+    LookChanges,
 }
 
 impl Meter {
-    const COUNT: usize = 6;
+    const COUNT: usize = 7;
 
     fn allowance_per_sec(self) -> u32 {
         match self {
             Self::TurnBatches => 5 * TICK_HZ as u32,
             Self::TurnRejections => 60,
             Self::SessionRequests | Self::RespawnRequests | Self::Handshake => 10,
-            Self::ChatMessages => 20,
+            Self::ChatMessages | Self::LookChanges => 20,
         }
     }
 }
@@ -107,6 +110,17 @@ mod tests {
         assert!(!budget.spend(Meter::SessionRequests, 1, 10.5));
         assert!(budget.spend(Meter::RespawnRequests, 1, 10.5));
         assert!(budget.spend(Meter::SessionRequests, 1, 11.0));
+    }
+
+    #[test]
+    fn look_changes_have_their_own_meter() {
+        let mut budget = LinkBudget::default();
+        for _ in 0..Meter::LookChanges.allowance_per_sec() {
+            assert!(budget.spend(Meter::LookChanges, 1, 5.0));
+        }
+        assert!(!budget.spend(Meter::LookChanges, 1, 5.5));
+        assert!(budget.spend(Meter::ChatMessages, 1, 5.5));
+        assert!(budget.spend(Meter::LookChanges, 1, 6.0));
     }
 
     #[test]
