@@ -156,8 +156,18 @@ impl Session {
         now: f64,
         commands: &mut Commands,
     ) {
-        self.ticket = Some(ticket);
-        self.connect(endpoint, name, now, commands);
+        // A ticket is only stored when this call really starts connecting.
+        if self.can_start() {
+            self.ticket = Some(ticket);
+            self.connect(endpoint, name, now, commands);
+        }
+    }
+
+    /// Whether a new connection may start: offline, no link left over, no quit pending.
+    fn can_start(&self) -> bool {
+        self.phase == ConnectionPhase::Offline
+            && self.client.is_none()
+            && self.quit_requested_at.is_none()
     }
 
     /// [`Session::connect`] over another transport: `io` is the link's IO
@@ -170,10 +180,7 @@ impl Session {
         now: f64,
         commands: &mut Commands,
     ) {
-        if self.phase != ConnectionPhase::Offline
-            || self.client.is_some()
-            || self.quit_requested_at.is_some()
-        {
+        if !self.can_start() {
             self.ticket = None;
             return;
         }
@@ -560,6 +567,8 @@ pub fn finish_disconnect(
     *outbox = TurnOutbox::default();
     session.phase = ConnectionPhase::Offline;
     session.admitted = false;
+    // A ticket the hello never consumed must not reach the next server.
+    session.ticket = None;
 }
 
 #[cfg(test)]
@@ -652,6 +661,55 @@ mod tests {
                 session.request_quit(2.0);
                 assert_eq!(session.quit_requested_at, Some(2.0));
                 assert_eq!(session.phase, ConnectionPhase::Disconnecting);
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn a_ticket_never_outlives_a_dial_that_did_not_connect() {
+        let address = SocketAddr::from(([127, 0, 0, 1], 9));
+        let mut world = World::new();
+        world.insert_resource(Session::default());
+        world.init_resource::<PendingInput>();
+        world.init_resource::<InputLifecycle>();
+        world.init_resource::<RespawnUi>();
+        world.init_resource::<TurnSeq>();
+        world.init_resource::<TurnAckState>();
+        world.init_resource::<TurnOutbox>();
+        // A ranked dial that never reaches `Connected`, then is torn down.
+        world
+            .run_system_once(move |mut s: ResMut<Session>, mut commands: Commands| {
+                s.connect_with_ticket(address, "x", vec![1, 2, 3], 0.0, &mut commands);
+                assert!(s.ticket.is_some());
+                s.disconnect("timed out");
+                s.unlink_requested = true;
+            })
+            .unwrap();
+        world.run_system_once(finish_disconnect).unwrap();
+        let session = world.resource::<Session>();
+        assert_eq!(session.phase, ConnectionPhase::Offline);
+        assert!(session.ticket.is_none());
+        // The next, plain connect must not carry it to another server.
+        world
+            .run_system_once(move |mut s: ResMut<Session>, mut commands: Commands| {
+                s.connect(address, "x", 1.0, &mut commands);
+                assert!(s.ticket.is_none());
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn a_ticket_is_not_stored_while_a_session_exists() {
+        let address = SocketAddr::from(([127, 0, 0, 1], 9));
+        let mut world = World::new();
+        world.insert_resource(Session {
+            phase: ConnectionPhase::Connecting,
+            ..Default::default()
+        });
+        world
+            .run_system_once(move |mut s: ResMut<Session>, mut commands: Commands| {
+                s.connect_with_ticket(address, "x", vec![1], 0.0, &mut commands);
+                assert!(s.ticket.is_none());
             })
             .unwrap();
     }
