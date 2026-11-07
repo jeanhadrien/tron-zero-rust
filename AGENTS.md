@@ -59,8 +59,8 @@ Code style (comments, newtypes, errors, constants, logging, fmt/clippy) is in `S
 - `cargo test -p tron-zero-lab` — mechanics + golden traces; bless intended changes with `LAB_BLESS=1`.
 - `cargo test -p tron-zero-nettest` — netcode over real UDP (about 1-2 min; serialized).
 - `scripts/play-local.bat [release]` (`scripts/play-local.sh` on Linux/macOS) — server + bots + auto-joining client with simulated 20 ms RTT (`TRON_SIM_*`, `TRON_AUTOCONNECT`).
-- `dev-watch.bat` — `cargo watch` for server and client (sets `TRON_BOT_DEBUG=1`).
-- `dev-cloud.bat [name]` — local server announcing to the Cloud Run manager (`ALLOW_LOOPBACK_ANNOUNCE=1`, so it advertises 127.0.0.1 on a public list).
+- `scripts/dev-watch.bat` — `cargo watch` for server and client (sets `TRON_BOT_DEBUG=1`).
+- `scripts/dev-cloud.bat [name]` — local server announcing to the Cloud Run manager (`ALLOW_LOOPBACK_ANNOUNCE=1`, so it advertises 127.0.0.1 on a public list).
 - `cd server-manager && bun run dev` — local lobby on `:3001`.
 
 ## Doc map
@@ -103,7 +103,7 @@ answers the question:
   long-lived processes in the background and stop them when done. Don't launch
   the windowed client unless asked: you can't play it at game speed.
 
-The user may have `cargo watch` running (`dev-watch.bat`); a "Blocking waiting
+The user may have `cargo watch` running (`scripts/dev-watch.bat`); a "Blocking waiting
 for file lock" message means you are sharing `target/` with it.
 
 ### Test loop

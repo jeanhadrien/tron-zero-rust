@@ -33,7 +33,7 @@ scripts\play-local.bat            # or: scripts\play-local.bat release  (Linux/m
 
 Server with bots + a client that joins by itself with a simulated 20 ms ping.
 No lobby involved. `set TRON_SIM_LATENCY_MS=0` first to remove the simulated
-ping. Hot reload instead: `dev-watch.bat`.
+ping. Hot reload instead: `scripts/dev-watch.bat`.
 
 ### 2. Web client against a local server
 
@@ -70,7 +70,7 @@ the desktop client and `https://play.tronzero.dev` on this PC both list it
 and can join it.
 
 ```
-dev-cloud.bat "JH dev"
+scripts\dev-cloud.bat "JH dev"
 ```
 
 To let **friends** join a server on your PC instead: forward UDP 5000 and

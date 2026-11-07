@@ -34,7 +34,7 @@ binaries fails.
 
 ### Hot-reload (auto restart on save)
 
-`dev-watch.bat` opens a watcher window for the server and one for the client
+`scripts/dev-watch.bat` opens a watcher window for the server and one for the client
 (each restarts only for its own crate or `shared`, and sets `TRON_BOT_DEBUG=1`
 for the bot overlay). By hand, in two separate terminals:
 
@@ -131,7 +131,7 @@ client still lists any server it detects on this machine. Server env vars (`MANA
 `ADVERTISED_HOST`, `ALLOW_LOOPBACK_ANNOUNCE`, ...) are in `docs/guides/building.md`;
 the API and the announce protocol are in `server-manager/README.md`.
 
-`dev-cloud.bat [name]` starts a local server that announces itself to the
+`scripts/dev-cloud.bat [name]` starts a local server that announces itself to the
 Cloud Run manager (with `ALLOW_LOOPBACK_ANNOUNCE=1` and `ADVERTISED_HOST=127.0.0.1`,
 so it puts a loopback address on a **public** list; close the server window
 when done) and a client pointed at the same manager.
