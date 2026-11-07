@@ -9,6 +9,7 @@ This document outlines the core game mechanics. These should be respected at all
 Each player controls a continuous-moving lightcycle.
 
 - **Base Speed:** Players move forward at 360 world units per second at a speed multiplier of 1. The simulation runs at 120 ticks per second.
+- **Look:** rider shape and color are chosen by the player and purely cosmetic; collisions use the head point and trail only. A respawn keeps the look.
 - **Arena:** a 2000 x 2000 square (5.6 s edge to edge at base speed). Small enough that 2-8 riders meet within seconds; the square shape is assumed by the bots' grids.
 
 ## 2. Movement & Turning

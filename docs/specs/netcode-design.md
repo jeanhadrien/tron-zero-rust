@@ -57,18 +57,27 @@ own (`Predicted` + `Controlled`). Covered by `nettest/tests/ownership.rs`.
 The hello messages are registered first in `register_protocol` so a mismatched
 build can still decode the rejection. `DisplayName` stays `replicate_once`
 because the name is final when the rider spawns.
+The rider look is not: `PlayerColor` and `RiderShape` are plain `replicate()`
+(neither predicted nor interpolated), so a change reaches every client, the
+owner's own predicted rider included (`nettest/tests/look.rs`). The client sends
+`SetLook { color, shape }` on `SessionChannel` right after its hello, then on
+every change (coalesced to a few per second). It is registered last, to keep the
+existing message ids stable. The server keeps the newest look per link
+(`LinkLook`, drained by `collect_looks` before `handle_hello`), spawns the rider
+with it and writes later changes to the rider the link owns; ownership comes from
+the link, never from the message. Bots keep the default (Circle).
 Names are stripped of control and invisible format characters (bidi overrides,
 zero-width), exotic whitespace is normalized, and de-duplication compares a
 case- and space-folded `name_key`.
 Each link also has a `LinkBudget` (`budget.rs`) counting messages that a
 well-behaved client sends rarely: turn batches, rejected turns, session and
-respawn requests, chat messages, in one-second windows. A link over its
+respawn requests, chat messages, look changes, in one-second windows. A link over its
 allowance is closed.
 Chat (`server/chat.rs`) uses an ordered-reliable `ChatChannel`: the client sends
 `ChatSend { text }`, the server sanitizes it (`sanitize_chat`: no control or
 invisible format characters, collapsed whitespace, 160 chars), labels it with
 the name of the link's rider (never client-supplied) and broadcasts a
-`ChatLine { name, text }` to every admitted link. A soft per-link leaky bucket
+`ChatLine { name, color, text }` (the sender's current color) to every admitted link. A soft per-link leaky bucket
 (burst 4, 1 message/s) silently drops excess messages; only a flood far above
 a human rate (`Meter::ChatMessages`) closes the link.
 This is basic lifecycle handling and abuse bounding, not authenticated

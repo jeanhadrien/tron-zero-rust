@@ -131,6 +131,37 @@ impl TestServer {
             .map(|(id, _)| id.0.clone())
     }
 
+    /// Color and shape of the human rider displayed as `name`.
+    pub fn look_of(&mut self, name: &str) -> Option<(u32, shared::RiderShape)> {
+        let world = self.app.world_mut();
+        let mut query = world.query_filtered::<(
+            &shared::DisplayName,
+            &shared::PlayerColor,
+            &shared::RiderShape,
+        ), With<Human>>();
+        query
+            .iter(world)
+            .find(|(display, ..)| display.0 == name)
+            .map(|(_, color, shape)| (color.0, *shape))
+    }
+
+    /// Spawn a bot-like rider (no brain): the same replicated bundle as
+    /// `spawn_bot_entity`, so it carries whatever look defaults apply to bots.
+    pub fn spawn_bot_rider(&mut self, name: &str, color: u32) {
+        self.app.world_mut().spawn((
+            shared::Player,
+            shared::PlayerId("bot-test".into()),
+            shared::DisplayName(name.into()),
+            shared::PlayerColor(color),
+            Position(Vec2::ZERO),
+            Direction(Vec2::X),
+            Velocity(Vec2::ZERO),
+            IsAlive(true),
+            Replicate::to_clients(NetworkTarget::All),
+            InterpolationTarget::to_clients(NetworkTarget::All),
+        ));
+    }
+
     /// Rider entity and its owning link, by player id.
     pub fn rider(&mut self, player_id: &str) -> Option<(Entity, Entity)> {
         let world = self.app.world_mut();

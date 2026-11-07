@@ -10,11 +10,14 @@ use crate::chat::ChatState;
 use crate::connection::{AutoConnect, ConnectionPhase, Endpoint, IDLE_STATUS, Session};
 use crate::input::PendingInput;
 use crate::local_scan::LocalServers;
+use crate::look::{Look, random_look};
 use crate::render::FxSettings;
+use crate::render::shape;
 use crate::settings::{
     MAX_KEYS_PER_SIDE, PlayerName, RebindState, TurnBindings, TurnSide, key_label,
 };
-use crate::theme::{self, Theme, ThemeId};
+use crate::theme::{self, Rgb, Theme, ThemeId};
+use shared::RiderShape;
 use shared::protocol::{MAX_NAME_CHARS, sanitize_name};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -22,6 +25,8 @@ pub enum MenuScreen {
     #[default]
     Main,
     Settings,
+    /// Color and shape of the player's rider, reached from Settings.
+    Look,
     Rooms,
 }
 
@@ -90,6 +95,11 @@ enum UiAction {
     Quit,
     GotoSettings,
     GotoRooms,
+    GotoLook,
+    BackToSettings,
+    SetLookColor(u32),
+    SetLookShape(RiderShape),
+    RandomizeLook,
     /// Re-fetch the leaderboard panel.
     RefreshBoard,
     /// Play now: the manager picks a ranked room.
@@ -259,11 +269,132 @@ fn settings_screen(
         ui.colored_label(theme.danger.egui(), error.as_str());
     }
     ui.separator();
+    if theme::action_button(ui, "Rider look").clicked() {
+        action.set_once(UiAction::GotoLook);
+    }
     if theme::action_button(ui, "Reset defaults").clicked() {
         action.set_once(UiAction::ResetBindings);
     }
     if theme::action_button(ui, "Back").clicked() {
         action.set_once(UiAction::Back);
+    }
+}
+
+/// Preview box size (points).
+const PREVIEW_SIZE: egui::Vec2 = egui::vec2(360.0, 150.0);
+/// Rider radius in the preview and in a shape cell (points).
+const PREVIEW_RADIUS: f32 = 16.0;
+const CELL_SIZE: f32 = 52.0;
+/// Trail samples behind the preview rider, and the time between them (s).
+const PREVIEW_TRAIL_POINTS: usize = 28;
+const PREVIEW_TRAIL_STEP: f32 = 0.035;
+
+/// Position and unit heading of the preview rider at time `t` (seconds) in a
+/// y-up frame centered on the preview box: a figure eight, so it turns both
+/// ways. Client render only, hence the trig.
+fn preview_pose(t: f32) -> (Vec2, Vec2) {
+    let (rx, ry) = (140.0, 45.0);
+    let position = Vec2::new(rx * t.sin(), ry * (2.0 * t).sin());
+    // Derivative of the path; never zero (cos t and cos 2t share no root).
+    let heading = Vec2::new(rx * t.cos(), 2.0 * ry * (2.0 * t).cos()).normalize();
+    (position, heading)
+}
+
+/// A y-up point around `center` on the y-down egui screen.
+fn to_screen(center: egui::Pos2, p: Vec2) -> egui::Pos2 {
+    egui::pos2(center.x + p.x, center.y - p.y)
+}
+
+/// A shape outline as a closed egui line at `center`, facing `heading` (y-up).
+fn shape_line(
+    shape: RiderShape,
+    center: egui::Pos2,
+    heading: Vec2,
+    color: egui::Color32,
+) -> egui::Shape {
+    let points = shape::placed(shape, Vec2::ZERO, heading, PREVIEW_RADIUS)
+        .map(|p| to_screen(center, p))
+        .collect();
+    egui::Shape::line(points, egui::Stroke::new(2.5, color))
+}
+
+/// The moving preview: the chosen shape on a short fading trail.
+fn look_preview(ui: &mut egui::Ui, look: Look, now: f64) {
+    let (rect, _) = ui.allocate_exact_size(PREVIEW_SIZE, egui::Sense::hover());
+    let painter = ui.painter_at(rect);
+    painter.rect_filled(rect, 4.0, egui::Color32::from_black_alpha(110));
+    let color = Rgb::from_u32(look.color).egui();
+    let t = now as f32;
+    let mut previous = None;
+    for k in 0..PREVIEW_TRAIL_POINTS {
+        let (p, _) = preview_pose(t - k as f32 * PREVIEW_TRAIL_STEP);
+        let p = to_screen(rect.center(), p);
+        if let Some(last) = previous {
+            let fade = 1.0 - k as f32 / PREVIEW_TRAIL_POINTS as f32;
+            painter.line_segment(
+                [last, p],
+                egui::Stroke::new(3.0, color.gamma_multiply(fade * 0.8)),
+            );
+        }
+        previous = Some(p);
+    }
+    let (position, heading) = preview_pose(t);
+    painter.add(shape_line(
+        look.shape,
+        to_screen(rect.center(), position),
+        heading,
+        color,
+    ));
+}
+
+/// The six shapes in a row, each drawn in the current color.
+fn shape_grid(ui: &mut egui::Ui, theme: &Theme, look: Look, action: &mut UiAction) {
+    let color = Rgb::from_u32(look.color).egui();
+    ui.horizontal(|ui| {
+        for shape in RiderShape::ALL {
+            let (rect, response) =
+                ui.allocate_exact_size(egui::vec2(CELL_SIZE, CELL_SIZE), egui::Sense::click());
+            let painter = ui.painter_at(rect);
+            if look.shape == shape || response.hovered() {
+                painter.rect_filled(rect, 4.0, egui::Color32::from_white_alpha(18));
+            }
+            if look.shape == shape {
+                painter.rect_stroke(
+                    rect,
+                    4.0,
+                    egui::Stroke::new(2.0, theme.accent.egui()),
+                    egui::StrokeKind::Inside,
+                );
+            }
+            painter.add(shape_line(shape, rect.center(), Vec2::X, color));
+            if response.on_hover_text(shape.label()).clicked() {
+                action.set_once(UiAction::SetLookShape(shape));
+            }
+        }
+    });
+}
+
+fn look_screen(ui: &mut egui::Ui, theme: &Theme, look: Look, now: f64, action: &mut UiAction) {
+    heading(ui, theme, "RIDER LOOK", 26.0);
+    ui.separator();
+    look_preview(ui, look, now);
+    // The preview animates, so keep frames coming while this screen is open.
+    ui.ctx().request_repaint();
+    let mut picked = Rgb::from_u32(look.color).egui();
+    if egui::color_picker::color_picker_color32(ui, &mut picked, egui::color_picker::Alpha::Opaque)
+    {
+        action.set_once(UiAction::SetLookColor(
+            u32::from(picked.r()) << 16 | u32::from(picked.g()) << 8 | u32::from(picked.b()),
+        ));
+    }
+    ui.separator();
+    shape_grid(ui, theme, look, action);
+    ui.separator();
+    if theme::action_button(ui, "Randomize").clicked() {
+        action.set_once(UiAction::RandomizeLook);
+    }
+    if theme::action_button(ui, "Back").clicked() {
+        action.set_once(UiAction::BackToSettings);
     }
 }
 
@@ -462,6 +593,15 @@ pub struct RankedUi<'w> {
     accounts: Res<'w, Accounts>,
 }
 
+/// What the player customizes: theme, effects and rider look (grouped to stay
+/// under Bevy's system parameter limit).
+#[derive(SystemParam)]
+pub struct Appearance<'w> {
+    theme: ResMut<'w, Theme>,
+    fx: ResMut<'w, FxSettings>,
+    look: ResMut<'w, Look>,
+}
+
 // Bevy injects each resource as its own parameter; the count is structural.
 #[allow(clippy::too_many_arguments)]
 pub fn menu_ui(
@@ -473,8 +613,7 @@ pub fn menu_ui(
     mut player_name: ResMut<PlayerName>,
     mut auto: Option<ResMut<AutoConnect>>,
     mut rebind: ResMut<RebindState>,
-    mut theme: ResMut<Theme>,
-    mut fx: ResMut<FxSettings>,
+    appearance: Appearance,
     mut browser: ResMut<BrowserState>,
     ranked_ui: RankedUi,
     config: Res<ManagerConfig>,
@@ -484,6 +623,11 @@ pub fn menu_ui(
     if !menu.open {
         return;
     }
+    let Appearance {
+        mut theme,
+        mut fx,
+        mut look,
+    } = appearance;
     let RankedUi {
         join: mut ranked,
         mut standing,
@@ -543,6 +687,7 @@ pub fn menu_ui(
                     MenuScreen::Settings => {
                         settings_screen(ui, &theme, fx.enabled, &bindings, &rebind, &mut action)
                     }
+                    MenuScreen::Look => look_screen(ui, &theme, *look, now, &mut action),
                     MenuScreen::Rooms => rooms_screen(
                         ui,
                         &theme,
@@ -624,6 +769,18 @@ pub fn menu_ui(
             }
         }
         UiAction::Back => menu.screen = MenuScreen::Main,
+        UiAction::GotoLook => menu.screen = MenuScreen::Look,
+        UiAction::BackToSettings => menu.screen = MenuScreen::Settings,
+        // Equality guards: a write marks `Look` changed, which sends and saves.
+        UiAction::SetLookColor(color) => {
+            look.set_if_neq(Look { color, ..*look });
+        }
+        UiAction::SetLookShape(shape) => {
+            look.set_if_neq(Look { shape, ..*look });
+        }
+        UiAction::RandomizeLook => {
+            look.set_if_neq(random_look());
+        }
         UiAction::StartCapture(side, index) => {
             rebind.capturing = Some((side, index));
             rebind.error = None;
@@ -708,6 +865,38 @@ mod tests {
         world.run_system_once(menu_controls).unwrap();
         assert!(!world.resource::<MenuState>().open);
         assert_eq!(world.resource::<MenuState>().screen, MenuScreen::Main);
+    }
+
+    #[test]
+    fn escape_from_the_look_screen_returns_to_the_main_screen() {
+        let mut world = test_world();
+        world.resource_mut::<MenuState>().open = true;
+        world.resource_mut::<MenuState>().screen = MenuScreen::Look;
+        world
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::Escape);
+        world.run_system_once(menu_controls).unwrap();
+        assert!(world.resource::<MenuState>().open, "offline stays open");
+        assert_eq!(world.resource::<MenuState>().screen, MenuScreen::Main);
+    }
+
+    #[test]
+    fn preview_rider_stays_in_bounds_facing_its_direction_of_travel() {
+        let mut previous = preview_pose(0.0).0;
+        for i in 1..400 {
+            let t = i as f32 * 0.02;
+            let (position, heading) = preview_pose(t);
+            assert!((heading.length() - 1.0).abs() < 1e-4);
+            assert!(position.x.abs() <= 140.0 && position.y.abs() <= 45.0);
+            assert!((position - previous).dot(heading) > 0.0, "t = {t}");
+            previous = position;
+        }
+    }
+
+    #[test]
+    fn egui_points_flip_the_y_axis() {
+        let p = to_screen(egui::pos2(10.0, 20.0), Vec2::new(3.0, 4.0));
+        assert_eq!(p, egui::pos2(13.0, 16.0));
     }
 
     #[test]

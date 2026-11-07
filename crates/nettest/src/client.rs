@@ -13,8 +13,8 @@ use lightyear::prelude::input::native::InputMarker;
 use lightyear::prelude::*;
 use shared::protocol::{ChatChannel, ChatSend, TurnBatch, TurnChannel};
 use shared::{
-    ActionState, Direction, DisplayName, IsAlive, LifeGeneration, Player, PlayerId, PlayerInput,
-    Position,
+    ActionState, Direction, DisplayName, IsAlive, LifeGeneration, Player, PlayerColor, PlayerId,
+    PlayerInput, Position, RiderShape,
 };
 use tc::connection::{ConnectionPhase, Session};
 use tc::input::{PendingInput, TurnAckState};
@@ -370,6 +370,49 @@ impl TestClient {
             .iter()
             .map(|entry| format!("{}: {}", entry.name, entry.text))
             .collect()
+    }
+
+    /// Sender color of each chat line received so far, oldest first.
+    pub fn chat_colors(&self) -> Vec<u32> {
+        self.app
+            .world()
+            .resource::<tc::chat::ChatLog>()
+            .0
+            .iter()
+            .map(|entry| entry.color)
+            .collect()
+    }
+
+    /// Choose the rider look, as the menu does. Before connecting it is sent
+    /// with the hello; afterwards it is a live change.
+    pub fn set_look(&mut self, color: u32, shape: RiderShape) {
+        self.app
+            .world_mut()
+            .insert_resource(tc::look::Look { color, shape });
+    }
+
+    /// Color and shape of the rider named `name` as this client sees it
+    /// (its own predicted rider or a replicated copy).
+    pub fn look_of(&mut self, name: &str) -> Option<(u32, RiderShape)> {
+        let world = self.app.world_mut();
+        let mut query =
+            world.query_filtered::<(&DisplayName, &PlayerColor, &RiderShape), With<Player>>();
+        query
+            .iter(world)
+            .find(|(display, ..)| display.0 == name)
+            .map(|(_, color, shape)| (color.0, *shape))
+    }
+
+    /// Color and shape on this client's own predicted, controlled rider (the
+    /// one the renderer draws for the local player).
+    pub fn own_look(&mut self) -> Option<(u32, RiderShape)> {
+        let world = self.app.world_mut();
+        let mut query = world
+            .query_filtered::<(&PlayerColor, &RiderShape), (With<Predicted>, With<Controlled>)>();
+        query
+            .iter(world)
+            .next()
+            .map(|(color, shape)| (color.0, *shape))
     }
 
     /// Cheat: put a hand-made chat message on the wire (what a modified client
