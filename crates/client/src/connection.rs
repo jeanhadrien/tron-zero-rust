@@ -402,6 +402,33 @@ impl Session {
         matches!(self.state, State::Dialing { .. })
     }
 
+    /// Whether a heartbeat should go out at `now`: one per interval, and never
+    /// while dialing, since a heartbeat ahead of the hello would bind the
+    /// server's nonce for a link that then has no Leave to send (see
+    /// [`Session::leave`]).
+    fn heartbeat_due(&self, now: f64) -> bool {
+        !self.is_dialing()
+            && self.state.link().is_some_and(|link| {
+                link.last_send
+                    .is_none_or(|last| now - last >= SESSION_HEARTBEAT_SECS)
+            })
+    }
+
+    fn heartbeat_sent(&mut self, now: f64) {
+        if let Some(link) = self.state.link_mut() {
+            link.last_send = Some(now);
+        }
+    }
+
+    /// Whether the session is past the handshake but not yet (or no longer)
+    /// proven ready, so readiness must be re-checked every frame.
+    fn awaits_readiness(&self) -> bool {
+        matches!(
+            self.phase(),
+            ConnectionPhase::Synchronizing | ConnectionPhase::Playing
+        )
+    }
+
     /// Dialing -> Handshaking once the hello is queued; hands out the join
     /// ticket, which goes out right before the hello and is never kept after.
     fn hello_sent(&mut self) -> Option<Vec<u8>> {
@@ -678,63 +705,89 @@ pub fn monitor_connection(
         menu.open = true;
         return;
     }
-    // Not while dialing: a heartbeat ahead of the hello would bind the server's
-    // nonce for a link that then has no Leave to send (see `Session::leave`).
-    let heartbeat_due = !session.is_dialing()
-        && session.state.link().is_some_and(|link| {
-            link.last_send
-                .is_none_or(|last| now - last >= SESSION_HEARTBEAT_SECS)
-        });
     if connected
-        && heartbeat_due
+        && session.heartbeat_due(now)
         && let Some(mut sender) = sender
     {
         sender.send::<SessionChannel>(SessionRequest::Heartbeat {
             nonce: entity.to_bits(),
         });
-        if let Some(link) = session.state.link_mut() {
-            link.last_send = Some(now);
-        }
+        session.heartbeat_sent(now);
     }
-    if matches!(
-        session.phase(),
-        ConnectionPhase::Synchronizing | ConnectionPhase::Playing
-    ) {
+    if session.awaits_readiness() {
         // Controlled is replicated; ControlledBy is normally sender-side only.
-        let rider_ready = players
+        let rider = players
             .iter()
-            .any(|owner| owner.is_none_or(|c| c.owner == entity));
-        let ready = connected && synced && session.admitted() && !arenas.is_empty() && rider_ready;
-        if ready {
-            if session.enter_playing() {
-                info!(
-                    ?entity,
-                    "Session ready: clock, arena and controlled rider received"
-                );
-                session.status = format!("Connected as {}.", session.name());
-                menu.open = false;
-                menu.block_this_frame = true;
+            .any(|owner| owns_rider(owner.map(|c| c.owner), entity));
+        let readiness = Readiness {
+            connected,
+            synced,
+            admitted: session.admitted(),
+            arena: !arenas.is_empty(),
+            rider,
+        };
+        match readiness.pending_status() {
+            None => {
+                if session.enter_playing() {
+                    info!(
+                        ?entity,
+                        "Session ready: clock, arena and controlled rider received"
+                    );
+                    session.status = format!("Connected as {}.", session.name());
+                    menu.open = false;
+                    menu.block_this_frame = true;
+                }
             }
-        } else {
-            session.lose_sync(now);
-            let status = if !connected {
-                "Server answered. Waiting for connection..."
-            } else if !session.admitted() {
-                "Server answered. Waiting for the join to be accepted..."
-            } else if !synced {
-                "Server answered. Synchronizing clock..."
-            } else if arenas.is_empty() {
-                "Clock synchronized. Waiting for arena..."
-            } else {
-                "Clock synchronized. Waiting for controlled rider and input buffer..."
-            };
-            if session.status != status {
-                info!(?entity, %status, "Session readiness pending");
-                session.status = status.into();
+            Some(status) => {
+                session.lose_sync(now);
+                if session.status != status {
+                    info!(?entity, %status, "Session readiness pending");
+                    session.status = status.into();
+                }
+                menu.open = true;
             }
-            menu.open = true;
         }
     }
+}
+
+/// Everything that must hold before gameplay starts, gathered from the world.
+#[derive(Clone, Copy, Debug)]
+struct Readiness {
+    connected: bool,
+    /// The input clock is synchronized.
+    synced: bool,
+    /// The server accepted the hello.
+    admitted: bool,
+    /// The arena and its walls have replicated.
+    arena: bool,
+    /// The controlled rider (with input buffer) is present.
+    rider: bool,
+}
+
+impl Readiness {
+    /// What we are still waiting for, or `None` when ready to play. The first
+    /// missing piece wins, in the order the server delivers them.
+    fn pending_status(&self) -> Option<&'static str> {
+        Some(if !self.connected {
+            "Server answered. Waiting for connection..."
+        } else if !self.admitted {
+            "Server answered. Waiting for the join to be accepted..."
+        } else if !self.synced {
+            "Server answered. Synchronizing clock..."
+        } else if !self.arena {
+            "Clock synchronized. Waiting for arena..."
+        } else if !self.rider {
+            "Clock synchronized. Waiting for controlled rider and input buffer..."
+        } else {
+            return None;
+        })
+    }
+}
+
+/// Whether a rider belongs to `me`. `ControlledBy` is normally sender-side
+/// only, so a replicated rider without it counts as ours.
+fn owns_rider(owner: Option<Entity>, me: Entity) -> bool {
+    owner.is_none_or(|owner| owner == me)
 }
 
 /// `Leaving`: queue the Leave before the transport sends. Always moves on to
@@ -958,6 +1011,123 @@ mod tests {
         assert!(session.timed_out(25.0).unwrap().contains("Lost contact"));
         session.state = State::default();
         assert!(session.timed_out(1000.0).is_none(), "nothing to time out");
+    }
+
+    #[test]
+    fn readiness_reports_the_first_missing_piece() {
+        let ready = Readiness {
+            connected: true,
+            synced: true,
+            admitted: true,
+            arena: true,
+            rider: true,
+        };
+        assert_eq!(ready.pending_status(), None);
+        let cases = [
+            (
+                Readiness {
+                    connected: false,
+                    ..ready
+                },
+                "Waiting for connection",
+            ),
+            (
+                Readiness {
+                    admitted: false,
+                    ..ready
+                },
+                "Waiting for the join to be accepted",
+            ),
+            (
+                Readiness {
+                    synced: false,
+                    ..ready
+                },
+                "Synchronizing clock",
+            ),
+            (
+                Readiness {
+                    arena: false,
+                    ..ready
+                },
+                "Waiting for arena",
+            ),
+            (
+                Readiness {
+                    rider: false,
+                    ..ready
+                },
+                "Waiting for controlled rider",
+            ),
+        ];
+        for (readiness, expected) in cases {
+            let status = readiness.pending_status().unwrap();
+            assert!(status.contains(expected), "{status:?} vs {expected:?}");
+        }
+        // Several missing pieces: the earliest in delivery order is reported.
+        let nothing = Readiness {
+            connected: true,
+            synced: false,
+            admitted: false,
+            arena: false,
+            rider: false,
+        };
+        assert!(nothing.pending_status().unwrap().contains("join"));
+    }
+
+    #[test]
+    fn a_rider_without_an_owner_component_counts_as_ours() {
+        let (me, other) = (
+            Entity::from_raw_u32(1).unwrap(),
+            Entity::from_raw_u32(2).unwrap(),
+        );
+        assert!(owns_rider(None, me));
+        assert!(owns_rider(Some(me), me));
+        assert!(!owns_rider(Some(other), me));
+    }
+
+    #[test]
+    fn heartbeats_are_paced_and_never_precede_the_hello() {
+        let handshaking = |last_send| {
+            let mut link = link(Entity::PLACEHOLDER);
+            link.last_send = last_send;
+            session_in(State::Handshaking { link, since: 0.0 })
+        };
+        assert!(
+            handshaking(None).heartbeat_due(0.0),
+            "the first is due at once"
+        );
+        assert!(!handshaking(Some(1.0)).heartbeat_due(1.0 + SESSION_HEARTBEAT_SECS - 0.01));
+        assert!(handshaking(Some(1.0)).heartbeat_due(1.0 + SESSION_HEARTBEAT_SECS));
+        // Dialing: never, even with nothing sent yet.
+        let dialing = session_in(State::Dialing {
+            link: link(Entity::PLACEHOLDER),
+            since: 0.0,
+            ticket: None,
+        });
+        assert!(!dialing.heartbeat_due(1000.0));
+        // No link at all: nothing to send.
+        assert!(!session_in(State::default()).heartbeat_due(1000.0));
+        // Recording a send restarts the interval.
+        let mut session = handshaking(None);
+        session.heartbeat_sent(5.0);
+        assert!(!session.heartbeat_due(5.0));
+        assert!(session.heartbeat_due(5.0 + SESSION_HEARTBEAT_SECS));
+    }
+
+    #[test]
+    fn readiness_is_only_checked_after_the_handshake() {
+        assert!(!session_in(State::default()).awaits_readiness());
+        for phase in [ConnectionPhase::Connecting, ConnectionPhase::Disconnecting] {
+            let mut session = Session::default();
+            session.force_phase(phase);
+            assert!(!session.awaits_readiness());
+        }
+        for phase in [ConnectionPhase::Synchronizing, ConnectionPhase::Playing] {
+            let mut session = Session::default();
+            session.force_phase(phase);
+            assert!(session.awaits_readiness());
+        }
     }
 
     fn auto_world(session: Session) -> World {
