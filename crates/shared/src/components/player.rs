@@ -83,10 +83,28 @@ impl Default for TargetSpeedMult {
 
 /// Packed RGB `(r<<16)|(g<<8)|b`. Chosen by the player and changeable live
 /// (see `SetLook`), so it is replicated, not fixed at spawn.
-#[derive(
-    Component, Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq, Reflect,
-)]
+#[derive(Component, Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, Reflect)]
 pub struct PlayerColor(pub u32);
+
+impl PlayerColor {
+    /// Only the low 24 bits are a color; the rest is wire hygiene.
+    pub const MASK: u32 = 0x00FF_FFFF;
+
+    /// Color of a rider whose player never chose one. `Default::default()`
+    /// is this, not black.
+    pub const DEFAULT: Self = Self(0x00FFCC);
+
+    /// `rgb` with everything above the 24 color bits dropped.
+    pub const fn masked(rgb: u32) -> Self {
+        Self(rgb & Self::MASK)
+    }
+}
+
+impl Default for PlayerColor {
+    fn default() -> Self {
+        Self::DEFAULT
+    }
+}
 
 /// Outline drawn for a rider. Cosmetic: no hitbox, centered on the head point.
 #[derive(

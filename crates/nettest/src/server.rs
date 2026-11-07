@@ -145,14 +145,16 @@ impl TestServer {
             .map(|(_, color, shape)| (color.0, *shape))
     }
 
-    /// Spawn a bot-like rider (no brain): the same replicated bundle as
-    /// `spawn_bot_entity`, so it carries whatever look defaults apply to bots.
-    pub fn spawn_bot_rider(&mut self, name: &str, color: u32) {
+    /// Spawn a brainless rider with an explicit look. It is replicated and
+    /// interpolated like a bot but is only a reduced stand-in for
+    /// `spawn_bot_entity`'s bundle (no bot components).
+    pub fn spawn_bot_rider(&mut self, name: &str, color: u32, shape: shared::RiderShape) {
         self.app.world_mut().spawn((
             shared::Player,
             shared::PlayerId("bot-test".into()),
             shared::DisplayName(name.into()),
             shared::PlayerColor(color),
+            shape,
             Position(Vec2::ZERO),
             Direction(Vec2::X),
             Velocity(Vec2::ZERO),

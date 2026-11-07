@@ -74,11 +74,16 @@ pub fn menu_controls(
             rebind.capturing = None;
             rebind.error = None;
         } else {
-            // Escape always converges: in a match it closes the menu from any
-            // screen; offline it returns to the main screen. Either way the
-            // menu reopens on the main screen.
-            menu.open = session.phase() != ConnectionPhase::Playing || !menu.open;
-            menu.screen = MenuScreen::Main;
+            if menu.screen == MenuScreen::Look {
+                // A sub-screen of Settings: Escape is its Back.
+                menu.screen = MenuScreen::Settings;
+            } else {
+                // Escape converges: in a match it closes the menu from any
+                // other screen; offline it returns to the main screen. Either
+                // way the menu reopens on the main screen.
+                menu.open = session.phase() != ConnectionPhase::Playing || !menu.open;
+                menu.screen = MenuScreen::Main;
+            }
         }
         menu.block_this_frame = true;
     }
@@ -282,6 +287,9 @@ fn settings_screen(
 
 /// Preview box size (points).
 const PREVIEW_SIZE: egui::Vec2 = egui::vec2(360.0, 150.0);
+/// Half-width and half-height of the figure eight the preview rider rides (points).
+const PREVIEW_RADIUS_X: f32 = 140.0;
+const PREVIEW_RADIUS_Y: f32 = 45.0;
 /// Rider radius in the preview and in a shape cell (points).
 const PREVIEW_RADIUS: f32 = 16.0;
 const CELL_SIZE: f32 = 52.0;
@@ -293,10 +301,16 @@ const PREVIEW_TRAIL_STEP: f32 = 0.035;
 /// y-up frame centered on the preview box: a figure eight, so it turns both
 /// ways. Client render only, hence the trig.
 fn preview_pose(t: f32) -> (Vec2, Vec2) {
-    let (rx, ry) = (140.0, 45.0);
-    let position = Vec2::new(rx * t.sin(), ry * (2.0 * t).sin());
+    let position = Vec2::new(
+        PREVIEW_RADIUS_X * t.sin(),
+        PREVIEW_RADIUS_Y * (2.0 * t).sin(),
+    );
     // Derivative of the path; never zero (cos t and cos 2t share no root).
-    let heading = Vec2::new(rx * t.cos(), 2.0 * ry * (2.0 * t).cos()).normalize();
+    let heading = Vec2::new(
+        PREVIEW_RADIUS_X * t.cos(),
+        2.0 * PREVIEW_RADIUS_Y * (2.0 * t).cos(),
+    )
+    .normalize();
     (position, heading)
 }
 
@@ -378,8 +392,6 @@ fn look_screen(ui: &mut egui::Ui, theme: &Theme, look: Look, now: f64, action: &
     heading(ui, theme, "RIDER LOOK", 26.0);
     ui.separator();
     look_preview(ui, look, now);
-    // The preview animates, so keep frames coming while this screen is open.
-    ui.ctx().request_repaint();
     let mut picked = Rgb::from_u32(look.color).egui();
     if egui::color_picker::color_picker_color32(ui, &mut picked, egui::color_picker::Alpha::Opaque)
     {
@@ -868,7 +880,7 @@ mod tests {
     }
 
     #[test]
-    fn escape_from_the_look_screen_returns_to_the_main_screen() {
+    fn escape_from_the_look_screen_goes_back_to_settings() {
         let mut world = test_world();
         world.resource_mut::<MenuState>().open = true;
         world.resource_mut::<MenuState>().screen = MenuScreen::Look;
@@ -876,8 +888,8 @@ mod tests {
             .resource_mut::<ButtonInput<KeyCode>>()
             .press(KeyCode::Escape);
         world.run_system_once(menu_controls).unwrap();
-        assert!(world.resource::<MenuState>().open, "offline stays open");
-        assert_eq!(world.resource::<MenuState>().screen, MenuScreen::Main);
+        assert!(world.resource::<MenuState>().open, "stays open");
+        assert_eq!(world.resource::<MenuState>().screen, MenuScreen::Settings);
     }
 
     #[test]
@@ -887,7 +899,7 @@ mod tests {
             let t = i as f32 * 0.02;
             let (position, heading) = preview_pose(t);
             assert!((heading.length() - 1.0).abs() < 1e-4);
-            assert!(position.x.abs() <= 140.0 && position.y.abs() <= 45.0);
+            assert!(position.x.abs() <= PREVIEW_RADIUS_X && position.y.abs() <= PREVIEW_RADIUS_Y);
             assert!((position - previous).dot(heading) > 0.0, "t = {t}");
             previous = position;
         }

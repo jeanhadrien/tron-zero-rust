@@ -3,13 +3,11 @@
 use bevy::color::{Hsva, Srgba};
 use bevy::prelude::*;
 use lightyear::prelude::{Client, MessageSender};
-use shared::RiderShape;
 use shared::protocol::{SessionChannel, SetLook};
+use shared::{PlayerColor, RiderShape};
 
 use crate::connection::Session;
 
-/// Look used before the player (or a first-launch roll) picks one.
-const DEFAULT_COLOR: u32 = 0x00FFCC;
 /// Shortest pause between two `SetLook` sends while the look keeps changing
 /// (dragging the color picker); the server budget allows far more.
 const LOOK_SEND_MIN_SECS: f64 = 0.2;
@@ -26,20 +24,14 @@ pub struct Look {
 impl Default for Look {
     fn default() -> Self {
         Self {
-            color: DEFAULT_COLOR,
+            color: PlayerColor::DEFAULT.0,
             shape: RiderShape::default(),
         }
     }
 }
 
-impl Look {
-    pub fn bevy_color(self) -> Color {
-        Color::srgb_u32(self.color)
-    }
-}
-
 /// A random vivid look: random hue at full saturation and value, random shape.
-pub fn random_look() -> Look {
+pub(crate) fn random_look() -> Look {
     let pick = rand::random_range(0..RiderShape::ALL.len());
     look_from(rand::random::<f32>(), pick)
 }
@@ -57,7 +49,7 @@ fn look_from(hue: f32, shape_index: usize) -> Look {
 
 /// What the server was last told, and when.
 #[derive(Resource, Default, Debug)]
-pub struct LookSync {
+pub(crate) struct LookSync {
     link: Option<Entity>,
     sent: Option<Look>,
     sent_at: f64,
@@ -89,7 +81,7 @@ impl LookSync {
 
 /// Sends the look to the server. Must run right after the hello was queued, so
 /// `SetLook` follows it on the same ordered channel. The only `SetLook` sender.
-pub fn send_look(
+pub(crate) fn send_look(
     session: Res<Session>,
     look: Res<Look>,
     time: Res<Time<Real>>,

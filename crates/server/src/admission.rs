@@ -164,14 +164,14 @@ fn refresh_link_visibility(commands: &mut Commands, link: Entity) {
 /// once the refusal has had time to arrive. Links that never say hello are
 /// closed after the session timeout.
 #[allow(clippy::type_complexity, clippy::too_many_arguments)]
-pub fn handle_hello(
+pub(crate) fn handle_hello(
     time: Res<Time<Real>>,
     max: Res<MaxPlayers>,
     mut pending: Query<
         (
             Entity,
             &RemoteId,
-            &LinkLook,
+            Option<&LinkLook>,
             &mut AwaitingHello,
             &mut SessionLease,
             &mut LinkBudget,
@@ -247,7 +247,13 @@ pub fn handle_hello(
                     .remove::<AwaitingHello>()
                     .insert(ReplicationSender);
                 refresh_link_visibility(&mut commands, link);
-                let rider = spawn_human(&mut commands, link, remote.0, name.clone(), *look);
+                let rider = spawn_human(
+                    &mut commands,
+                    link,
+                    remote.0,
+                    name.clone(),
+                    look.copied().unwrap_or_default(),
+                );
                 if let Some(account) = account {
                     connected.push(account.id.clone());
                     commands.entity(rider).insert(account);

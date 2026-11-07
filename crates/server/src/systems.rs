@@ -116,7 +116,7 @@ pub fn on_client_connected(
 /// Spawn the controlled rider for an admitted client link. Spawn allocation
 /// is serialized in FixedUpdate against live geometry (`InitialSpawn`); the
 /// rider exists even when the arena has no safe space yet.
-pub fn spawn_human(
+pub(crate) fn spawn_human(
     commands: &mut Commands,
     link: Entity,
     peer: PeerId,

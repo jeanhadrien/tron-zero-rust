@@ -83,7 +83,7 @@ const CHEVRON: [Vec2; 4] = [
 ];
 
 /// The outline of `shape` at unit radius in the heading frame.
-pub fn outline(shape: RiderShape) -> &'static [Vec2] {
+pub(crate) fn outline(shape: RiderShape) -> &'static [Vec2] {
     match shape {
         RiderShape::Circle => &CIRCLE,
         RiderShape::Triangle => &TRIANGLE,
@@ -97,7 +97,7 @@ pub fn outline(shape: RiderShape) -> &'static [Vec2] {
 /// The outline placed in the world (or any y-up plane): scaled by `radius`,
 /// turned to face `heading` (a unit vector) and moved to `center`. Yields the
 /// first point again at the end, ready for a line strip.
-pub fn placed(
+pub(crate) fn placed(
     shape: RiderShape,
     center: Vec2,
     heading: Vec2,

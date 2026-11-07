@@ -10,8 +10,8 @@ use std::path::{Path, PathBuf};
 
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
-use shared::RiderShape;
 use shared::protocol::sanitize_name;
+use shared::{PlayerColor, RiderShape};
 
 use crate::account::{Accounts, SavedAccount};
 use crate::look::{Look, random_look};
@@ -82,7 +82,7 @@ impl SavedConfig {
         let look = Look {
             color: self
                 .rider_color
-                .map(|color| color & 0xFF_FFFF)
+                .map(|color| PlayerColor::masked(color).0)
                 .or(rolled.map(|r| r.color))
                 .unwrap_or_default(),
             shape: self

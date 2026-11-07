@@ -1,10 +1,11 @@
 //! Rider look over real UDP loopback: a look chosen before joining or while
 //! playing reaches the server, the owner's own predicted rider and every other
-//! client; chat lines carry the sender color; riders nobody chose a look for
-//! (bots) are circles.
+//! client; chat lines carry the sender color; a look set on the server for a
+//! non-human rider reaches clients.
 
 use std::time::Duration;
 
+use bevy::input::keyboard::KeyCode;
 use shared::RiderShape;
 use tron_zero_nettest::{Impairment, Net, serial};
 
@@ -66,8 +67,8 @@ fn a_live_change_reaches_the_server_the_own_predicted_rider_and_others() {
 
     let changed = (0x10EE80, RiderShape::Diamond);
     net.clients[a].set_look(changed.0, changed.1);
-    // `look_of` on Ann's client reads her own Predicted + Controlled rider, the
-    // one the renderer draws for her.
+    // `own_look` reads Ann's own Predicted + Controlled rider, the one the
+    // renderer draws for her; `look_of` reads whichever rider carries her name.
     let propagated = net.run_until(WAIT, |net| sees(net, changed, BOB));
     assert!(
         propagated,
@@ -87,9 +88,18 @@ fn a_death_and_respawn_keep_the_look() {
     let (mut net, a, _) = two_players(ANN, BOB);
     assert!(all_see(&mut net, ANN, BOB));
     let id = net.server.player_id_named("Ann").expect("Ann's rider");
+    let old_generation = net.clients[a].rider_generation().expect("life");
     net.server.kill_rider(&id);
     assert!(net.run_until(WAIT, |net| !net.clients[a].rider_alive()));
-    net.run_server_ticks(60);
+    // Respawn with Space (retry while dead, like a human would).
+    let respawned = net.run_until(WAIT, |net| {
+        let client = &mut net.clients[a];
+        if !client.rider_alive() {
+            client.press(KeyCode::Space);
+        }
+        client.rider_alive() && client.rider_generation() != Some(old_generation)
+    });
+    assert!(respawned, "respawn accepted");
     assert_eq!(net.server.look_of("Ann"), Some(ANN));
     assert!(all_see(&mut net, ANN, BOB));
 }
@@ -109,14 +119,16 @@ fn chat_lines_carry_the_sender_color() {
 }
 
 #[test]
-fn riders_nobody_chose_a_look_for_are_circles() {
+fn a_server_side_rider_look_reaches_every_client() {
     let _guard = serial();
     let (mut net, a, b) = two_players(ANN, BOB);
-    net.server.spawn_bot_rider("Botty", 0x123456);
+    // Non-default on both axes: the clients cannot guess it locally.
+    let botty = (0x123456, RiderShape::Hexagon);
+    net.server.spawn_bot_rider("Botty", botty.0, botty.1);
     let seen = net.run_until(WAIT, |net| {
         [a, b]
             .iter()
-            .all(|&i| net.clients[i].look_of("Botty") == Some((0x123456, RiderShape::Circle)))
+            .all(|&i| net.clients[i].look_of("Botty") == Some(botty))
     });
-    assert!(seen, "bot rider not replicated as a circle");
+    assert!(seen, "server-side rider look not replicated");
 }

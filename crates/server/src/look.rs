@@ -13,23 +13,18 @@ use crate::budget::{LinkBudget, Meter};
 use crate::session::SessionLease;
 use crate::systems::Human;
 
-/// Rider color of a player who never chose one.
-pub const DEFAULT_LOOK_COLOR: u32 = 0x00FFCC;
-/// Only the low 24 bits are a color; the rest is wire hygiene.
-const COLOR_MASK: u32 = 0x00FF_FFFF;
-
 /// The look a link asked for, used for its rider at admission and kept in sync
 /// afterwards. Lives on the link entity.
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
-pub struct LinkLook {
-    pub color: u32,
-    pub shape: RiderShape,
+pub(crate) struct LinkLook {
+    pub(crate) color: u32,
+    pub(crate) shape: RiderShape,
 }
 
 impl Default for LinkLook {
     fn default() -> Self {
         Self {
-            color: DEFAULT_LOOK_COLOR,
+            color: PlayerColor::DEFAULT.0,
             shape: RiderShape::default(),
         }
     }
@@ -54,7 +49,7 @@ type OwnedRiders<'w, 's> = Query<
 /// A link sending far more changes than a client ever does (it coalesces to a
 /// few per second) is closed, like the other message floods.
 #[allow(clippy::type_complexity)]
-pub fn collect_looks(
+pub(crate) fn collect_looks(
     time: Res<Time<Real>>,
     mut links: Query<
         (
@@ -92,7 +87,7 @@ pub fn collect_looks(
 /// Keep `look` on the link and copy it to the link's human rider, if any.
 fn apply_look(link: Entity, look: SetLook, stash: &mut LinkLook, riders: &mut OwnedRiders) {
     let look = LinkLook {
-        color: look.color & COLOR_MASK,
+        color: PlayerColor::masked(look.color).0,
         shape: look.shape,
     };
     *stash = look;

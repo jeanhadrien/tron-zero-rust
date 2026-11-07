@@ -10,7 +10,7 @@ pub mod bot;
 pub mod budget;
 pub mod chat;
 pub mod elimination;
-pub mod look;
+mod look;
 pub mod probe;
 pub mod ranked;
 pub mod session;
