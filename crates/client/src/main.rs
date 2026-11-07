@@ -6,10 +6,9 @@
 use bevy::prelude::*;
 use bevy::window::WindowCloseRequested;
 use bevy_egui::{EguiPlugin, EguiPrimaryContextPass};
-use lightyear::prelude::*;
 use tron_zero_client::{
-    account, add_input_and_prediction, add_network, attach_local_input, browser, chat, config,
-    connection, input, local_scan, menu, render, settings, sim, theme,
+    account, add_input_and_prediction, add_network, browser, chat, config, connection, input,
+    local_scan, menu, render, settings, sim, theme,
 };
 
 fn main() {
@@ -72,23 +71,18 @@ fn main() {
     app.add_systems(Startup, browser::initial_refresh);
     app.add_systems(PreUpdate, browser::poll_browser_fetch);
     app.init_resource::<settings::RebindState>();
+    connection::add_lifecycle_systems(&mut app);
     app.add_systems(
         PreUpdate,
         (
-            menu::begin_input_frame,
-            attach_local_input,
-            connection::monitor_connection,
             menu::menu_controls,
             // After the menu so Escape cancels an open chat box first.
             chat::chat_controls,
         )
             .chain()
-            .after(bevy::input::InputSystems)
-            .after(MessageSystems::Receive)
-            .after(ReplicationSystems::Receive)
+            .after(connection::monitor_connection)
             .before(input::buffer_keyboard_input),
     );
-    app.add_systems(Update, connection::finish_disconnect);
     // egui overlays share one pass; order keeps the menu above HUD/death on
     // any same-order tie (menu.open also hides both outright).
     app.add_systems(
@@ -105,14 +99,6 @@ fn main() {
             ),
         )
             .chain(),
-    );
-    app.add_systems(Update, connection::send_leave);
-    // The UDP client flushes `Link::send` in PreUpdate (not PostUpdate), so the
-    // Leave queued in Update only reaches the socket on the next frame: close
-    // the link after that flush, or the Leave is lost.
-    app.add_systems(
-        PreUpdate,
-        connection::unlink_session.after(LinkSystems::Send),
     );
 
     // Input: buffer key presses every frame, consume per fixed tick.

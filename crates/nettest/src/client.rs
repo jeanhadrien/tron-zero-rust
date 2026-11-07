@@ -94,27 +94,13 @@ impl TestClient {
         app.init_resource::<MenuState>();
         app.init_resource::<tc::settings::TurnBindings>();
         app.init_resource::<tc::settings::RebindState>();
-        // Same chain as the real client, minus the menu systems.
+        // The real client's lifecycle wiring, minus the menu systems.
+        tc::connection::add_lifecycle_systems(&mut app);
         app.add_systems(
             PreUpdate,
-            (
-                tc::menu::begin_input_frame,
-                tc::attach_local_input,
-                tc::connection::monitor_connection,
-                tc::chat::chat_controls,
-            )
-                .chain()
-                .after(bevy::input::InputSystems)
-                .after(MessageSystems::Receive)
-                .after(ReplicationSystems::Receive)
+            tc::chat::chat_controls
+                .after(tc::connection::monitor_connection)
                 .before(tc::input::buffer_keyboard_input),
-        );
-        app.add_systems(Update, tc::connection::finish_disconnect);
-        app.add_systems(Update, tc::connection::send_leave);
-        // Closes the link after the UDP client flushed the Leave (see client main.rs).
-        app.add_systems(
-            PreUpdate,
-            tc::connection::unlink_session.after(LinkSystems::Send),
         );
         tc::add_input_and_prediction(&mut app);
         app.init_resource::<ClientTrace>();

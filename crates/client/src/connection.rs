@@ -328,8 +328,10 @@ impl Session {
         }
     }
 
-    /// The player's name: the server's final choice once admitted, else the
-    /// one requested.
+    /// The player's name: the server's final choice while a link exists and has
+    /// been admitted, else the one requested. Once teardown starts
+    /// (`Unlinking`, `Draining`, `Offline`) the link data is gone, so this falls
+    /// back to the requested name.
     pub fn name(&self) -> &str {
         self.state
             .link()
@@ -549,6 +551,34 @@ impl Session {
     }
 }
 
+/// Registers the connection lifecycle systems and their ordering. The real
+/// client and the nettest client both call this, so the ordering constraints
+/// live (and are tested) in one place. Each caller adds its own UI pass
+/// (`menu_controls`, `chat_controls`) `.after(monitor_connection)` and
+/// `.before(input::buffer_keyboard_input)`.
+pub fn add_lifecycle_systems(app: &mut App) {
+    // Frame start: raw input is read, the monitor then sees this frame's
+    // network messages and replicated entities.
+    app.add_systems(
+        PreUpdate,
+        (
+            crate::menu::begin_input_frame,
+            crate::attach_local_input,
+            monitor_connection,
+        )
+            .chain()
+            .after(bevy::input::InputSystems)
+            .after(MessageSystems::Receive)
+            .after(ReplicationSystems::Receive)
+            .before(crate::input::buffer_keyboard_input),
+    );
+    app.add_systems(Update, (send_leave, finish_disconnect));
+    // The UDP client flushes `Link::send` in PreUpdate (not PostUpdate), so the
+    // Leave queued in Update only reaches the socket on the next frame: close
+    // the link after that flush, or the Leave is lost.
+    app.add_systems(PreUpdate, unlink_session.after(LinkSystems::Send));
+}
+
 #[allow(clippy::type_complexity)]
 pub fn monitor_connection(
     mut session: ResMut<Session>,
@@ -648,10 +678,13 @@ pub fn monitor_connection(
         menu.open = true;
         return;
     }
-    let heartbeat_due = session.state.link().is_some_and(|link| {
-        link.last_send
-            .is_none_or(|last| now - last >= SESSION_HEARTBEAT_SECS)
-    });
+    // Not while dialing: a heartbeat ahead of the hello would bind the server's
+    // nonce for a link that then has no Leave to send (see `Session::leave`).
+    let heartbeat_due = !session.is_dialing()
+        && session.state.link().is_some_and(|link| {
+            link.last_send
+                .is_none_or(|last| now - last >= SESSION_HEARTBEAT_SECS)
+        });
     if connected
         && heartbeat_due
         && let Some(mut sender) = sender
@@ -1045,6 +1078,39 @@ mod tests {
                 assert_eq!(s.phase(), ConnectionPhase::Connecting);
             })
             .unwrap();
+    }
+
+    #[test]
+    fn no_heartbeat_goes_out_before_the_hello() {
+        let mut world = World::new();
+        world.init_resource::<Time<Real>>();
+        world.init_resource::<MenuState>();
+        // Connected, but with no hello sender yet: the hello cannot go out.
+        let entity = world
+            .spawn((
+                Client::default(),
+                RemoteId(PeerId::Server),
+                Connected,
+                MessageSender::<SessionRequest>::default(),
+            ))
+            .id();
+        world.insert_resource(session_in(State::Dialing {
+            link: link(entity),
+            since: 0.0,
+            ticket: None,
+        }));
+        world.run_system_once(monitor_connection).unwrap();
+        let session = world.resource::<Session>();
+        assert!(session.is_dialing());
+        assert!(session.state.link().unwrap().last_send.is_none());
+        // Once the hello is queued the heartbeat follows it in the same pass.
+        world
+            .entity_mut(entity)
+            .insert(MessageSender::<SessionHello>::default());
+        world.run_system_once(monitor_connection).unwrap();
+        let session = world.resource::<Session>();
+        assert!(!session.is_dialing());
+        assert!(session.state.link().unwrap().last_send.is_some());
     }
 
     #[test]

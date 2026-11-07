@@ -11,6 +11,9 @@ use tron_zero_client::sim::NetSim;
 use tron_zero_nettest::{Impairment, Net, serial};
 
 const WAIT: Duration = Duration::from_secs(15);
+/// Longest a delivered Leave may take to free the server slot; far below the
+/// 5 s heartbeat timeout that would free it if the Leave were lost.
+const LEAVE_WAIT: Duration = Duration::from_secs(2);
 
 fn playing(net: &mut Net, clients: &[usize]) -> bool {
     net.run_until(WAIT, |net| {
@@ -136,7 +139,8 @@ fn leaving_and_rejoining_repeatedly_cleans_up_and_renames() {
 
     for (cycle, name) in ["Alpha 1", "Alpha 2", "Alpha 3"].into_iter().enumerate() {
         net.clients[a].disconnect();
-        let gone = net.run_until(WAIT, |net| {
+        // Well inside the 5 s heartbeat timeout: only a delivered Leave passes.
+        let gone = net.run_until(LEAVE_WAIT, |net| {
             net.clients[a].phase() == tron_zero_client::connection::ConnectionPhase::Offline
                 && net.server.human_names() == strings(&["Beta"])
                 && net.server.link_count() == 1
@@ -174,18 +178,22 @@ fn disconnect_once_armed(
 }
 
 /// Playing client whose `disconnect()` is forced to land where `install`
-/// schedules it; the server must learn of the Leave promptly. Raw UDP has no
-/// disconnect handshake, so without a Leave the slot is only freed by the 5 s
-/// heartbeat timeout.
-fn disconnect_lands_and_server_notices(install: impl FnOnce(&mut App)) {
+/// schedules it (if given); the server must learn of the Leave promptly. Raw
+/// UDP has no disconnect handshake, so without a Leave the slot is only freed
+/// by the 5 s heartbeat timeout.
+fn disconnect_lands_and_server_notices(install: Option<impl FnOnce(&mut App)>) {
     let _guard = serial();
     let mut net = Net::new(Impairment::NONE);
     let a = net.add_client_with("Alpha", |_| {});
     assert!(playing(&mut net, &[a]));
     assert_eq!(net.server.link_count(), 1);
-    install(&mut net.clients[a].app);
-    net.clients[a].app.insert_resource(DisconnectArmed);
-    let freed = net.run_until(Duration::from_secs(2), |net| net.server.link_count() == 0);
+    if let Some(install) = install {
+        install(&mut net.clients[a].app);
+        net.clients[a].app.insert_resource(DisconnectArmed);
+    } else {
+        net.clients[a].disconnect();
+    }
+    let freed = net.run_until(LEAVE_WAIT, |net| net.server.link_count() == 0);
     assert!(
         freed,
         "the server kept the link: no Leave arrived (client {:?}, status {})",
@@ -194,30 +202,33 @@ fn disconnect_lands_and_server_notices(install: impl FnOnce(&mut App)) {
     );
 }
 
+/// The case that was actually observed: `disconnect()` called between frames
+/// (as the menu or a test does), no injected system.
+#[test]
+fn a_plain_disconnect_frees_the_server_link_promptly() {
+    disconnect_lands_and_server_notices(None::<fn(&mut App)>);
+}
+
 #[test]
 fn a_disconnect_right_after_send_leave_still_tells_the_server() {
-    disconnect_lands_and_server_notices(|app| {
+    // Also covers a disconnect landing late in the frame: PostUpdate
+    // `LinkSystems::Send` is empty on raw UDP, so "after Update" and "before
+    // the PostUpdate send" are the same situation.
+    disconnect_lands_and_server_notices(Some(|app: &mut App| {
         app.add_systems(Update, disconnect_once_armed.after(send_leave));
-    });
+    }));
 }
 
 #[test]
 fn a_disconnect_right_before_unlink_still_tells_the_server() {
-    disconnect_lands_and_server_notices(|app| {
+    disconnect_lands_and_server_notices(Some(|app: &mut App| {
         app.add_systems(
             PreUpdate,
             disconnect_once_armed
                 .after(LinkSystems::Send)
                 .before(unlink_session),
         );
-    });
-}
-
-#[test]
-fn a_disconnect_between_the_menu_pass_and_the_send_still_tells_the_server() {
-    disconnect_lands_and_server_notices(|app| {
-        app.add_systems(PostUpdate, disconnect_once_armed.before(LinkSystems::Send));
-    });
+    }));
 }
 
 #[test]
