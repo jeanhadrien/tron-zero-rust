@@ -362,8 +362,15 @@ impl Session {
             State::Handshaking { link, .. }
             | State::Synchronizing { link, .. }
             | State::Playing { link, .. } => State::Leaving { link, refusal },
-            // Offline or already tearing down: nothing to do.
-            other => {
+            // Offline or already tearing down: keep the teardown going, but
+            // do not lose a refusal that arrives late (it stops auto-connect).
+            mut other => {
+                if let State::Leaving { refusal: slot, .. }
+                | State::Unlinking { refusal: slot, .. }
+                | State::Draining { refusal: slot, .. } = &mut other
+                {
+                    *slot = slot.or(refusal);
+                }
                 self.state = other;
                 return;
             }
@@ -389,13 +396,10 @@ impl Session {
 
     /// The client entity while the link is live (the phases `monitor_connection` watches).
     fn live_client(&self) -> Option<Entity> {
-        match &self.state {
-            State::Dialing { link, .. }
-            | State::Handshaking { link, .. }
-            | State::Synchronizing { link, .. }
-            | State::Playing { link, .. } => Some(link.client),
-            _ => None,
-        }
+        self.state
+            .link()
+            .filter(|_| !matches!(self.state, State::Leaving { .. }))
+            .map(|link| link.client)
     }
 
     fn is_dialing(&self) -> bool {
@@ -668,8 +672,12 @@ pub fn monitor_connection(
     {
         // Same ordered channel as the heartbeat below, so the server sees the
         // hello first, and the ticket (if any) before the hello.
-        if let (Some(ticket), Some(mut ticket_sender)) = (session.hello_sent(), ticket_sender) {
-            ticket_sender.send::<SessionChannel>(SessionTicket { ticket });
+        match (session.hello_sent(), ticket_sender) {
+            (Some(ticket), Some(mut ticket_sender)) => {
+                ticket_sender.send::<SessionChannel>(SessionTicket { ticket });
+            }
+            (Some(_), None) => warn!("No ticket sender on the link; joining without a ticket"),
+            (None, _) => {}
         }
         hello_sender.send::<SessionChannel>(SessionHello {
             protocol: session.protocol,
