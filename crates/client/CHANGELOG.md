@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.14.0](https://github.com/jeanhadrien/tron-zero-rust/compare/client-v0.13.0...client-v0.14.0) (2026-11-08)
+
+
+### Features
+
+* **client,nettest:** rider look screen, look nettests and docs ([b95296c](https://github.com/jeanhadrien/tron-zero-rust/commit/b95296c798f78884fb97b20d89bf48b32dfceb26))
+* **client:** send, persist and draw the rider look ([c7bbf3e](https://github.com/jeanhadrien/tron-zero-rust/commit/c7bbf3e7c08910d042be739fc3f03df6f8d01431))
+* **shared,server:** replicate a player-chosen rider look ([d8d656a](https://github.com/jeanhadrien/tron-zero-rust/commit/d8d656ac73f147435c32aa21d875e1700c10ac30))
+* **shared:** fingerprint contact tolerances, tie name to value, gate golden blesses on a version bump ([1c2d33e](https://github.com/jeanhadrien/tron-zero-rust/commit/1c2d33e044d1ae9666ea35e2c6af8498fb703571))
+
+
+### Bug Fixes
+
+* **client:** keep a late refusal during teardown, warn on a missing ticket sender ([1e129aa](https://github.com/jeanhadrien/tron-zero-rust/commit/1e129aa308bdebb8d700ec654d80a1f668ba0066))
+* **client:** never let a join ticket outlive its dial ([02e88b7](https://github.com/jeanhadrien/tron-zero-rust/commit/02e88b71a0bc60d1b82e651ae360a0c0ab1a18ed))
+* **client:** review follow-ups for the connection state machine ([2309a55](https://github.com/jeanhadrien/tron-zero-rust/commit/2309a5528e5e1a7c7e1071043ef45f15fd53bf27))
+
 ## [0.13.0](https://github.com/jeanhadrien/tron-zero-rust/compare/client-v0.12.0...client-v0.13.0) (2026-11-06)
 
 
