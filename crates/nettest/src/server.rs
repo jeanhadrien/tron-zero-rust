@@ -202,6 +202,12 @@ impl TestServer {
         ));
     }
 
+    /// The authoritative `Trail` corners of a rider, by player id.
+    pub fn trail_of(&mut self, player_id: &str) -> Option<Trail> {
+        let (rider, _) = self.rider(player_id)?;
+        self.app.world().get::<Trail>(rider).cloned()
+    }
+
     /// Kill a rider as if it had crashed (the queue and life rules must cope).
     pub fn kill_rider(&mut self, player_id: &str) {
         let (rider, _) = self.rider(player_id).expect("rider exists");

@@ -325,9 +325,67 @@ fn interpolated_points(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use lightyear::prelude::HistoryState;
 
     fn trail() -> Vec<Vec2> {
         vec![Vec2::new(0.0, 0.0), Vec2::new(100.0, 0.0)]
+    }
+
+    /// Confirmed opponent snapshots: `(tick, corners, head)`.
+    fn histories(
+        snapshots: &[(u32, Vec<Vec2>, Vec2)],
+    ) -> (ConfirmedHistory<Position>, ConfirmedHistory<Trail>) {
+        let mut heads = ConfirmedHistory::default();
+        let mut trails = ConfirmedHistory::default();
+        for (tick, corners, head) in snapshots {
+            heads.insert_explicit(Tick(*tick), HistoryState::Updated(Position(*head)));
+            trails.insert_explicit(Tick(*tick), HistoryState::Updated(Trail(corners.clone())));
+        }
+        (heads, trails)
+    }
+
+    #[test]
+    fn opponent_head_slides_through_a_corner_between_snapshots() {
+        let (heads, trails) = histories(&[
+            (10, vec![Vec2::ZERO], Vec2::new(8.0, 0.0)),
+            (
+                11,
+                vec![Vec2::ZERO, Vec2::new(10.0, 0.0)],
+                Vec2::new(10.0, 4.0),
+            ),
+        ]);
+        // 6 units travelled; half of it undone leaves the head at (10, 1).
+        let points = interpolated_points(&heads, &trails, Tick(10), 0.5).unwrap();
+        assert_eq!(points.len(), 3);
+        assert!(points[2].distance(Vec2::new(10.0, 1.0)) < 1e-3);
+        let end = interpolated_points(&heads, &trails, Tick(11), 0.0).unwrap();
+        assert_eq!(
+            end,
+            trails
+                .newest_present()
+                .unwrap()
+                .1
+                .points(Vec2::new(10.0, 4.0))
+        );
+    }
+
+    #[test]
+    fn opponent_respawn_steps_and_a_missing_end_holds() {
+        let start = vec![Vec2::ZERO, Vec2::new(8.0, 0.0)];
+        let (heads, trails) = histories(&[
+            (10, vec![Vec2::ZERO], Vec2::new(8.0, 0.0)),
+            (11, vec![Vec2::splat(500.0)], Vec2::splat(500.0)),
+        ]);
+        assert_eq!(
+            interpolated_points(&heads, &trails, Tick(10), 0.9),
+            Some(start.clone())
+        );
+        let (heads, trails) = histories(&[(10, vec![Vec2::ZERO], Vec2::new(8.0, 0.0))]);
+        assert_eq!(
+            interpolated_points(&heads, &trails, Tick(12), 0.5),
+            Some(start)
+        );
+        assert_eq!(interpolated_points(&heads, &trails, Tick(9), 0.5), None);
     }
 
     #[test]
