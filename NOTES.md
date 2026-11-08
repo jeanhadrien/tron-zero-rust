@@ -4,6 +4,8 @@ Open feature ideas, not committed work. Neither exists in the code today.
 
 ## Audio
 
+Design proposal (generative, synthesized from sim state): `docs/specs/audio.md`.
+
 - Engine hum scaled with the rider's speed multiplier; explosion on death.
 - Spatial listener on the local rider, so opponents' sounds pan and fade with distance.
 - Volume setting in the settings screen (persisted in `client.json`).

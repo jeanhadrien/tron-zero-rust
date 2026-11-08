@@ -72,6 +72,7 @@ Code style (comments, newtypes, errors, constants, logging, fmt/clippy) is in `S
 - `docs/guides/run.md` — which commands to start for each way of running the game (local, web, prod lobby, GCP, release); start here.
 - `docs/guides/dev.md` — dev loop, env vars, lab, smoke checks. `docs/guides/building.md` — prod builds, ports and env. `docs/guides/release.md` — releases and hosting for friends.
 - `server-manager/README.md` — lobby API and Cloud Run deployment.
+- `docs/specs/audio.md` — generative audio proposal (not implemented; open questions).
 - `docs/specs/web.md` — browser client and WebTransport decisions; `web/README.md` — build, serve, deploy.
 - `deploy/gce/` — game server VM (Container-Optimized OS) on GCP; image via `cloudbuild.server.yaml`.
 - `NOTES.md` — open feature ideas (audio, spectator mode). `EXPLORATION.md` (Armagetron ideas), `BOT-AI-*.md` (bot research) — not committed work. `STYLE.md` — code style; must pass fmt + clippy `-D warnings` (not checked by CI).
