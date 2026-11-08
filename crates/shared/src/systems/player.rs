@@ -162,7 +162,7 @@ pub fn simulate_players(
             disable(&mut player);
             continue;
         }
-        player.death.0 = true;
+        player.death.set_if_neq(ShouldHandleDeath(true));
         entities.push(player.entity);
         steps.push(RiderStep {
             owner: Some(player.entity.to_bits()),
@@ -187,8 +187,10 @@ pub fn simulate_players(
         let Ok(mut player) = cycles.get_mut(entity) else {
             continue;
         };
+        // Every write is `set_if_neq`: replication sends what change detection
+        // flags, so a value rewritten unchanged would go out every tick.
         player.trail.set_if_neq(step.trail);
-        player.direction.0 = outcome.direction;
+        player.direction.set_if_neq(Direction(outcome.direction));
         if outcome.died {
             if let Some(deaths) = deaths.as_mut() {
                 deaths.0.push(DeathRecord {
@@ -200,28 +202,32 @@ pub fn simulate_players(
             disable(&mut player);
             continue;
         }
-        player.colliding.0 = outcome.colliding;
-        player.rubber.0 = outcome.rubber;
-        player.sliding.0 = outcome.sliding;
-        player.target.0 = outcome.target_speed;
+        player.colliding.set_if_neq(IsColliding(outcome.colliding));
+        player.rubber.set_if_neq(Rubber(outcome.rubber));
+        player.sliding.set_if_neq(IsSliding(outcome.sliding));
+        player
+            .target
+            .set_if_neq(TargetSpeedMult(outcome.target_speed));
         // JS inertia lives in TargetSpeedMult: collision changes actual speed,
         // but preserves accumulated boost for escape; boost affects next tick.
-        player.speed.0 = outcome.speed;
-        player.velocity.0 = outcome.direction * (outcome.step * 1000.0);
-        player.position.0 = outcome.position;
+        player.speed.set_if_neq(SpeedMult(outcome.speed));
+        player
+            .velocity
+            .set_if_neq(Velocity(outcome.direction * (outcome.step * 1000.0)));
+        player.position.set_if_neq(Position(outcome.position));
     }
 }
 
 fn disable(player: &mut CycleItem<'_, '_>) {
-    player.alive.0 = false;
-    player.death.0 = false;
-    player.speed.0 = 0.0;
-    player.target.0 = 0.0;
-    player.velocity.0 = Vec2::ZERO;
-    player.rubber.0 = 0.0;
-    player.sliding.0 = false;
-    player.colliding.0 = false;
-    player.trail.0.clear();
+    player.alive.set_if_neq(IsAlive(false));
+    player.death.set_if_neq(ShouldHandleDeath(false));
+    player.speed.set_if_neq(SpeedMult(0.0));
+    player.target.set_if_neq(TargetSpeedMult(0.0));
+    player.velocity.set_if_neq(Velocity(Vec2::ZERO));
+    player.rubber.set_if_neq(Rubber(0.0));
+    player.sliding.set_if_neq(IsSliding(false));
+    player.colliding.set_if_neq(IsColliding(false));
+    player.trail.set_if_neq(Trail::default());
 }
 
 #[cfg(test)]

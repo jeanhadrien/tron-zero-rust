@@ -58,16 +58,15 @@ numbers are in `docs/specs/netcode-design.md`; the headless harness is
   the candidate fix); x86_64/wasm32 bit-identity is argued (scalar `+ - * /`,
   correctly rounded sqrt, no FMA), not measured (run the lab goldens on
   wasm32-wasip1 to verify).
-- [ ] **Per-tick replication.** `Trail` now carries corners only and is sent
-  on turns and prunes (58 → 20 KB/s per client with two riders, see
-  `measure.rs::downlink_bandwidth_with_long_trails`). The rest is mostly
-  components rewritten every tick: `simulate_players` assigns `Direction`,
-  `IsAlive`, `IsSliding`, `IsColliding` and `ShouldHandleDeath` through `Mut`
-  each tick, so replicon resends them unchanged (`set_if_neq` fixes that);
-  `Velocity` looks derivable from `Direction` and the step. A rider turning
-  every tick still resends its whole corner list each tick: replicon's diff
-  replication (`replicate_diff`/`predict_diff`, push/drop-front diffs) would
-  bound that worst case.
+- [ ] **Per-tick replication.** `Trail` carries corners only and
+  `simulate_players` writes every component with `set_if_neq`, so only real
+  changes replicate: 58 → 15 KB/s per client with two riders
+  (`measure.rs::downlink_bandwidth_with_long_trails`). What is left changes
+  every tick (`Position`, and `Rubber`/`TargetSpeedMult`/`SpeedMult` while
+  they move); `Velocity` looks derivable from `Direction` and the step. A
+  rider turning every tick still resends its whole corner list each tick:
+  replicon's diff replication (`replicate_diff`/`predict_diff`, push/drop-front
+  diffs) would bound that worst case.
 - [ ] Diagnostics: structured tracing correlating session, command, intended
   tick, applied/rejected and rollback range (the server `TurnLog` and harness
   traces exist; client side and rollback ranges do not); RTT/jitter/loss,

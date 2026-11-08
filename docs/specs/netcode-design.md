@@ -124,9 +124,11 @@ is a "connection" as soon as one packet arrives (see `NETWORK.md`). Lightyear
   head makes it independent of corners behind the tail). Spawn stores one
   anchor, a turn pushes a corner, `step_riders` prunes corners wholly behind
   the tail once every head is final (after crossing stops), and death clears
-  the vector. The component therefore changes on turns and prunes only, and
-  `simulate_players` writes it back with `set_if_neq` so replicon sends it only
-  then (measured with two staircasing riders: 58 → 20 KB/s per client downlink,
+  the vector. The component therefore changes on turns and prunes only.
+  `simulate_players` writes it, like every other sim component, with
+  `set_if_neq`: replicon sends whatever change detection flags, so an
+  unchanged value rewritten through `Mut` would go out every tick (measured
+  with two staircasing riders: 58 → 15 KB/s per client downlink,
   `nettest --test measure downlink_bandwidth_with_long_trails`). A rider
   turning every tick still resends its whole corner list each tick; replicon's
   diff replication (`replicate_diff`/`predict_diff`) would bound that. Corners
