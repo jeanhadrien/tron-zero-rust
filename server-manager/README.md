@@ -1,10 +1,12 @@
 # server-manager
 
-Status: updated 2026-11-02.
+Status: updated 2026-11-08.
 
 Lobby service for Tron Zero: game servers register themselves, the client's
-server browser lists them. In-memory only (rooms vanish on restart; servers
-re-register when a heartbeat returns 404). Express 5 + `cors` on Bun.
+server browser lists them. Rooms are in memory (they vanish on restart; servers
+re-register when a heartbeat returns 404). Accounts, ratings, ranked keys and
+join tickets live in memory by default or in Firestore (`STORE=firestore`, see
+below). Express 5 + `cors` on Bun.
 
 ```
 bun install
@@ -35,7 +37,9 @@ Firestore needs the two composite indexes in `firestore.indexes.json` (`firebase
 
 ## API
 
-All bodies are JSON. CORS is read-only (`GET`): browsers can list rooms but not mutate them.
+All bodies are JSON. CORS is read-only (`GET`) except on `/api/accounts`,
+`/api/tickets`, `/api/me` and `/api/play`, which allow the origins in
+`WEB_ORIGINS`: browsers can list rooms but not register or mutate them.
 
 ### Authentication
 
@@ -50,13 +54,25 @@ Heartbeat and DELETE require `Authorization: Bearer <token>`.
 | `POST /api/rooms/:id/heartbeat` | `{ playerCount, botCount? }` + bearer token | `{ ok: true }`; `404` unknown/evicted; `401` missing/wrong token; `400` if a count is not a number |
 | `DELETE /api/rooms/:id` | bearer token | `{ ok: true, existed }`; `401` missing/wrong token for a live room (an unknown id is still `200`, `existed: false`) |
 
+Accounts, tickets and ratings (see `docs/specs/matchmaking-elo.md`). Account endpoints use `Authorization: Bearer <account credential>`:
+
+| Endpoint | Body | Response |
+| --- | --- | --- |
+| `POST /api/accounts` | `{ displayName? }` (10/min/IP) | `{ id, credential }`; the credential is shown once |
+| `POST /api/tickets` | `{ roomId, displayName? }` (60/min/IP) | `{ ticket }` (base64) for a ranked room; `401` bad credential, `404` unknown or unranked room |
+| `POST /api/play` | `{ exclude?, displayName? }` (30/min/IP) | `{ room, ticket }`: the manager places the caller in an official ranked room; `404` if none has a free slot |
+| `GET /api/me` | | `{ id, displayName, rating, ratedEvents, rank }` (`rank` null until eligible); `404` without a rating |
+| `GET /api/leaderboard` | `?limit=` (default 50, max 100) | `[{ rank, id, kind, displayName, rating }]` |
+| `GET /api/keys` | | Ed25519 public keys for verifying tickets |
+| `POST /api/rooms/:id/results` | elimination report + room bearer token | `{ ok, ... }`; `403` if the room is not ranked |
+
 `RoomEntry` = `{ id, host, port, secure?, webPort?, certHash?, displayName, playerCount, botCount?, maxPlayers, lastHeartbeat }`
 (`lastHeartbeat` is epoch ms). `playerCount` is **humans only** and is capped by `maxPlayers`;
 `botCount` is optional, informational and never counts toward capacity.
 
 Behaviour:
 
-- A room idle for more than 40s (30s interval + 10s grace) is evicted; scanned every 10s.
+- A room idle for more than 40s (30s expected heartbeat interval + 10s grace) is evicted; scanned every 10s. The Rust server heartbeats every 2s.
 - Registering a `host:port` that is already registered succeeds only with that room's token (a
   restart that kept its token); the old id then 404s. Without it: `409`, so nobody can evict a
   live room. A server that crashed and lost its token gets `409` until its old entry is evicted

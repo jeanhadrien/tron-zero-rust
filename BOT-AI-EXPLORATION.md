@@ -11,11 +11,18 @@ Rust/Bevy ecosystem.
 
 ## 0. Current state (grounding)
 
-**Rust (`crates/server/src/bot.rs`).** Three bots. `bot_brain_input` writes a
+> **Update 2026-11-08.** The paragraph below is the audit as of 2026-10-03 and
+> is kept as the research baseline. It no longer describes the code: bots now
+> live in the deterministic `crates/bots` crate (`perceive` ray sensing,
+> `memory`, `forecast`, `territory`, `strategy`, `schedule` tiers, `config`
+> difficulty presets and named policy knobs), driven from
+> `crates/server/src/bot/` and replayed headless by `crates/lab`. Open bot
+> problems are tracked in `NETWORK.md` ("Bot self-trapping").
+
+**Rust at the time (`crates/server/src/bot.rs`, since removed).** Three bots. `bot_brain_input` writes a
 random `TurnLeft`/`TurnRight` every 15–30 ticks into `ActionState<PlayerInput>`;
 `bot_spawner` auto-cycles every 30 s and respawns 2 s after death; `random_spawn`
-places bots. There is **no sensing, no pathing, no strategy, no memory**. This is
-the entire AI today.
+places bots. There was **no sensing, no pathing, no strategy, no memory**.
 
 **JS stack (unported, inventoried from `..\tron-zero-js`).** A layered,
 heuristic-only engine — no A*, no minimax, no learning:

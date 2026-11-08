@@ -1,6 +1,6 @@
 # Game Mechanics Design Document
 
-Status: verified against `constants.rs` and `physics.rs` on 2026-11-02.
+Status: verified against `constants.rs` and `physics.rs` on 2026-11-08.
 
 This document outlines the core game mechanics. These should be respected at all times.
 
@@ -71,8 +71,8 @@ reaches past its corner.
 Death leaves the same owned rider entity disabled with zero speed, velocity,
 target speed and rubber, no sliding/collision/death-cleanup flags, and an empty
 trail. A red crossed-out rider and **YOU DIED** screen prompt make this visible.
-**Space / Enter** requests manual respawn; there is no client-authoritative or
-automatic human respawn.
+**Space** requests manual respawn (Enter opens the chat box); there is no
+client-authoritative or automatic human respawn.
 
 The server accepts a request only for the sending connection's single dead human
 and matching life generation. It resets position, cardinal heading, base speed,

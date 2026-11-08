@@ -1,6 +1,6 @@
 # Release & Share
 
-Status: updated 2026-11-02.
+Status: updated 2026-11-08.
 
 How a build reaches your friends. Dev loop lives in `docs/guides/dev.md`, manual
 prod builds in `docs/guides/building.md`.
@@ -9,7 +9,8 @@ prod builds in `docs/guides/building.md`.
 
 Releases are cut by release-please (already wired: push to `main` →
 `release-please.yml` opens a version-bump PR → merge it → GitHub Release
-created → `deploy.yml` builds and attaches the Windows exe).
+created → `deploy.yml` attaches the Windows exe, publishes the web client to
+GitHub Pages and rolls the game server image out to the GCE VM).
 
 1. Commit with a conventional message (`feat:`, `fix:`) and merge to `main`.
 2. Merge the `release-please` PR it opens (one PR bumps shared/server/client
@@ -27,12 +28,14 @@ runtime still wins, so dev builds keep pointing at localhost.
 
 ## Host a server for friends (your PC)
 
-The game server speaks raw UDP on port 5000 — friends connect to *your*
+The game server speaks raw UDP on port 5000 (desktop clients) and
+WebTransport on UDP 5001 (browser players) — friends connect to *your*
 machine, so it must be reachable from the internet:
 
-1. Windows Firewall: allow inbound UDP on port 5000
-   (`tron-zero-server`, private+public or scoped to taste).
-2. Router: forward external UDP 5000 → your PC's LAN IP (DHCP reservation
+1. Windows Firewall: allow inbound UDP on ports 5000 and 5001
+   (`tron-zero-server`, private+public or scoped to taste). Skip 5001 if you set
+   `WEB_PORT=0` (desktop players only).
+2. Router: forward external UDP 5000 and 5001 → your PC's LAN IP (DHCP reservation
    recommended so the target doesn't drift).
 3. Run the server with your **public** IP advertised (not loopback):
    ```

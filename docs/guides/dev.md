@@ -1,6 +1,6 @@
 # Dev Build
 
-Status: updated 2026-11-02.
+Status: updated 2026-11-08.
 
 Day-to-day development on Windows. Builds run natively on Windows for fast iteration and a visible game window. Which commands to start for which setup (web client, prod lobby, GCP): `docs/guides/run.md`.
 
@@ -64,7 +64,7 @@ If a build mysteriously rebuilds from scratch, you probably touched the repo fro
 - `tron-zero-nettest` — lib + tests, real server and clients over loopback UDP (see below).
 - `server-manager/` — Bun/TypeScript lobby service (see its README).
 
-The WASM web client target (`wasm32-unknown-unknown`) is not set up yet — see `docs/guides/building.md`.
+The browser client (`wasm32-unknown-unknown`) is built with `web/build.ps1` / `web/build.sh`; see `web/README.md` and `docs/guides/building.md`.
 
 ## One-click local test (`scripts\play-local.bat`, `scripts/play-local.sh`)
 
@@ -105,8 +105,9 @@ measured `ping`.
 
 ## Settings file
 
-The client persists the player name, turn key bindings and an optional
-`manager_url` to `client.json` in the platform config dir under `tron-zero\`
+The client persists the player name, turn key bindings, rider look (color,
+shape), theme, effects toggle, saved accounts and an optional `manager_url`
+to `client.json` in the platform config dir under `tron-zero\`
 (`%APPDATA%\tron-zero\client.json` on Windows; `TRON_CONFIG_FILE` overrides).
 Preferences are written debounced and atomically after a change. Reading or writing can fail without
 consequence: a missing, corrupt or illegal file falls back to defaults and a
@@ -275,13 +276,13 @@ is consumed only when the network input buffer is ready and never during
 rollback. Local prediction adds no configured input-delay ticks.
 
 - On death, the trail disappears, the stationary rider becomes a red crossed-out
-  circle, and a **YOU DIED** overlay shows **Space / Enter** (including numpad
-  Enter) to respawn. Holding the key does not repeat. Humans never auto-respawn.
+  circle, and a **YOU DIED** overlay shows **Space** to respawn (Enter opens the
+  chat box and never respawns). Holding the key does not repeat. Humans never auto-respawn.
   The client sends a request and waits; only the server resets the existing
   owned rider. Repeated requests while waiting do not allocate another rider.
 - The server checks the connection owner, dead human status and life generation.
   If predicted death precedes authoritative death, the request can be rejected:
-  wait for confirmation and press Space / Enter again. A rejected/no-space
+  wait for confirmation and press Space again. A rejected/no-space
   request displays a retry prompt; it does not move the rider or restore rubber.
 - Initial human spawn and manual respawn search the actual arena walls, live
   trails and rider positions. Candidates require a 100-unit boundary margin
@@ -311,17 +312,16 @@ rollback. Local prediction adds no configured input-delay ticks.
 
 ### Player HUD
 
-Native Bevy UI shows remaining rubber (bar and percentage) at bottom left and
-the current speed multiplier (for example `1.25x`) at bottom right. Rubber turns
-amber at 50% and red at 20%; the bar follows depletion/regeneration immediately,
-without smoothing. Speed reads the local predicted `SpeedMult`, including
-collision slowdown; unlike the JS HUD, it does not freeze the pre-collision value.
-There are no slide/collision indicators or gameplay control hints.
+The egui HUD (`render/hud.rs`) shows a frameless rubber meter with its
+percentage at bottom left and a ping badge at top right (amber `sim Nms` when
+the latency simulator is on). There is no speed readout, slide/collision
+indicator or control hint. The meter color follows the theme and the rubber
+fraction; the bar follows depletion/regeneration immediately, without
+smoothing, and reads the local predicted rider, not remote/confirmed copies.
 
-The meters are hidden while dead, outside a ready session, or while the menu is
-open. Death uses a centered panel with the existing respawn instructions and
-server-response feedback. All HUD entities persist across reconnects; they read
-the current local predicted rider, not remote/confirmed copies.
+The meter is hidden while dead, outside a ready session, or while the menu is
+open. Death uses a centered panel with the respawn instructions and
+server-response feedback.
 
 Manual checks: resize the window, deplete/recover rubber, accelerate alongside a
 wall, die and respawn, then disconnect/reconnect. Check that meters remain inside

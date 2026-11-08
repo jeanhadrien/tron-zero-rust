@@ -1,6 +1,6 @@
 # Ways to Run It
 
-Status: updated 2026-11-02. One page per question: "I want to …, what do I
+Status: updated 2026-11-08. One page per question: "I want to …, what do I
 start?" Details live in the linked docs; this page only routes.
 
 ## The pieces

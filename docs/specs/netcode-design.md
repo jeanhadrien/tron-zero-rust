@@ -1,6 +1,6 @@
 # Network & Simulation Architecture (Netcode)
 
-Status: updated 2026-11-02. Describes what is implemented; open work is in
+Status: updated 2026-11-08. Describes what is implemented; open work is in
 `NETWORK.md`. Sections 1-6 at the end are the design rationale; where they
 differ from the implementation described first, the implementation wins.
 
@@ -393,10 +393,11 @@ rejection delivery with 8 clients at 30% loss each way.
   measured but untuned default.
 
 Collision is against zero-thickness, start-of-tick segments. Swept front clearance
-prevents crossing that geometry, but simultaneous newly grown trail intersections
-and head-to-head movement are not swept against each other. Multiplayer rollback
-and contact behavior still require runtime playtesting; compilation alone does
-not establish network correctness.
+prevents crossing that geometry; a second pass sweeps every rider's movement of
+the tick against the others', resolving same-tick crossings and head-on
+meetings (see `docs/specs/core-gameplay-mechanics.md`, "Rust collision
+timing"). Multiplayer rollback and contact behavior still require runtime
+playtesting; compilation alone does not establish network correctness.
 
 ## 1. Agreed Authority Model (2026-10-01)
 

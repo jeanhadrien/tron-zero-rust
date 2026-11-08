@@ -1,6 +1,6 @@
 # Production Build
 
-Status: updated 2026-11-02. Shipping builds and runtime configuration. Dev
+Status: updated 2026-11-08. Shipping builds and runtime configuration. Dev
 builds live in `docs/guides/dev.md`; releases and hosting for friends in `docs/guides/release.md`.
 
 ## Ports and configuration
@@ -36,8 +36,9 @@ Client (`tron-zero-client`): `MANAGER_URL` (runtime) / `TRONZERO_MANAGER_URL`
 `docs/guides/dev.md`. Settings live in `client.json` under the platform config dir.
 
 Manager (`server-manager/`): `PORT` (3001; `MANAGER_PORT` fallback), `HOST`,
-`LOG_LEVEL`, `TRUST_PROXY`, `REGISTER_LIMIT_PER_MIN`; see its README. The
-It runs on Cloud Run at `https://server-manager.tronzero.dev`.
+`LOG_LEVEL`, `TRUST_PROXY`, `REGISTER_LIMIT_PER_MIN` and the ranked/store
+settings; see its README. It runs on Cloud Run at
+`https://server-manager.tronzero.dev`.
 
 ## Server — Linux (prod target)
 

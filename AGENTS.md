@@ -1,6 +1,6 @@
 # Tron Zero (Rust) — Project Overview
 
-Status: updated 2026-11-02.
+Status: updated 2026-11-08.
 
 Rust rewrite of **Tron Zero**, a multiplayer Lightcycle (Tron/Armagetron-style)
 arena game. Players ride continuously-moving lightcycles on a 2D arena, leave
@@ -21,17 +21,17 @@ manually (Space). Enter opens the player chat.
 
 `crates/` (all lib + bin pairs keep logic in the lib so `nettest` can run the real apps):
 
-- **`shared/` (lib)** — the simulation core and wire protocol. Pure Bevy ECS: no rendering, no wall clock. Both sides run `simulate_players` at **120 Hz** (`TICK_HZ`). `physics.rs` (`step_rider`, pure), `constants.rs` (gameplay numbers), `systems/` (turn → sense → move → rubber; order is load-bearing), `components/` (incl. `trail.rs`, the rollbackable trail), `spawn.rs`, `math.rs` (rotations, arena walls, seeded spawn), `polyline.rs` (render-only arc-length helpers), `probe.rs` (UDP server-discovery datagram), `protocol.rs` (components, messages, channels, `PROTOCOL_ID`, turn constants).
+- **`shared/` (lib)** — the simulation core and wire protocol. Pure Bevy ECS: no rendering, no wall clock. Both sides run `simulate_players` at **120 Hz** (`TICK_HZ`). `physics.rs` (`step_rider`, pure), `constants.rs` (gameplay numbers), `systems/` (turn → sense → move → rubber; order is load-bearing), `components/` (incl. `trail.rs`, the rollbackable trail), `spawn.rs`, `math.rs` (rotations, arena walls, seeded spawn), `polyline.rs` (render-only arc-length helpers), `probe.rs` (UDP server-discovery datagram), `elimination.rs` (rated elimination events from the death log), `protocol.rs` (components, messages, channels, `PROTOCOL_ID`, turn constants).
 - **`bots/` (lib)** — bot brain over a `WorldSnapshot` (sensing, memory, forecast, territory, strategies, named policy knobs). Deterministic: no `rand`, no wall clock. Shared by the server and the lab.
-- **`server/` (lib + bin)** — headless authoritative server. `add_core` (lib.rs) wires Lightyear and the chain `handle_respawns → apply_turn_commands → simulate_players`; `main.rs` adds bots, logging and the announcer. Modules: `admission` (hello handshake, capacity), `session` (heartbeat/leave/lease), `turns` (sequenced turn commands, acks), `budget` (per-link abuse limits), `systems` (connect/disconnect, arena, respawn queue), `announce` (manager HTTP), `look` (per-link `SetLook` stash, applied to the link's rider), `bot/` (ECS glue).
-- **`client/` (lib + bin)** — desktop client (UDP) and browser client (wasm32, WebTransport; `platform.rs` holds the target splits, build with `web/build.ps1` or `web/build.sh`, design in `docs/specs/web.md`). `connection` (lifecycle, readiness, autoconnect, quit), `look` (chosen rider color/shape, sent to the server as `SetLook`), `input/` (keyboard queue, `TurnOutbox` redundant delivery), `menu`/`settings`/`browser`/`config` (UI, key bindings, room list, persisted preferences), `sim` (latency simulator), `render/` (arena, trails, riders, `shape` outlines, camera, HUD, death, bot debug).
+- **`server/` (lib + bin)** — headless authoritative server. `add_core` (lib.rs) wires Lightyear and the chain `handle_respawns → apply_turn_commands → simulate_players`; `main.rs` adds bots, logging and the announcer. Modules: `admission` (hello handshake, capacity), `session` (heartbeat/leave/lease), `turns` (sequenced turn commands, acks), `budget` (per-link abuse limits), `systems` (connect/disconnect, arena, respawn queue), `announce` (manager HTTP), `look` (per-link `SetLook` stash, applied to the link's rider), `chat` (sanitize, label, broadcast), `probe` (local discovery replies), `web` (WebTransport listener, certificate rotation), `ranked` (join-ticket verification, result reporting), `elimination` (death log to rated events), `bot/` (ECS glue).
+- **`client/` (lib + bin)** — desktop client (UDP) and browser client (wasm32, WebTransport; `platform.rs` holds the target splits, build with `web/build.ps1` or `web/build.sh`, design in `docs/specs/web.md`). `connection` (lifecycle, readiness, autoconnect, quit), `look` (chosen rider color/shape, sent to the server as `SetLook`), `input/` (keyboard queue, `TurnOutbox` redundant delivery), `menu`/`settings`/`browser`/`config` (UI, key bindings, room list, persisted preferences), `chat` (typing state, overlay), `account` (manager account, ranked tickets, rating/leaderboard), `local_scan` (finds local servers), `theme` (design tokens), `sim` (latency simulator), `render/` (arena, trails, riders, `shape` outlines, `smooth` render pose, `fx` particles, `layers`, camera, HUD, death, bot debug).
 - **`lab/` (lib + bin)** — headless deterministic scenario runner over the real `simulate_players`. TOML scenarios in `crates/lab/scenarios/` (goldens `*.golden.jsonl`); JSONL trace + PNG output. **This is how an agent "plays" the game**: edit a scenario, re-run from tick 0, read trace and PNG. See `docs/guides/dev.md` § Lab.
-- **`nettest/` (lib + tests)** — real server and client(s) in one process over loopback UDP with a link conditioner; scripted key presses, trace assertions (`tests/turns.rs`, `session.rs`) and arrival measurements (`measure.rs`, `--ignored`). Uses wall-clock time, so a failure should be re-run alone before it is believed.
-- **`server-manager/` (Bun/TypeScript)** — in-memory lobby service. API, env vars and deployment in its README; `bun run typecheck`.
+- **`nettest/` (lib + tests)** — real server and client(s) in one process over loopback UDP with a link conditioner; scripted key presses, trace assertions (`tests/turns.rs`, `session.rs`, `chat.rs`, `look.rs`, `ownership.rs`, `web.rs`) and arrival measurements (`measure.rs`, `--ignored`). Uses wall-clock time, so a failure should be re-run alone before it is believed.
+- **`server-manager/` (Bun/TypeScript)** — lobby service: room registry (in memory), anonymous accounts, join tickets, Elo ratings, leaderboard and placement (memory or Firestore store). API, env vars and deployment in its README; `bun run typecheck`.
 
 ## Netcode model (short version)
 
-Forward-only authoritative server, immediate local prediction, client reconciliation only — no server rewind. Own rider is `Predicted`; opponents and bots are step-interpolated. A trail is one replicated+predicted `Trail(Vec<Vec2>)` component, **not** child entities (this deliberately diverges from `PLAN.md`).
+Forward-only authoritative server, immediate local prediction, client reconciliation only — no server rewind. Own rider is `Predicted`; opponents and bots are step-interpolated. A trail is one replicated+predicted `Trail(Vec<Vec2>)` component, **not** child entities (an early plan used child entities per trail point).
 
 - **Turns** are sequenced commands (`TurnCommand { seq, direction, generation, tick }`), not Lightyear inputs: every undecided command is resent in each tick's unreliable `TurnBatch` (<= 16 commands, repeated for 48 ticks), the server decides each seq once, executes it at its intended tick, within a 12-tick late window, or rejects it with a reason, and acks cumulatively. Lightyear's native `PlayerInput` only feeds client prediction; the server overwrites it for humans.
 - **Session:** the first message is a `SessionHello { protocol, name }`; the server admits (sanitized unique name) or rejects (`VersionMismatch`, `ServerFull`). Nothing replicates to a link before admission. Heartbeats, leave and respawn travel on ordered-reliable channels (`SessionChannel`, `RespawnChannel`); respawns are server-applied and tagged by `LifeGeneration`. The client sends `SetLook { color, shape }` on `SessionChannel` right after the hello; the server stashes the newest per link (`LinkLook`), applies it at spawn and live to the link's own rider. Chat (`ChatSend`/`ChatLine` on `ChatChannel`) is sanitized and labelled with the sender's name and color by the server, then broadcast.
@@ -74,7 +74,7 @@ Code style (comments, newtypes, errors, constants, logging, fmt/clippy) is in `S
 - `server-manager/README.md` — lobby API and Cloud Run deployment.
 - `docs/specs/web.md` — browser client and WebTransport decisions; `web/README.md` — build, serve, deploy.
 - `deploy/gce/` — game server VM (Container-Optimized OS) on GCP; image via `cloudbuild.server.yaml`.
-- `PLAN.md` — original rewrite plan; **current code wins** (see its top note). `EXPLORATION.md` (Armagetron ideas), `BOT-AI-*.md` (bot research) — not committed work. `STYLE.md` — code style; must pass fmt + clippy `-D warnings` (not checked by CI).
+- `NOTES.md` — open feature ideas (audio, spectator mode). `EXPLORATION.md` (Armagetron ideas), `BOT-AI-*.md` (bot research) — not committed work. `STYLE.md` — code style; must pass fmt + clippy `-D warnings` (not checked by CI).
 
 # Agent (you)
 
@@ -82,8 +82,7 @@ Code style (comments, newtypes, errors, constants, logging, fmt/clippy) is in `S
 
 The original repo is cloned alongside this Rust rewrite at `..\tron-zero-js`
 (`C:\dev\tron-zero-js` when this repository is at `C:\dev\tron-zero-rust`).
-Consult it for existing gameplay behavior and porting details; `PLAN.md` is
-the rewrite plan, not a substitute for checking the original implementation.
+Consult it for existing gameplay behavior and porting details.
 Keep changes to the Rust repository unless explicitly asked to edit the JS code.
 
 ## Base Game Armagetron

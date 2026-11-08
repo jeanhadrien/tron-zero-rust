@@ -15,7 +15,7 @@ design proposals, not claims about features already working in Tron Zero.
 ## Starting point and important differences
 
 The Rust worktree was inspected, including its current uncommitted changes.
-`PLAN.md` is not treated as proof of implementation. The original JS game's
+The original rewrite plan (since removed) was not treated as proof of implementation. The original JS game's
 implementation in `..\tron-zero-js` was also consulted.
 
 | Area | Current Tron Zero baseline | What upstream adds |
