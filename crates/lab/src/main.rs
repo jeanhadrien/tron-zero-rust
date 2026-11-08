@@ -179,7 +179,7 @@ fn run(args: Args) -> Result<(), String> {
         let color = PALETTE[rider.index % PALETTE.len()].0;
         let state = if rider.alive { "alive" } else { "dead" };
         // `+ 0.0` turns the empty sum's -0.0 into 0.0 for display.
-        let trail = shared::Trail(rider.trail).length() + 0.0;
+        let trail = shared::polyline::length(&rider.trail) + 0.0;
         writeln!(
             out,
             "# {} ({color}) {state} at ({:.1}, {:.1}) heading {} speed {:.3} target {:.3} \

@@ -214,6 +214,7 @@ mod tests {
     use std::sync::Arc;
 
     use crate::world::RiderSnapshot;
+    use shared::Trail;
 
     fn rider(id: u64, pos: Vec2, dir: Vec2) -> RiderSnapshot {
         RiderSnapshot {
@@ -222,7 +223,7 @@ mod tests {
             dir,
             // Short active edge only, so the rear ray is not blocked by our
             // own trail and a wall placed behind is visible.
-            trail: vec![pos - dir * 10.0, pos],
+            trail: Trail(vec![pos - dir * 10.0]),
             alive: true,
             rubber: 0.0,
             speed_mult: 1.0,

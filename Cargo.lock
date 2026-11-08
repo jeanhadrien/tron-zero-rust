@@ -7815,6 +7815,7 @@ dependencies = [
  "bevy",
  "glam 0.32.1",
  "lightyear",
+ "lightyear_transport",
  "tron-zero-client",
  "tron-zero-server",
  "tron-zero-shared",

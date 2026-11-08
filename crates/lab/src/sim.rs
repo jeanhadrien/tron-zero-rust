@@ -96,6 +96,7 @@ pub struct RiderView {
     pub rubber: f32,
     pub sliding: bool,
     pub colliding: bool,
+    /// Trail geometry: tail, corners, head.
     pub trail: Vec<Vec2>,
     pub deaths: Vec<Vec2>,
     pub is_bot: bool,
@@ -293,7 +294,10 @@ impl Lab {
             rubber: w.get::<Rubber>(e).unwrap().0,
             sliding: w.get::<IsSliding>(e).unwrap().0,
             colliding: w.get::<IsColliding>(e).unwrap().0,
-            trail: w.get::<Trail>(e).unwrap().0.clone(),
+            trail: w
+                .get::<Trail>(e)
+                .unwrap()
+                .points(w.get::<Position>(e).unwrap().0),
             deaths: rider.deaths.clone(),
             is_bot: rider.bot.is_some(),
         }
@@ -341,7 +345,7 @@ impl Lab {
             if !view.alive {
                 continue;
             }
-            let trail = Trail(view.trail).length();
+            let trail = shared::polyline::length(&view.trail);
             self.push(
                 view.index,
                 EventKind::Sample {
@@ -556,8 +560,9 @@ impl Lab {
         let mut riders = Vec::new();
         for other in &self.riders {
             if self.world.get::<IsAlive>(other.entity).unwrap().0 {
-                riders.push(self.world.get::<Position>(other.entity).unwrap().0);
-                let trail = &self.world.get::<Trail>(other.entity).unwrap().0;
+                let head = self.world.get::<Position>(other.entity).unwrap().0;
+                riders.push(head);
+                let trail = self.world.get::<Trail>(other.entity).unwrap().points(head);
                 segments.extend(trail.windows(2).map(|p| [p[0], p[1]]));
             }
         }

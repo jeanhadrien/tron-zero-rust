@@ -247,7 +247,8 @@ fn try_respawn(world: &mut World, owner: Entity, request: RespawnRequest) -> Res
     {
         if alive.0 {
             riders.push(position.0);
-            segments.extend(trail.0.windows(2).map(|p| [p[0], p[1]]));
+            let points = trail.points(position.0);
+            segments.extend(points.windows(2).map(|p| [p[0], p[1]]));
         }
     }
     let Some(spawn) = shared::spawn::find_safe_spawn(

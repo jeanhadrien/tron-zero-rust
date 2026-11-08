@@ -53,7 +53,10 @@ fn cardinal_velocity_preserves_360_units_per_second() {
     schedule.run(&mut world);
     near(world.get::<Position>(entity).unwrap().0.x, 3.0);
     near(world.get::<Velocity>(entity).unwrap().0.x, 3000.0);
-    near(world.get::<Trail>(entity).unwrap().length(), 3.0);
+    near(
+        world.get::<Trail>(entity).unwrap().length(Vec2::X * 3.0),
+        3.0,
+    );
 }
 
 #[test]
@@ -219,7 +222,7 @@ fn first_tick_target(sides: &[f32]) -> f32 {
     for &side in sides {
         let head = Vec2::new(400.0, 3.0 * side);
         let other = cycle(&mut world, head, Vec2::X);
-        *world.get_mut::<Trail>(other).unwrap() = Trail(vec![head - Vec2::X * 800.0, head]);
+        *world.get_mut::<Trail>(other).unwrap() = Trail(vec![head - Vec2::X * 800.0]);
     }
     schedule.run(&mut world);
     world.get::<TargetSpeedMult>(entity).unwrap().0
@@ -333,8 +336,7 @@ fn opponent_active_trail_can_be_a_sliding_wall() {
     let (mut world, mut schedule) = setup();
     let entity = cycle(&mut world, Vec2::ZERO, Vec2::X);
     let other = cycle(&mut world, Vec2::new(100.0, 5.0), Vec2::Y);
-    *world.get_mut::<Trail>(other).unwrap() =
-        Trail(vec![Vec2::new(-10.0, 5.0), Vec2::new(100.0, 5.0)]);
+    *world.get_mut::<Trail>(other).unwrap() = Trail(vec![Vec2::new(-10.0, 5.0)]);
     schedule.run(&mut world);
     assert!(world.get::<IsSliding>(entity).unwrap().0);
     assert!(!world.get::<IsColliding>(entity).unwrap().0);
@@ -372,7 +374,7 @@ fn opponent_active_and_completed_segments_both_collide() {
         let entity = cycle(&mut world, Vec2::ZERO, Vec2::X);
         let head = *points.last().unwrap();
         let other = cycle(&mut world, head, Vec2::Y);
-        *world.get_mut::<Trail>(other).unwrap() = Trail(points);
+        *world.get_mut::<Trail>(other).unwrap() = Trail(points[..points.len() - 1].to_vec());
         schedule.run(&mut world);
         assert!(world.get::<IsColliding>(entity).unwrap().0);
         assert!(world.get::<Position>(entity).unwrap().0.x < 5.0);
@@ -389,14 +391,13 @@ fn old_self_segment_collides_but_own_active_and_turn_junction_do_not() {
         Vec2::new(5.0, 10.0),
         Vec2::new(-10.0, 10.0),
         Vec2::new(-10.0, 0.0),
-        Vec2::ZERO,
     ]);
     schedule.run(&mut world);
     assert!(world.get::<IsColliding>(entity).unwrap().0);
 
     let (mut world, mut schedule) = setup();
     let entity = cycle(&mut world, Vec2::ZERO, Vec2::X);
-    *world.get_mut::<Trail>(entity).unwrap() = Trail(vec![Vec2::NEG_X * 10.0, Vec2::ZERO]);
+    *world.get_mut::<Trail>(entity).unwrap() = Trail(vec![Vec2::NEG_X * 10.0]);
     world.get_mut::<ActionState<PlayerInput>>(entity).unwrap().0 = PlayerInput::TurnLeft;
     schedule.run(&mut world);
     near(world.get::<Position>(entity).unwrap().0.x, 0.0);
@@ -415,7 +416,7 @@ fn old_self_segment_collides_but_own_active_and_turn_junction_do_not() {
 fn reversing_into_own_active_segment_is_not_excluded() {
     let (mut world, mut schedule) = setup();
     let entity = cycle(&mut world, Vec2::ZERO, Vec2::NEG_X);
-    *world.get_mut::<Trail>(entity).unwrap() = Trail(vec![Vec2::NEG_X * 10.0, Vec2::ZERO]);
+    *world.get_mut::<Trail>(entity).unwrap() = Trail(vec![Vec2::NEG_X * 10.0]);
     schedule.run(&mut world);
     assert!(world.get::<IsColliding>(entity).unwrap().0);
     assert_eq!(world.get::<Position>(entity).unwrap().0, Vec2::ZERO);
@@ -428,8 +429,7 @@ fn high_speed_cannot_tunnel_through_wall_or_trail() {
         let entity = cycle(&mut world, Vec2::ZERO, Vec2::X);
         let barrier = if trail {
             let other = cycle(&mut world, Vec2::new(50.0, 10.0), Vec2::Y);
-            *world.get_mut::<Trail>(other).unwrap() =
-                Trail(vec![Vec2::new(50.0, -10.0), Vec2::new(50.0, 10.0)]);
+            *world.get_mut::<Trail>(other).unwrap() = Trail(vec![Vec2::new(50.0, -10.0)]);
             50.0
         } else {
             1200.0
@@ -443,32 +443,27 @@ fn high_speed_cannot_tunnel_through_wall_or_trail() {
 }
 
 #[test]
-fn straight_and_cornered_trails_consume_oldest_end_gradually() {
-    let mut straight = Trail::new(Vec2::ZERO);
-    straight.advance(Vec2::X * 100.0, 40.0);
-    near_points(&straight.0, &[Vec2::X * 60.0, Vec2::X * 100.0]);
-    straight.advance(Vec2::X * 103.0, 40.0);
-    near_points(&straight.0[..1], &[Vec2::X * 63.0]);
-    near(straight.length(), 40.0);
-    let mut corners = Trail(vec![
-        Vec2::ZERO,
-        Vec2::new(10.0, 0.0),
-        Vec2::new(10.0, 10.0),
-        Vec2::new(20.0, 10.0),
-        Vec2::new(20.0, 20.0),
-    ]);
-    corners.advance(Vec2::new(20.0, 25.0), 20.0);
+fn cornered_trail_consumes_oldest_end_gradually() {
+    // Zigzag corners 10 apart, then a long run: the tail eats the corners one
+    // by one and the trail stays at the cap.
+    let mut corners = vec![Vec2::ZERO];
+    for i in 1..=4 {
+        let step = if i % 2 == 1 { Vec2::X } else { Vec2::Y };
+        corners.push(corners[i - 1] + step * 10.0);
+    }
+    let mut trail = Trail(corners);
+    let last = Vec2::new(20.0, 20.0);
+    let head = last + Vec2::Y * (TRAIL_MAX_LENGTH - 15.0);
+    trail.prune(head);
     near_points(
-        &corners.0,
-        &[
-            Vec2::new(15.0, 10.0),
-            Vec2::new(20.0, 10.0),
-            Vec2::new(20.0, 25.0),
-        ],
+        &trail.points(head),
+        &[Vec2::new(15.0, 10.0), Vec2::new(20.0, 10.0), last, head],
     );
-    near(corners.length(), 20.0);
-    corners.advance(Vec2::new(20.0, 60.0), 20.0);
-    near_points(&corners.0, &[Vec2::new(20.0, 40.0), Vec2::new(20.0, 60.0)]);
+    near(trail.length(head), TRAIL_MAX_LENGTH);
+    let head = last + Vec2::Y * (TRAIL_MAX_LENGTH + 20.0);
+    trail.prune(head);
+    assert_eq!(trail.0, vec![last]);
+    near_points(&trail.points(head), &[last + Vec2::Y * 20.0, head]);
 }
 
 #[test]
@@ -482,10 +477,13 @@ fn simulation_caps_long_straight_trail_without_erasing_active_segment() {
         schedule.run(&mut world);
     }
     let trail = world.get::<Trail>(entity).unwrap();
-    near(trail.length(), TRAIL_MAX_LENGTH);
-    assert_eq!(trail.0.len(), 2);
-    assert!(trail.0[0].distance(trail.0[1]) > 0.0);
-    assert_eq!(trail.0[1], world.get::<Position>(entity).unwrap().0);
+    let head = world.get::<Position>(entity).unwrap().0;
+    near(trail.length(head), TRAIL_MAX_LENGTH);
+    // A straight run never adds corners: the replicated value stays put.
+    assert_eq!(trail.0, vec![Vec2::new(-3000.0, 0.0)]);
+    let points = trail.points(head);
+    assert_eq!(points.len(), 2);
+    assert!(points[0].distance(points[1]) > 0.0);
     assert!(world.get::<IsAlive>(entity).unwrap().0);
 }
 
@@ -495,14 +493,10 @@ fn zero_length_turns_do_not_churn_vertices() {
     for _ in 0..10 {
         trail.turn(Vec2::ZERO);
     }
-    assert_eq!(trail.0.len(), 2);
-    trail.advance(Vec2::X * 3.0, TRAIL_MAX_LENGTH);
+    assert_eq!(trail.0.len(), 1);
     trail.turn(Vec2::X * 3.0);
-    trail.advance(Vec2::new(3.0, 3.0), TRAIL_MAX_LENGTH);
-    assert_eq!(
-        trail.0,
-        vec![Vec2::ZERO, Vec2::X * 3.0, Vec2::new(3.0, 3.0)]
-    );
+    trail.turn(Vec2::X * 3.0);
+    assert_eq!(trail.0, vec![Vec2::ZERO, Vec2::X * 3.0]);
 }
 
 #[test]
@@ -510,8 +504,7 @@ fn dead_opponents_are_not_obstacles() {
     let (mut world, mut schedule) = setup();
     let entity = cycle(&mut world, Vec2::ZERO, Vec2::X);
     let other = cycle(&mut world, Vec2::new(1.0, 10.0), Vec2::Y);
-    *world.get_mut::<Trail>(other).unwrap() =
-        Trail(vec![Vec2::new(1.0, -10.0), Vec2::new(1.0, 10.0)]);
+    *world.get_mut::<Trail>(other).unwrap() = Trail(vec![Vec2::new(1.0, -10.0)]);
     world.get_mut::<IsAlive>(other).unwrap().0 = false;
     schedule.run(&mut world);
     assert!(!world.get::<IsColliding>(entity).unwrap().0);
@@ -550,15 +543,24 @@ fn client_rollback_uses_historical_opponent_trails_not_future_render_state() {
     let mut trails = ConfirmedHistory::<Trail>::default();
     trails.insert_explicit(
         Tick(10),
-        HistoryState::Updated(Trail(vec![Vec2::new(5.0, -10.0), Vec2::new(5.0, 10.0)])),
+        HistoryState::Updated(Trail(vec![Vec2::new(5.0, -10.0)])),
     );
     trails.insert_explicit(
         Tick(20),
         HistoryState::Updated(Trail::new(Vec2::new(100.0, 100.0))),
     );
+    let mut heads = ConfirmedHistory::<Position>::default();
+    heads.insert_explicit(
+        Tick(10),
+        HistoryState::Updated(Position(Vec2::new(5.0, 10.0))),
+    );
+    heads.insert_explicit(
+        Tick(20),
+        HistoryState::Updated(Position(Vec2::new(100.0, 100.0))),
+    );
     let mut lives = ConfirmedHistory::<IsAlive>::default();
     lives.insert_explicit(Tick(10), HistoryState::Updated(IsAlive(true)));
-    world.entity_mut(remote).insert((trails, lives));
+    world.entity_mut(remote).insert((trails, heads, lives));
     schedule.run(&mut world);
     assert!(world.get::<IsColliding>(local).unwrap().0);
     assert!(world.get::<Position>(local).unwrap().0.x < 5.0);
@@ -601,7 +603,7 @@ fn snapshot_collision_results_do_not_depend_on_spawn_order() {
                 if p == Vec2::ZERO { Vec2::X } else { Vec2::Y },
             );
             if p != Vec2::ZERO {
-                *world.get_mut::<Trail>(entity).unwrap() = Trail(vec![Vec2::new(5.0, -10.0), p]);
+                *world.get_mut::<Trail>(entity).unwrap() = Trail(vec![Vec2::new(5.0, -10.0)]);
             }
             entities.push((p, entity));
         }
@@ -634,8 +636,7 @@ fn seeded_spawns_are_repeatable_distinct_and_inside_centered_arena() {
 fn riders_with_tails(world: &mut World, riders: [(Vec2, Vec2); 2]) -> [Entity; 2] {
     riders.map(|(position, direction)| {
         let entity = cycle(world, position, direction);
-        *world.get_mut::<Trail>(entity).unwrap() =
-            Trail(vec![position - direction * 50.0, position]);
+        *world.get_mut::<Trail>(entity).unwrap() = Trail(vec![position - direction * 50.0]);
         entity
     })
 }
@@ -673,6 +674,30 @@ fn same_tick_crossing_blocks_the_later_arrival() {
     }
     assert!(world.get::<IsAlive>(b).unwrap().0, "B could not turn away");
     assert!(world.get::<IsAlive>(a).unwrap().0);
+}
+
+#[test]
+fn a_crossing_stop_keeps_the_full_trail_length() {
+    // The tail follows the final (shortened) head, not the move B would have
+    // made without A in the way.
+    let (mut world, mut schedule) = setup();
+    let mut walls = world.query::<&mut WallSegments>();
+    walls.single_mut(&mut world).unwrap().0 = arena_walls(8000.0, 8000.0);
+    let [_, b] = riders_with_tails(
+        &mut world,
+        [
+            (Vec2::new(-1.0, 0.0), Vec2::X),
+            (Vec2::new(0.0, -2.0), Vec2::Y),
+        ],
+    );
+    *world.get_mut::<Trail>(b).unwrap() = Trail(vec![Vec2::new(0.0, -3000.0)]);
+    schedule.run(&mut world);
+    assert!(world.get::<IsColliding>(b).unwrap().0);
+    let head = world.get::<Position>(b).unwrap().0;
+    near(
+        world.get::<Trail>(b).unwrap().length(head),
+        TRAIL_MAX_LENGTH,
+    );
 }
 
 #[test]
@@ -754,11 +779,8 @@ fn boosted_head_on_stops_both_short_and_a_turn_still_escapes() {
 fn long_segments_do_not_reach_past_their_corner() {
     let (mut world, mut schedule) = setup();
     let b = cycle(&mut world, Vec2::new(500.0, 300.0), Vec2::Y);
-    *world.get_mut::<Trail>(b).unwrap() = Trail(vec![
-        Vec2::new(-500.0, 0.0),
-        Vec2::new(500.0, 0.0),
-        Vec2::new(500.0, 300.0),
-    ]);
+    *world.get_mut::<Trail>(b).unwrap() =
+        Trail(vec![Vec2::new(-500.0, 0.0), Vec2::new(500.0, 0.0)]);
     let a = cycle(&mut world, Vec2::new(500.5, -11.0), Vec2::Y);
     for _ in 0..5 {
         schedule.run(&mut world);

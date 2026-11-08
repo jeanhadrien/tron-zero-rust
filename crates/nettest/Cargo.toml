@@ -12,3 +12,5 @@ tron-zero-client = { path = "../client" }
 bevy.workspace = true
 glam.workspace = true
 lightyear = { workspace = true, features = ["udp", "raw_connection", "input_native", "webtransport"] }
+# Only for `TransportSystems`, which the lightyear facade does not re-export.
+lightyear_transport = "0.28"

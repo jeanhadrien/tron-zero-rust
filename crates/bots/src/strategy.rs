@@ -630,7 +630,7 @@ impl BotRng {
 mod tests {
     use super::*;
     use glam::Vec2;
-    use shared::ARENA_WIDTH;
+    use shared::{ARENA_WIDTH, Trail};
     use std::sync::Arc;
 
     use crate::world::GRID_N;
@@ -667,7 +667,7 @@ mod tests {
             id,
             pos,
             dir: Vec2::X,
-            trail: vec![pos - Vec2::X * 10.0, pos],
+            trail: Trail(vec![pos - Vec2::X * 10.0]),
             alive: true,
             rubber: 0.0,
             speed_mult: 1.0,
@@ -797,7 +797,7 @@ mod tests {
             id,
             pos,
             dir,
-            trail: vec![pos - dir * 10.0, pos],
+            trail: Trail(vec![pos - dir * 10.0]),
             alive: true,
             rubber: 0.0,
             speed_mult: 1.0,

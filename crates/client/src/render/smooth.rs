@@ -10,14 +10,19 @@
 //!   exactly the correction: predicted vs corrected head at the same tick) and
 //!   catches up within about 100 ms. Anything that is not a plain correction
 //!   (respawn, death, first sight) snaps; a timeline resync only drops the lag.
-//! * Opponents: the replicated `Trail` is already interpolated by Lightyear
+//! * Opponents: the replicated `Trail` holds corners only and `Position` steps
+//!   tick to tick, so the trail is rebuilt from the two confirmed snapshots
+//!   around the interpolation time and its head slides between them
 //!   (`shared::polyline::interpolate_trail`); the body is drawn from its head.
 
 use bevy::prelude::*;
 use lightyear::prelude::client::InputTimelineConfig;
 use lightyear::prelude::input::native::InputMarker;
-use lightyear::prelude::{InterpolationSystems, Predicted, RollbackSystems, SyncEvent};
-use shared::polyline::{arc_to_end, truncate_back};
+use lightyear::prelude::{
+    ConfirmedHistory, InterpolationSystems, InterpolationTimeline, NetworkTimeline, Predicted,
+    RollbackSystems, SyncEvent, Tick,
+};
+use shared::polyline::{arc_to_end, interpolate_trail, truncate_back};
 use shared::{IsAlive, LifeGeneration, Player, PlayerInput, Position, Trail};
 
 /// Time constant of the rollback-correction catch-up (4x it is about 100 ms).
@@ -66,10 +71,10 @@ impl Rendered {
             .unwrap_or(fallback)
     }
 
-    fn set(&mut self, head: Vec2, trail: &Trail) {
+    fn set(&mut self, head: Vec2, trail: &[Vec2]) {
         self.head = head;
         self.trail.clear();
-        self.trail.extend_from_slice(&trail.0);
+        self.trail.extend_from_slice(trail);
     }
 }
 
@@ -188,9 +193,10 @@ fn capture_predicted_head(mut riders: Query<&mut OwnRider>) {
 
 /// Runs after the re-simulation: `curr` is now the corrected head of the same
 /// tick the prediction had reached, so the difference is the correction alone.
-fn measure_correction(mut riders: Query<(&Trail, &mut OwnRider)>) {
-    for (trail, mut own) in &mut riders {
-        own.lag = match correction_lag(&trail.0, own.predicted_before_rollback) {
+fn measure_correction(mut riders: Query<(&Trail, &Position, &mut OwnRider)>) {
+    for (trail, position, mut own) in &mut riders {
+        let corrected = trail.points(position.0);
+        own.lag = match correction_lag(&corrected, own.predicted_before_rollback) {
             Some(correction) => (own.lag + correction).min(MAX_LAG),
             None => 0.0,
         };
@@ -224,9 +230,10 @@ fn update_own_riders(
 ) {
     for (entity, position, trail, generation, alive, own, rendered) in &mut riders {
         let life = (*generation, alive.0);
+        let points = trail.points(position.0);
         let (Some(mut own), Some(mut rendered)) = (own, rendered) else {
             let mut first = Rendered::default();
-            first.set(position.0, trail);
+            first.set(position.0, &points);
             commands
                 .entity(entity)
                 .insert((OwnRider::new(position.0, life), first));
@@ -238,31 +245,81 @@ fn update_own_riders(
         if own.life != life || !alive.0 {
             *own = OwnRider::new(position.0, life);
             own.teleported = teleported;
-            rendered.set(position.0, trail);
+            rendered.set(position.0, &points);
             continue;
         }
         own.teleported = false;
 
         let head = own.prev.lerp(own.curr, fixed.overstep_fraction());
-        rendered.head = draw_trail(&mut rendered.trail, &trail.0, head, own.lag);
+        rendered.head = draw_trail(&mut rendered.trail, &points, head, own.lag);
     }
 }
 
+#[allow(clippy::type_complexity)]
 fn update_other_riders(
     mut commands: Commands,
-    mut riders: Query<(Entity, &Position, &Trail, Option<&mut Rendered>), OtherPlayer>,
+    timeline: Query<&InterpolationTimeline>,
+    mut riders: Query<
+        (
+            Entity,
+            &Position,
+            &Trail,
+            Option<&ConfirmedHistory<Position>>,
+            Option<&ConfirmedHistory<Trail>>,
+            Option<&mut Rendered>,
+        ),
+        OtherPlayer,
+    >,
 ) {
-    for (entity, position, trail, rendered) in &mut riders {
-        let head = trail.0.last().copied().unwrap_or(position.0);
+    let now = timeline
+        .single()
+        .ok()
+        .map(|timeline| (timeline.tick(), timeline.overstep().to_f32()));
+    for (entity, position, trail, heads, trails, rendered) in &mut riders {
+        let points = match (now, heads, trails) {
+            (Some((tick, overstep)), Some(heads), Some(trails)) => {
+                interpolated_points(heads, trails, tick, overstep)
+            }
+            _ => None,
+        }
+        .unwrap_or_else(|| trail.points(position.0));
+        let head = points.last().copied().unwrap_or(position.0);
         match rendered {
-            Some(mut rendered) => rendered.set(head, trail),
+            Some(mut rendered) => rendered.set(head, &points),
             None => {
                 let mut first = Rendered::default();
-                first.set(head, trail);
+                first.set(head, &points);
                 commands.entity(entity).insert(first);
             }
         }
     }
+}
+
+/// An opponent's trail at the interpolation time `tick + overstep`: rebuilt
+/// from the confirmed snapshots just before and after it (corners and head of
+/// the same tick), the head sliding along the newer one. Mirrors Lightyear's
+/// own sampling: no extrapolation past the newest snapshot. `None` before the
+/// first snapshot.
+fn interpolated_points(
+    heads: &ConfirmedHistory<Position>,
+    trails: &ConfirmedHistory<Trail>,
+    tick: Tick,
+    overstep: f32,
+) -> Option<Vec<Vec2>> {
+    let before = (0..heads.len())
+        .take_while(|&i| heads.get_nth_tick(i).is_some_and(|t| t <= tick))
+        .last()?;
+    let (start_tick, start_head) = heads.get_nth_present(before)?;
+    let start = trails.get_present(start_tick)?.points(start_head.0);
+    let Some((end_tick, end_head)) = heads.get_nth_present(before + 1) else {
+        return Some(start);
+    };
+    let Some(end) = trails.get_present(end_tick).map(|t| t.points(end_head.0)) else {
+        return Some(start);
+    };
+    let t =
+        (((tick - start_tick) as f32 + overstep) / (end_tick - start_tick) as f32).clamp(0.0, 1.0);
+    Some(interpolate_trail(&start, &end, t))
 }
 
 #[cfg(test)]

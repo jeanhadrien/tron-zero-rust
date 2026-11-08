@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize};
 /// fine and then silently mispredict. The lab's golden traces back this up:
 /// blessing changed goldens fails unless this was bumped (see
 /// `golden_traces_match` and `scenarios/goldens.protocol`).
-pub const PROTOCOL_VERSION: u32 = 8;
+pub const PROTOCOL_VERSION: u32 = 9;
 
 /// Bits of one sim constant, checked against its declared type: a constant
 /// listed under the wrong type does not compile.
@@ -533,12 +533,14 @@ pub fn register_protocol(app: &mut App) {
     app.component::<IsColliding>().replicate().predict();
     app.component::<ShouldHandleDeath>().replicate().predict();
     app.component::<LifeGeneration>().replicate().predict();
-    // Render-only smoothing: the head slides along the trail between snapshots.
-    // Collision reads `ConfirmedHistory<Trail>`, not this interpolated value.
+    // Corners only: the head is `Position` and the tail is derived, so this
+    // changes (and is sent) on turns and prunes, not every tick. Collision
+    // pairs it with `Position` from the confirmed histories; the renderer
+    // slides opponents' heads along it from the same histories.
     app.component::<Trail>()
         .replicate()
         .predict()
-        .add_interpolation_with(interpolate_trail_component);
+        .add_interpolation_with(step);
 
     // --- Replicated-only (no prediction needed) ---
     app.component::<BotDebug>().replicate();
@@ -559,10 +561,6 @@ pub fn register_protocol(app: &mut App) {
     // ActionState is local per-tick state (written by input systems, read by
     // simulate_players). Not replicated — the lightyear input system handles
     // transmitting the value. Both sides add it manually on their entity.
-}
-
-fn interpolate_trail_component(start: Trail, end: Trail, t: f32) -> Trail {
-    Trail(crate::polyline::interpolate_trail(&start.0, &end.0, t))
 }
 
 // Discrete snapshots keep cardinal turns on the tick they happened.

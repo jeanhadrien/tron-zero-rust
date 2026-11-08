@@ -26,7 +26,8 @@ pub struct RiderSnapshot {
     pub id: u64,
     pub pos: Vec2,
     pub dir: Vec2,
-    pub trail: Vec<Vec2>,
+    /// Trail corners, as replicated: the head is `pos`.
+    pub trail: Trail,
     pub alive: bool,
     pub rubber: f32,
     pub speed_mult: f32,
@@ -119,7 +120,8 @@ impl WorldSnapshot {
             .collect();
         for rider in &riders {
             if rider.alive {
-                segments.extend(rider.trail.windows(2).map(|p| (p[0], p[1])));
+                let points = rider.trail.points(rider.pos);
+                segments.extend(points.windows(2).map(|p| (p[0], p[1])));
             }
         }
         let grid = GridCache::build(&segments);
@@ -166,8 +168,9 @@ impl WorldSnapshot {
                 if !rider.alive {
                     continue;
                 }
-                let n = rider.trail.len();
-                segments.extend(rider.trail.windows(2).enumerate().map(|(j, p)| Segment {
+                let points = rider.trail.points(rider.pos);
+                let n = points.len();
+                segments.extend(points.windows(2).enumerate().map(|(j, p)| Segment {
                     a: p[0],
                     b: p[1],
                     owner: Some(i as u64),
@@ -221,7 +224,7 @@ impl WorldSnapshotBuilder<'_, '_> {
                         id: entity.to_bits(),
                         pos: position.0,
                         dir: direction.0,
-                        trail: trail.0.clone(),
+                        trail: trail.clone(),
                         alive: alive.0,
                         rubber: rubber.0,
                         speed_mult: speed.0,

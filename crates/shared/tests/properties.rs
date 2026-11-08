@@ -120,7 +120,8 @@ fn run_and_check(walls: Vec<[f32; 4]>, plans: Vec<RiderPlan>) -> Result<(), Test
         for (&entity, plan) in riders.iter().zip(&plans) {
             let alive = world.get::<IsAlive>(entity).unwrap().0;
             if alive {
-                let trail = &world.get::<Trail>(entity).unwrap().0;
+                let head = world.get::<Position>(entity).unwrap().0;
+                let trail = world.get::<Trail>(entity).unwrap().points(head);
                 obstacles.extend(trail.windows(2).map(|w| [w[0], w[1]]));
             }
             before.push(Before {
@@ -141,13 +142,16 @@ fn run_and_check(walls: Vec<[f32; 4]>, plans: Vec<RiderPlan>) -> Result<(), Test
         for (&entity, before) in riders.iter().zip(&before) {
             let alive = world.get::<IsAlive>(entity).unwrap().0;
             let rubber = world.get::<Rubber>(entity).unwrap().0;
-            let trail = &world.get::<Trail>(entity).unwrap().0;
+            let corners = world.get::<Trail>(entity).unwrap().clone();
             prop_assert!(
                 (0.0..=BASE_RUBBER).contains(&rubber),
                 "tick {tick}: rubber {rubber}"
             );
             if !alive {
-                prop_assert!(trail.is_empty(), "tick {tick}: dead rider kept its trail");
+                prop_assert!(
+                    corners.0.is_empty(),
+                    "tick {tick}: dead rider kept its trail"
+                );
                 prop_assert_eq!(rubber, 0.0);
                 continue;
             }
@@ -172,7 +176,14 @@ fn run_and_check(walls: Vec<[f32; 4]>, plans: Vec<RiderPlan>) -> Result<(), Test
                 "tick {tick}: moved {} in one tick",
                 position.distance(before.position)
             );
+            let trail = corners.points(position);
             prop_assert_eq!(trail.last().copied(), Some(position));
+            // Pruning leaves at most one corner behind the tail.
+            prop_assert!(
+                corners.0.len() < trail.len(),
+                "tick {tick}: stale corners {:?} for {trail:?}",
+                corners.0
+            );
             let length: f32 = trail.windows(2).map(|w| w[0].distance(w[1])).sum();
             prop_assert!(
                 length <= TRAIL_MAX_LENGTH + 0.01,

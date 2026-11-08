@@ -58,6 +58,16 @@ numbers are in `docs/specs/netcode-design.md`; the headless harness is
   the candidate fix); x86_64/wasm32 bit-identity is argued (scalar `+ - * /`,
   correctly rounded sqrt, no FMA), not measured (run the lab goldens on
   wasm32-wasip1 to verify).
+- [ ] **Per-tick replication.** `Trail` now carries corners only and is sent
+  on turns and prunes (58 → 20 KB/s per client with two riders, see
+  `measure.rs::downlink_bandwidth_with_long_trails`). The rest is mostly
+  components rewritten every tick: `simulate_players` assigns `Direction`,
+  `IsAlive`, `IsSliding`, `IsColliding` and `ShouldHandleDeath` through `Mut`
+  each tick, so replicon resends them unchanged (`set_if_neq` fixes that);
+  `Velocity` looks derivable from `Direction` and the step. A rider turning
+  every tick still resends its whole corner list each tick: replicon's diff
+  replication (`replicate_diff`/`predict_diff`, push/drop-front diffs) would
+  bound that worst case.
 - [ ] Diagnostics: structured tracing correlating session, command, intended
   tick, applied/rejected and rollback range (the server `TurnLog` and harness
   traces exist; client side and rollback ranges do not); RTT/jitter/loss,
@@ -65,7 +75,7 @@ numbers are in `docs/specs/netcode-design.md`; the headless harness is
 - [ ] Presentation and capacity: render smoothing exists (see
   `docs/specs/netcode-design.md`), but its feel under real jitter and loss is
   unmeasured and opponent trail tails still step at snapshot rate. Still to do:
-  profile `Trail` replication size, rollback cost and brute-force collision
+  rollback cost and brute-force collision
   scans at the intended player count; server tick-time percentiles against the
   8.33 ms budget; declared player cap, bandwidth and correction targets.
 

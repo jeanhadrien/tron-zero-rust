@@ -44,9 +44,11 @@ pub struct Cycle {
 pub struct ObstaclePlayer {
     entity: Entity,
     trail: &'static Trail,
+    position: &'static Position,
     alive: &'static IsAlive,
     predicted: Has<Predicted>,
     trail_history: Option<&'static ConfirmedHistory<Trail>>,
+    position_history: Option<&'static ConfirmedHistory<Position>>,
     alive_history: Option<&'static ConfirmedHistory<IsAlive>>,
 }
 
@@ -105,29 +107,36 @@ pub fn simulate_players(
             from_head: 0,
         }));
     }
+    let mut points = Vec::new();
     for player in &players.p0() {
-        let (trail, alive) = if *role == SimulationRole::Client && !player.predicted {
+        let (trail, head, alive) = if *role == SimulationRole::Client && !player.predicted {
             // Never use an opponent's rendered (interpolated) state: read its
             // newest confirmed state at or before the tick being simulated.
+            // Corners and head of one tick agree: replicon never splits an
+            // entity's mutations, and resends every change since the last ack.
             if let Some(tick) = tick {
                 let Some(trail) = player.trail_history.and_then(|h| h.get_present(tick)) else {
+                    continue;
+                };
+                let Some(head) = player.position_history.and_then(|h| h.get_present(tick)) else {
                     continue;
                 };
                 let Some(alive) = player.alive_history.and_then(|h| h.get_present(tick)) else {
                     continue;
                 };
-                (trail, alive)
+                (trail, head, alive)
             } else {
-                (player.trail, player.alive)
+                (player.trail, player.position, player.alive)
             }
         } else {
-            (player.trail, player.alive)
+            (player.trail, player.position, player.alive)
         };
         if !alive.0 {
             continue;
         }
-        let n = trail.0.len();
-        obstacles.extend(trail.0.windows(2).enumerate().map(|(i, p)| Segment {
+        trail.points_into(head.0, &mut points);
+        let n = points.len();
+        obstacles.extend(points.windows(2).enumerate().map(|(i, p)| Segment {
             a: p[0],
             b: p[1],
             owner: Some(player.entity.to_bits()),
@@ -135,8 +144,8 @@ pub fn simulate_players(
         }));
     }
 
-    // Riders entering the tick alive; trails move into the transaction and
-    // come back with its outcome.
+    // Riders entering the tick alive; trails are copied into the transaction
+    // and come back with its outcome.
     let mut entities = Vec::new();
     let mut steps = Vec::new();
     for mut player in &mut players.p1() {
@@ -164,7 +173,9 @@ pub fn simulate_players(
                 rubber: player.rubber.0,
             },
             turn: player.input.0.eligible_turn(player.life),
-            trail: std::mem::take(&mut *player.trail),
+            // A copy, not a take: only a real change may mark it changed,
+            // or it would be replicated every tick.
+            trail: player.trail.clone(),
         });
     }
 
@@ -176,7 +187,7 @@ pub fn simulate_players(
         let Ok(mut player) = cycles.get_mut(entity) else {
             continue;
         };
-        *player.trail = step.trail;
+        player.trail.set_if_neq(step.trail);
         player.direction.0 = outcome.direction;
         if outcome.died {
             if let Some(deaths) = deaths.as_mut() {

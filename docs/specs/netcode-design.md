@@ -117,25 +117,38 @@ is a "connection" as soon as one packet arrives (see `NETWORK.md`). Lightyear
 - `SimulationRole::Server` advances all players; the client role advances only
   `Predicted` players. Owning human clients predict their rider; other humans and
   bots use interpolation.
-- `Trail(Vec<Vec2>)` is player-owned state, ordered from oldest endpoint through
-  corners to the current head. Consecutive pairs include the actively growing
-  segment. Spawn initializes two coincident endpoints, tail trimming advances the
-  oldest endpoint, and death clears the vector. Trail geometry is replicated and
-  predicted as a single component, so turns and trimming roll back together
-  instead of spawning untracked child entities.
+- `Trail(Vec<Vec2>)` is player-owned state holding only what a client cannot
+  infer: an anchor and the turn corners, oldest first. The head is the rider's
+  `Position` and the tail is the point `TRAIL_MAX_LENGTH` back from it along
+  the corners (`Trail::points(head)` builds the geometry; walking back from the
+  head makes it independent of corners behind the tail). Spawn stores one
+  anchor, a turn pushes a corner, `step_riders` prunes corners wholly behind
+  the tail once every head is final (after crossing stops), and death clears
+  the vector. The component therefore changes on turns and prunes only, and
+  `simulate_players` writes it back with `set_if_neq` so replicon sends it only
+  then (measured with two staircasing riders: 58 → 20 KB/s per client downlink,
+  `nettest --test measure downlink_bandwidth_with_long_trails`). A rider
+  turning every tick still resends its whole corner list each tick; replicon's
+  diff replication (`replicate_diff`/`predict_diff`) would bound that. Corners
+  are replicated and predicted as one component, so turns and pruning roll back
+  together instead of spawning untracked child entities.
 - Both sides run `simulate_players` in `FixedUpdate`. Server bot input runs before
   it and bot lifecycle runs afterward. Client input writing precedes simulation.
   Each tick freezes obstacle geometry before advancing any rider, avoiding
   dependence on player iteration order.
-- Client obstacles from nonpredicted opponents use confirmed trail and alive
-  histories sampled at or before the preceding simulation tick. Opponents with
+- Client obstacles from nonpredicted opponents use confirmed trail, position
+  and alive histories sampled at or before the preceding simulation tick
+  (corners and head of one tick agree: replicon never splits an entity's
+  mutations across messages and resends every change since the last ack). Opponents with
   unavailable history are omitted until history is available. Locally predicted
   obstacles use their live start-of-tick state.
-- Direction and alive state use step interpolation; `Position` too (the
-  rendered head and the debug overlays read the render pose instead). Opponent
-  `Trail`s use `shared::polyline::interpolate_trail`: the head slides along the
-  newer trail from where the older head was; when the older head is not on it
-  (death, respawn) the trail steps at `t = 1` like the other components.
+- Direction, alive state, `Position` and `Trail` corners use step
+  interpolation (the rendered head and the debug overlays read the render pose
+  instead). The renderer rebuilds an opponent's trail from the confirmed
+  `(Trail, Position)` snapshots around the interpolation time and applies
+  `shared::polyline::interpolate_trail`: the head slides along the newer trail
+  from where the older head was; when the older head is not on it (death,
+  respawn) the trail steps at `t = 1` like the other components.
 - Render smoothing is client-only and never writes sim components
   (`client/src/render/smooth.rs`). Each rider gets a `Rendered` pose (head +
   trail) built in `Update` (`RenderSet::State`, after Lightyear's interpolation,

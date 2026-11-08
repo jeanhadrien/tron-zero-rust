@@ -203,7 +203,8 @@ pub struct StepOutcome {
 }
 
 /// Turn → sense → move → rubber for one rider against immutable start-of-tick
-/// obstacles. Mutates `trail` in place (turn vertex + trimmed advance).
+/// obstacles. Adds the turn vertex to `trail`; the moved head is the outcome's
+/// position, and `step_riders` prunes the trail once every head is final.
 pub(crate) fn step_rider(
     owner: Option<u64>,
     state: RiderState,
@@ -278,7 +279,6 @@ pub(crate) fn step_rider(
     target_speed = (cruise + GRIND_ACCEL * grind + (1.0 - cruise) * rate).min(MAX_SPEED_MULT);
     let speed = step / (BASE_SPEED * TICK_SECS);
     let position = position + heading * step;
-    trail.advance(position, TRAIL_MAX_LENGTH);
     StepOutcome {
         position,
         direction,
@@ -385,7 +385,13 @@ pub fn step_riders(riders: &mut [RiderStep], obstacles: &[Segment]) -> Vec<StepO
         outcome.rubber = rubber;
         outcome.sliding = false;
         outcome.colliding = true;
-        rider.trail.advance(outcome.position, TRAIL_MAX_LENGTH);
+    }
+    // Only now is each head final: a crossing stop shortens the move, and a
+    // corner pruned against the longer move could still be needed.
+    for (rider, outcome) in riders.iter_mut().zip(&outcomes) {
+        if !outcome.died {
+            rider.trail.prune(outcome.position);
+        }
     }
     outcomes
 }
