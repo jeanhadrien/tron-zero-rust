@@ -135,17 +135,12 @@ pub fn simulate_players(
             continue;
         }
         trail.points_into(head.0, &mut points);
-        let n = points.len();
-        obstacles.extend(points.windows(2).enumerate().map(|(i, p)| Segment {
-            a: p[0],
-            b: p[1],
-            owner: Some(player.entity.to_bits()),
-            from_head: n - 2 - i,
-        }));
+        obstacles.extend(Segment::trail_legs(&points, player.entity.to_bits()));
     }
 
-    // Riders entering the tick alive; trails are copied into the transaction
-    // and come back with its outcome.
+    // Riders entering the tick alive; trails move into the transaction and
+    // come back with its outcome. The move bypasses change detection: only a
+    // real change may flag the trail, or it would be replicated every tick.
     let mut entities = Vec::new();
     let mut steps = Vec::new();
     for mut player in &mut players.p1() {
@@ -163,7 +158,7 @@ pub fn simulate_players(
             continue;
         }
         player.death.set_if_neq(ShouldHandleDeath(true));
-        entities.push(player.entity);
+        entities.push((player.entity, CornersShape::of(&player.trail)));
         steps.push(RiderStep {
             owner: Some(player.entity.to_bits()),
             state: RiderState {
@@ -173,9 +168,7 @@ pub fn simulate_players(
                 rubber: player.rubber.0,
             },
             turn: player.input.0.eligible_turn(player.life),
-            // A copy, not a take: only a real change may mark it changed,
-            // or it would be replicated every tick.
-            trail: player.trail.clone(),
+            trail: std::mem::take(player.trail.bypass_change_detection()),
         });
     }
 
@@ -183,13 +176,18 @@ pub fn simulate_players(
     // are not predicted; the server's resolution arrives as a correction.
     let outcomes = step_riders(&mut steps, &obstacles);
     let mut cycles = players.p1();
-    for ((entity, step), outcome) in entities.into_iter().zip(steps).zip(outcomes) {
+    for (((entity, before), step), outcome) in entities.into_iter().zip(steps).zip(outcomes) {
         let Ok(mut player) = cycles.get_mut(entity) else {
             continue;
         };
-        // Every write is `set_if_neq`: replication sends what change detection
-        // flags, so a value rewritten unchanged would go out every tick.
-        player.trail.set_if_neq(step.trail);
+        // Every write is `set_if_neq` (or an explicit change check):
+        // replication sends what change detection flags, so a value rewritten
+        // unchanged would go out every tick.
+        let changed = CornersShape::of(&step.trail) != before;
+        *player.trail.bypass_change_detection() = step.trail;
+        if changed {
+            player.trail.set_changed();
+        }
         player.direction.set_if_neq(Direction(outcome.direction));
         if outcome.died {
             if let Some(deaths) = deaths.as_mut() {
@@ -215,6 +213,19 @@ pub fn simulate_players(
             .velocity
             .set_if_neq(Velocity(outcome.direction * (outcome.step * 1000.0)));
         player.position.set_if_neq(Position(outcome.position));
+    }
+}
+
+/// Enough of a trail to tell whether a tick changed it, in O(1): corners are
+/// only pushed at the back (never twice in a row at the same spot) and drained
+/// from the front, and one tick turns at most once. So any change moves the
+/// length or the last corner.
+#[derive(Clone, Copy, PartialEq)]
+struct CornersShape(usize, Option<Vec2>);
+
+impl CornersShape {
+    fn of(trail: &Trail) -> Self {
+        Self(trail.0.len(), trail.0.last().copied())
     }
 }
 

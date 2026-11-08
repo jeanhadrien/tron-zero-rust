@@ -184,7 +184,7 @@ fn run_and_check(walls: Vec<[f32; 4]>, plans: Vec<RiderPlan>) -> Result<(), Test
                 "tick {tick}: stale corners {:?} for {trail:?}",
                 corners.0
             );
-            let length: f32 = trail.windows(2).map(|w| w[0].distance(w[1])).sum();
+            let length = tron_zero_shared::polyline::length(&trail);
             prop_assert!(
                 length <= TRAIL_MAX_LENGTH + 0.01,
                 "tick {tick}: trail {length}"

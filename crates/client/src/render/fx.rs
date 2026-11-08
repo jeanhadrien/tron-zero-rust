@@ -186,13 +186,6 @@ fn step_particles(particles: &mut Vec<Particle>, dt: f32) {
     particles.retain(|particle| particle.age < particle.life);
 }
 
-fn trail_length(points: &[Vec2]) -> f32 {
-    points
-        .windows(2)
-        .map(|pair| pair[0].distance(pair[1]))
-        .sum()
-}
-
 /// Spot deaths, spawns and grinding, and make the matching particles.
 #[allow(clippy::type_complexity)]
 fn emit_fx(
@@ -223,7 +216,7 @@ fn emit_fx(
         match (was_alive, alive.0) {
             (Some(true), false) => fx.derez(rendered.head, color, theme.fx_scale),
             (Some(false), true) => fx.rezz(rendered.head, color),
-            (None, true) if trail_length(&rendered.trail) < FRESH_SPAWN_TRAIL => {
+            (None, true) if shared::polyline::length(&rendered.trail) < FRESH_SPAWN_TRAIL => {
                 fx.rezz(rendered.head, color)
             }
             _ => {}

@@ -22,6 +22,20 @@ pub struct Segment {
     pub from_head: usize,
 }
 
+impl Segment {
+    /// The legs of a trail polyline (`Trail::points`) owned by `owner`, each
+    /// tagged with how many legs back from the head it is.
+    pub fn trail_legs(points: &[Vec2], owner: u64) -> impl Iterator<Item = Segment> + '_ {
+        let n = points.len();
+        points.windows(2).enumerate().map(move |(i, p)| Segment {
+            a: p[0],
+            b: p[1],
+            owner: Some(owner),
+            from_head: n - 2 - i,
+        })
+    }
+}
+
 /// Nearest ray/segment contact, including collinear overlap and zero distance.
 pub fn ray_hit(origin: Vec2, direction: Vec2, a: Vec2, b: Vec2) -> Option<f32> {
     let edge = b - a;

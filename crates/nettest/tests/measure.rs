@@ -81,9 +81,12 @@ fn downlink_bandwidth_with_long_trails() {
         staircase(client, start, TURNS, 16);
     }
     // Skip the lead-in; measure from the first corner to the last.
-    while net.clients[0].tick() < start {
-        net.step();
-    }
+    assert!(
+        net.run_until(std::time::Duration::from_secs(10), |net| net.clients[0]
+            .tick()
+            >= start),
+        "client never reached the first corner"
+    );
     let (bytes_before, tick_before) = (net.server.sent_bytes(), net.server.tick());
     let done = net.run_until(std::time::Duration::from_secs(30), |net| {
         net.clients

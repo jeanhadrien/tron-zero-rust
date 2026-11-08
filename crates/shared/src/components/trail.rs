@@ -51,11 +51,6 @@ impl Trail {
         out.push(head);
     }
 
-    /// Length of the trail with the rider at `head`.
-    pub fn length(&self, head: Vec2) -> f32 {
-        crate::polyline::length(&self.points(head))
-    }
-
     /// Drop the corners that lie wholly behind the tail. Never changes
     /// [`Self::points`]; call it once per tick with the rider's final head.
     pub fn prune(&mut self, head: Vec2) {
@@ -91,6 +86,10 @@ mod tests {
 
     const MAX: f32 = TRAIL_MAX_LENGTH;
 
+    fn length(trail: &Trail, head: Vec2) -> f32 {
+        crate::polyline::length(&trail.points(head))
+    }
+
     fn near(points: &[Vec2], expected: &[Vec2]) -> bool {
         points.len() == expected.len()
             && points
@@ -116,7 +115,7 @@ mod tests {
         let trail = Trail::new(Vec2::ZERO);
         let head = Vec2::new(MAX + 500.0, 0.0);
         assert!(near(&trail.points(head), &[Vec2::new(500.0, 0.0), head]));
-        assert!((trail.length(head) - MAX).abs() < 1e-2);
+        assert!((length(&trail, head) - MAX).abs() < 1e-2);
     }
 
     #[test]
@@ -157,7 +156,7 @@ mod tests {
         trail.prune(head);
         assert!(trail.0.len() < 200);
         assert_eq!(trail.points(head), before);
-        assert!((trail.length(head) - MAX).abs() < 0.1);
+        assert!((length(&trail, head) - MAX).abs() < 0.1);
     }
 
     #[test]

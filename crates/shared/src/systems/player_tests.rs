@@ -38,6 +38,10 @@ fn sim_entities(world: &mut World) -> usize {
         .count()
 }
 
+fn trail_length(trail: &Trail, head: Vec2) -> f32 {
+    crate::polyline::length(&trail.points(head))
+}
+
 /// Point-wise `near` for polylines: trail trimming accumulates float error.
 fn near_points(actual: &[Vec2], expected: &[Vec2]) {
     assert_eq!(actual.len(), expected.len(), "{actual:?} != {expected:?}");
@@ -54,7 +58,7 @@ fn cardinal_velocity_preserves_360_units_per_second() {
     near(world.get::<Position>(entity).unwrap().0.x, 3.0);
     near(world.get::<Velocity>(entity).unwrap().0.x, 3000.0);
     near(
-        world.get::<Trail>(entity).unwrap().length(Vec2::X * 3.0),
+        trail_length(world.get::<Trail>(entity).unwrap(), Vec2::X * 3.0),
         3.0,
     );
 }
@@ -459,7 +463,7 @@ fn cornered_trail_consumes_oldest_end_gradually() {
         &trail.points(head),
         &[Vec2::new(15.0, 10.0), Vec2::new(20.0, 10.0), last, head],
     );
-    near(trail.length(head), TRAIL_MAX_LENGTH);
+    near(trail_length(&trail, head), TRAIL_MAX_LENGTH);
     let head = last + Vec2::Y * (TRAIL_MAX_LENGTH + 20.0);
     trail.prune(head);
     assert_eq!(trail.0, vec![last]);
@@ -478,13 +482,48 @@ fn simulation_caps_long_straight_trail_without_erasing_active_segment() {
     }
     let trail = world.get::<Trail>(entity).unwrap();
     let head = world.get::<Position>(entity).unwrap().0;
-    near(trail.length(head), TRAIL_MAX_LENGTH);
+    near(trail_length(trail, head), TRAIL_MAX_LENGTH);
     // A straight run never adds corners: the replicated value stays put.
     assert_eq!(trail.0, vec![Vec2::new(-3000.0, 0.0)]);
     let points = trail.points(head);
     assert_eq!(points.len(), 2);
     assert!(points[0].distance(points[1]) > 0.0);
     assert!(world.get::<IsAlive>(entity).unwrap().0);
+}
+
+/// Replication sends what change detection flags: a rider riding straight
+/// must leave its trail and heading unflagged, or they go out every tick.
+#[test]
+fn riding_straight_flags_neither_trail_nor_heading() {
+    #[derive(Resource, Default)]
+    struct Flagged(u32, u32);
+    fn count(
+        trails: Query<(), Changed<Trail>>,
+        headings: Query<(), Changed<Direction>>,
+        mut flagged: ResMut<Flagged>,
+    ) {
+        flagged.0 += trails.iter().count() as u32;
+        flagged.1 += headings.iter().count() as u32;
+    }
+    let (mut world, mut schedule) = setup();
+    world.init_resource::<Flagged>();
+    schedule.add_systems(count.after(simulate_players));
+    let entity = cycle(&mut world, Vec2::ZERO, Vec2::X);
+    schedule.run(&mut world); // the spawn itself counts as a change
+    *world.resource_mut::<Flagged>() = Flagged::default();
+    for _ in 0..10 {
+        schedule.run(&mut world);
+    }
+    assert_eq!(
+        (world.resource::<Flagged>().0, world.resource::<Flagged>().1),
+        (0, 0)
+    );
+    world.get_mut::<ActionState<PlayerInput>>(entity).unwrap().0 = PlayerInput::TurnLeft;
+    schedule.run(&mut world);
+    assert_eq!(
+        (world.resource::<Flagged>().0, world.resource::<Flagged>().1),
+        (1, 1)
+    );
 }
 
 #[test]
@@ -695,7 +734,7 @@ fn a_crossing_stop_keeps_the_full_trail_length() {
     assert!(world.get::<IsColliding>(b).unwrap().0);
     let head = world.get::<Position>(b).unwrap().0;
     near(
-        world.get::<Trail>(b).unwrap().length(head),
+        trail_length(world.get::<Trail>(b).unwrap(), head),
         TRAIL_MAX_LENGTH,
     );
 }

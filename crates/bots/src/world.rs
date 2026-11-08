@@ -118,9 +118,10 @@ impl WorldSnapshot {
             .iter()
             .map(|w| (Vec2::new(w[0], w[1]), Vec2::new(w[2], w[3])))
             .collect();
+        let mut points = Vec::new();
         for rider in &riders {
             if rider.alive {
-                let points = rider.trail.points(rider.pos);
+                rider.trail.points_into(rider.pos, &mut points);
                 segments.extend(points.windows(2).map(|p| (p[0], p[1])));
             }
         }
@@ -164,18 +165,12 @@ impl WorldSnapshot {
                     from_head: 0,
                 });
             }
+            let mut points = Vec::new();
             for (i, rider) in self.riders.iter().enumerate() {
-                if !rider.alive {
-                    continue;
+                if rider.alive {
+                    rider.trail.points_into(rider.pos, &mut points);
+                    segments.extend(Segment::trail_legs(&points, i as u64));
                 }
-                let points = rider.trail.points(rider.pos);
-                let n = points.len();
-                segments.extend(points.windows(2).enumerate().map(|(j, p)| Segment {
-                    a: p[0],
-                    b: p[1],
-                    owner: Some(i as u64),
-                    from_head: n - 2 - j,
-                }));
             }
             segments
         })
