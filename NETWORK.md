@@ -3,7 +3,7 @@
 Status: updated 2026-11-04 (each item re-checked against the code). This file
 lists only what is **open**. What is implemented, how it works and the measured
 numbers are in `docs/specs/netcode-design.md`; the headless harness is
-`crates/nettest` (`cargo test -p tron-zero-nettest`; arrival measurements with
+`crates/nettest` (`cargo nextest run -p tron-zero-nettest`; arrival measurements with
 `cargo test -p tron-zero-nettest --test measure -- --ignored --nocapture`).
 
 ## Needs a decision from JH

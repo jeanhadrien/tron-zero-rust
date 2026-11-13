@@ -51,9 +51,16 @@ bacon server          # restart the server on each change
 bacon client          # restart the client (dev feature) on each change
 ```
 
-Inside bacon, `?` lists the keys (`c` clippy, `t` test, `q` quit). Set
+Inside bacon, `?` lists the keys (`c` clippy, `t` test, `q` quit);
+`bacon test -- -p tron-zero-lab` targets another package. Set
 `TRON_BOT_DEBUG=1` first for the bot overlay. Split panes in Windows Terminal
 with `Alt+Shift+D` / `Alt+Shift+-`.
+
+Typical setup: one pane on `bacon` (a clean pane means CI's lint gate passes),
+and `scripts\play-local.bat` when you want to play. Keep a single bacon
+running: every cargo command shares `target/`, so a second one waits on
+"Blocking waiting for file lock". `bacon client` restarts the game window on
+every save (including `shared`), which suits visual tweaks, not long sessions.
 
 ## What to expect
 

@@ -374,7 +374,7 @@ clean links deliver 100% of turns early. Previously the stamp was taken at
 press time in PreUpdate (about one tick earlier than the pop tick, and wrong
 for every press after the first in a same-frame burst).
 
-Verified by the harness (`cargo test -p tron-zero-nettest`, about 80 s): exact
+Verified by the harness (`cargo nextest run -p tron-zero-nettest`, about 80 s): exact
 execution tick and zero rollbacks on a clean link, with client-predicted and
 server poses identical at every tick; exactly-once, in-order, never-early
 execution and explicit fates under 3% loss and jitter; no rejection at 150 ms /
