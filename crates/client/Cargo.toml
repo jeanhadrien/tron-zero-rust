@@ -62,3 +62,7 @@ getrandom_03 = { package = "getrandom", version = "0.3", features = ["wasm_js"] 
 
 [lints]
 workspace = true
+
+[features]
+# Dev only: link Bevy as a DLL so incremental rebuilds re-link only our code.
+dev = ["bevy/dynamic_linking"]

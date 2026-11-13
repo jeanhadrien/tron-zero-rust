@@ -1,0 +1,12 @@
+# cargo-nextest: one process per test, run in parallel.
+
+[test-groups]
+# Real UDP ports and wall-clock timing: one netcode test at a time (the
+# in-process `nettest::serial()` lock does not span nextest's processes).
+nettest = { max-threads = 1 }
+
+[[profile.default.overrides]]
+filter = "package(tron-zero-nettest)"
+test-group = "nettest"
+# Wall-clock and unseeded loss: retry once; a pass on retry shows as FLAKY.
+retries = 1

@@ -58,11 +58,11 @@ Code style is enforced by `cargo fmt -- --check` and `cargo clippy --workspace -
 
 ## Dev loops (details in `docs/guides/dev.md`)
 
-- `cargo test -p tron-zero-shared` — sim core (unit, property, rollback); fast.
-- `cargo test -p tron-zero-lab` — mechanics + golden traces; bless intended changes with `LAB_BLESS=1`.
-- `cargo test -p tron-zero-nettest` — netcode over real UDP (about 1-2 min; serialized).
+- `cargo nextest run -p tron-zero-shared` — sim core (unit, property, rollback); fast.
+- `cargo nextest run -p tron-zero-lab` — mechanics + golden traces; bless intended changes with `LAB_BLESS=1`.
+- `cargo nextest run -p tron-zero-nettest` — netcode over real UDP (about 1-2 min; serialized by `.config/nextest.toml`).
 - `scripts/play-local.bat [release]` (`scripts/play-local.sh` on Linux/macOS) — server + bots + auto-joining client with simulated 20 ms RTT (`TRON_SIM_*`, `TRON_AUTOCONNECT`).
-- `scripts/dev-watch.bat` — `cargo watch` for server and client (sets `TRON_BOT_DEBUG=1`).
+- `bacon` (`bacon.toml`) — clippy watch loop by default; `bacon server` / `bacon client` restart on save.
 - `scripts/dev-cloud.bat [name]` — local server announcing to the Cloud Run manager (`ALLOW_LOOPBACK_ANNOUNCE=1`, so it advertises 127.0.0.1 on a public list).
 - `cd server-manager && bun run dev` — local lobby on `:3001`.
 
@@ -101,20 +101,20 @@ answers the question:
 - cargo check — fast compilation check without producing binaries (syntax + type checking)
 - cargo clippy — linting (catches errors + idiomatic issues)
 - cargo fmt — formatting
-- cargo test — `-p tron-zero-shared` for the sim core (fast), `--workspace` for everything
+- cargo nextest run — `-p tron-zero-shared` for the sim core (fast), `--workspace` for everything; `cargo test --doc` for doctests
 - cargo run — headless binaries and tools only (server, harnesses). Run
   long-lived processes in the background and stop them when done. Don't launch
   the windowed client unless asked: you can't play it at game speed.
 
-The user may have `cargo watch` running (`scripts/dev-watch.bat`); a "Blocking waiting
-for file lock" message means you are sharing `target/` with it.
+The user may have `bacon` running; a "Blocking waiting for file lock" message
+means you are sharing `target/` with it.
 
 ### Test loop
 
 Builds, not edits, dominate iteration time here. Keep the loop tight:
 
 - Run the narrowest test that covers the change first
-  (`cargo test -p tron-zero-shared polyline`), and the broad suites once,
+  (`cargo nextest run -p tron-zero-shared polyline`), and the broad suites once,
   at the end.
 - Don't pipe long cargo commands into `grep`/`tail`: it hides progress and
   lock waits, and a command moved to the background shows an empty output

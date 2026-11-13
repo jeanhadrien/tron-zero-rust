@@ -15,8 +15,13 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 command -v cargo >/dev/null || { echo "cargo not on PATH. Open a new shell after rustup install." >&2; exit 1; }
 
+# Dev client links Bevy as a dylib (crates/client "dev" feature) for faster rebuilds.
 cargo_flags=()
-[[ "${1:-}" == "release" ]] && cargo_flags+=(--release)
+client_flags=(--features dev)
+if [[ "${1:-}" == "release" ]]; then
+  cargo_flags+=(--release)
+  client_flags=()
+fi
 
 export TRON_SIM_LATENCY_MS="${TRON_SIM_LATENCY_MS:-20}"
 export TRON_AUTOCONNECT="127.0.0.1:5000"
@@ -27,4 +32,4 @@ trap 'kill "$server_pid" 2>/dev/null || true' EXIT INT TERM
 
 echo "Server and client launching (simulated RTT ${TRON_SIM_LATENCY_MS} ms). Close the client to stop."
 # The client keeps retrying until the server is up, so no sleep is needed.
-cargo run "${cargo_flags[@]}" -p tron-zero-client
+cargo run "${cargo_flags[@]}" "${client_flags[@]}" -p tron-zero-client

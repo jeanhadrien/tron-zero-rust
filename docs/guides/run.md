@@ -33,7 +33,7 @@ scripts\play-local.bat            # or: scripts\play-local.bat release  (Linux/m
 
 Server with bots + a client that joins by itself with a simulated 20 ms ping.
 No lobby involved. `set TRON_SIM_LATENCY_MS=0` first to remove the simulated
-ping. Hot reload instead: `scripts/dev-watch.bat`.
+ping. Restart on save instead: `bacon server` and `bacon client` (see `docs/guides/dev.md`).
 
 ### 2. Web client against a local server
 
@@ -100,5 +100,5 @@ zip on the Release, web build to Pages. Rebuild without a new version:
 
 ### 7. Without any window
 
-- Mechanics, bots: `cargo test -p tron-zero-lab`, scenarios in `crates/lab/scenarios/` (`docs/guides/dev.md` § Lab).
-- Netcode over real UDP/WebTransport: `cargo test -p tron-zero-nettest`.
+- Mechanics, bots: `cargo nextest run -p tron-zero-lab`, scenarios in `crates/lab/scenarios/` (`docs/guides/dev.md` § Lab).
+- Netcode over real UDP/WebTransport: `cargo nextest run -p tron-zero-nettest`.

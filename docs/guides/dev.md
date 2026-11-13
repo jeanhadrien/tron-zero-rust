@@ -8,7 +8,7 @@ Day-to-day development on Windows. Builds run natively on Windows for fast itera
 
 - **Windows Rust** — install via `https://win.rustup.rs/x86_64` (MSVC host). Pins to `stable` via `rust-toolchain.toml`.
 - **MSVC C++ build tools** — Visual Studio 2022 Build Tools with the `VC.Tools.x86.x64` workload. rustup detects it automatically.
-- **cargo-watch** — `cargo install cargo-watch` (hot-reload on file save).
+- **bacon** and **cargo-nextest** — `cargo install --locked bacon cargo-nextest` (watch loop and test runner).
 - Open a **new** shell after install so `%USERPROFILE%\.cargo\bin` is on PATH. Verify: `where cargo` prints `C:\Users\<you>\.cargo\bin\cargo.exe`.
 
 ## Repo location
@@ -20,30 +20,40 @@ Day-to-day development on Windows. Builds run natively on Windows for fast itera
 From PowerShell / Windows Terminal, in `C:\dev\tron-zero-rust`:
 
 ```
-cargo run -p tron-zero-client     # builds + runs the client (opens a window)
+cargo run -p tron-zero-client --features dev   # builds + runs the client (opens a window)
 cargo run -p tron-zero-server     # builds + runs the headless server
 cargo check -p tron-zero-client   # type-check only, no codegen — fastest feedback
 cargo clippy --workspace --all-targets -- -D warnings   # the lint gate
 cargo fmt -- --check
-cargo test --workspace --no-fail-fast
+cargo nextest run --workspace    # tests (config: .config/nextest.toml)
+cargo test --workspace --doc     # doctests (nextest skips them)
 ```
+
+The client's `dev` feature links Bevy as a DLL (`bevy/dynamic_linking`), so an
+edit re-links only our code (about 2.7 s instead of 3.4 s for a client-only
+change). Dev only: never with `--release` or for the web build. Building with
+and without it keeps two builds of Bevy in `target/`.
+Launch it through `cargo run`, which puts the Bevy and std DLLs on `PATH`.
 
 If a running game locks `target\debug\*.exe` ("Access is denied"), `cargo check`,
 `clippy` and `cargo test` for library crates still work; only linking the
 binaries fails.
 
-### Hot-reload (auto restart on save)
+### Watch loop (bacon)
 
-`scripts/dev-watch.bat` opens a watcher window for the server and one for the client
-(each restarts only for its own crate or `shared`, and sets `TRON_BOT_DEBUG=1`
-for the bot overlay). By hand, in two separate terminals:
+`bacon` re-runs a job on save and shows the errors in place. Jobs live in
+`bacon.toml`:
 
 ```
-cargo watch -c -w crates -x "run -p tron-zero-server"
-cargo watch -c -w crates -x "run -p tron-zero-client"
+bacon                 # clippy over the workspace (the lint gate), the default
+bacon test            # cargo nextest run -p tron-zero-shared
+bacon server          # restart the server on each change
+bacon client          # restart the client (dev feature) on each change
 ```
 
-`-c` clears output on restart, `-w crates` ignores `target/`. Split panes in Windows Terminal with `Alt+Shift+D` / `Alt+Shift+-`.
+Inside bacon, `?` lists the keys (`c` clippy, `t` test, `q` quit). Set
+`TRON_BOT_DEBUG=1` first for the bot overlay. Split panes in Windows Terminal
+with `Alt+Shift+D` / `Alt+Shift+-`.
 
 ## What to expect
 
@@ -77,7 +87,7 @@ Opens two windows: the server (with its bot roster) and the client, which
 joins `127.0.0.1:5000` by itself and plays with a **simulated 20 ms round-trip
 ping**. The dev profile already builds dependencies at `opt-level = 3` and our
 crates at 1 (see `Cargo.toml`), so it is playable and shares `target/` with
-`cargo watch`; use `release` only if the frame rate disappoints.
+`bacon`; use `release` only if the frame rate disappoints.
 
 Environment variables (all opt-in, read by the client; `TRON_BOT_DEBUG=1` is read by both server and client and enables the bot overlay):
 
@@ -145,12 +155,14 @@ loss) and the client's own `TRON_SIM_*` uplink queue. Tests script key presses
 and assert on the client/server traces.
 
 ```
-cargo test -p tron-zero-nettest                                           # serialized, wall-clock
+cargo nextest run -p tron-zero-nettest                                    # serialized, wall-clock
 cargo test -p tron-zero-nettest --test measure -- --ignored --nocapture   # arrival-margin table
 ```
 
 It uses wall-clock timing and an unseeded conditioner, so a failure should be
-re-run alone before treating it as real. Results and the contract it checks are
+re-run alone before treating it as real. Under nextest each test is its own
+process, so `.config/nextest.toml` serializes the package with a test group
+and retries a failure once (a pass on retry is reported as `FLAKY`). Results and the contract it checks are
 in `docs/specs/netcode-design.md`.
 
 ## Lab (headless scenarios)
@@ -198,10 +210,10 @@ Same seed, same game, so a bad bot death can be replayed, zoomed with
 `--view` and re-run after a tweak. Bot tuning changes the `bot_arena` golden
 trace: bless it once the change is intended.
 
-Tests: `cargo test -p tron-zero-shared` (unit, property and rollback tests) and
-`cargo test -p tron-zero-lab` (mechanics assertions + golden traces for every
+Tests: `cargo nextest run -p tron-zero-shared` (unit, property and rollback tests) and
+`cargo nextest run -p tron-zero-lab` (mechanics assertions + golden traces for every
 scenario; a scenario without a golden fails). After an intended behaviour change, regenerate goldens with
-`LAB_BLESS=1 cargo test -p tron-zero-lab` and review the diff.
+`LAB_BLESS=1 cargo nextest run -p tron-zero-lab` and review the diff.
 
 ## Gameplay smoke check
 

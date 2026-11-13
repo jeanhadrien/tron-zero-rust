@@ -1,0 +1,41 @@
+#:schema https://dystroy.org/bacon/.bacon.schema.json
+# Watch loop: https://dystroy.org/bacon/config/ . Jobs not listed here keep
+# bacon's defaults (check, clippy, nextest, doc...).
+
+default_job = "clippy-all"
+env.CARGO_TERM_COLOR = "always"
+
+# The lint gate, same as CI.
+[jobs.clippy-all]
+command = ["cargo", "clippy", "--workspace", "--all-targets", "--", "-D", "warnings"]
+need_stdout = false
+
+# Fast sim-core tests; `bacon test -- -p tron-zero-lab` for another package.
+[jobs.test]
+command = [
+    "cargo", "nextest", "run", "-p", "tron-zero-shared",
+    "--hide-progress-bar", "--failure-output", "final",
+]
+need_stdout = true
+analyzer = "nextest"
+
+# Restart the server on each change.
+[jobs.server]
+command = ["cargo", "run", "-p", "tron-zero-server"]
+need_stdout = true
+allow_warnings = true
+background = false
+on_change_strategy = "kill_then_restart"
+scroll_anchor = "auto"
+
+# Restart the client (Bevy as a DLL) on each change.
+[jobs.client]
+command = ["cargo", "run", "-p", "tron-zero-client", "--features", "dev"]
+need_stdout = true
+allow_warnings = true
+background = false
+on_change_strategy = "kill_then_restart"
+scroll_anchor = "auto"
+
+[keybindings]
+c = "job:clippy-all"
