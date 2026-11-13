@@ -56,7 +56,6 @@ fn cardinal_velocity_preserves_360_units_per_second() {
     let entity = cycle(&mut world, Vec2::ZERO, Vec2::X);
     schedule.run(&mut world);
     near(world.get::<Position>(entity).unwrap().0.x, 3.0);
-    near(world.get::<Velocity>(entity).unwrap().0.x, 3000.0);
     near(
         trail_length(world.get::<Trail>(entity).unwrap(), Vec2::X * 3.0),
         3.0,
@@ -129,7 +128,6 @@ fn wall_rubber_drains_then_death_clears_trail_once() {
     assert!(!world.get::<IsAlive>(entity).unwrap().0);
     assert!(!world.get::<ShouldHandleDeath>(entity).unwrap().0);
     assert_eq!(world.get::<Rubber>(entity).unwrap().0, 0.0);
-    assert_eq!(world.get::<Velocity>(entity).unwrap().0, Vec2::ZERO);
     assert!(world.get::<Trail>(entity).unwrap().0.is_empty());
     let position = world.get::<Position>(entity).unwrap().0;
     schedule.run(&mut world);
@@ -351,15 +349,15 @@ fn opponent_active_trail_can_be_a_sliding_wall() {
 fn exact_boundary_contact_blocks_outward_but_allows_escape_or_tangent() {
     for heading in [Vec2::X, Vec2::NEG_X, Vec2::Y] {
         let (mut world, mut schedule) = setup();
-        let entity = cycle(&mut world, Vec2::new(ARENA_WIDTH * 0.5, 0.0), heading);
+        let start = Vec2::new(ARENA_WIDTH * 0.5, 0.0);
+        let entity = cycle(&mut world, start, heading);
         schedule.run(&mut world);
         let blocked = heading == Vec2::X;
+        let moved = world.get::<Position>(entity).unwrap().0 != start;
         assert_eq!(world.get::<IsColliding>(entity).unwrap().0, blocked);
+        assert_eq!(moved, !blocked);
         if blocked {
-            assert_eq!(world.get::<Velocity>(entity).unwrap().0, Vec2::ZERO);
             assert!(world.get::<Rubber>(entity).unwrap().0 < BASE_RUBBER);
-        } else {
-            assert!(world.get::<Velocity>(entity).unwrap().0.length() > 0.0);
         }
     }
 }

@@ -131,7 +131,6 @@ pub(crate) fn spawn_human(
             InitialSpawn,
             shared::LifeGeneration::for_session(rand::random()),
             shared::PlayerId(peer.to_string()),
-            shared::Velocity(Vec2::ZERO),
             shared::SpeedMult(0.0),
             shared::TargetSpeedMult(0.0),
             shared::Rubber(0.0),
@@ -262,7 +261,6 @@ fn try_respawn(world: &mut World, owner: Entity, request: RespawnRequest) -> Res
     world.entity_mut(entity).insert((
         shared::Position(spawn.position),
         shared::Direction(spawn.direction),
-        shared::Velocity(spawn.direction * (shared::BASE_SPEED * shared::TICK_SECS * 1000.0)),
         shared::SpeedMult::base(),
         shared::TargetSpeedMult::default(),
         shared::Rubber::default(),
@@ -407,7 +405,6 @@ mod tests {
         world.entity_mut(player).insert((
             Position(Vec2::splat(999.0)),
             Direction(Vec2::NEG_Y),
-            Velocity(Vec2::splat(9000.0)),
             SpeedMult(20.0),
             TargetSpeedMult(30.0),
             Rubber(0.0),
@@ -451,11 +448,6 @@ mod tests {
         );
         let pos = world.get::<Position>(player).unwrap().0;
         assert_eq!(world.get::<Trail>(player).unwrap().0, Trail::new(pos).0);
-        assert_eq!(
-            world.get::<Velocity>(player).unwrap().0,
-            world.get::<Direction>(player).unwrap().0
-                * (shared::BASE_SPEED * shared::TICK_SECS * 1000.0)
-        );
         assert_eq!(
             try_respawn(&mut world, owner, request),
             RespawnOutcome::NotEligible

@@ -7,7 +7,7 @@ use bevy::prelude::*;
 use glam::Vec2;
 use lightyear::prelude::input::native::NativeBuffer;
 use lightyear::prelude::*;
-use shared::{ActionState, Direction, IsAlive, PlayerId, PlayerInput, Position, Trail, Velocity};
+use shared::{ActionState, Direction, IsAlive, PlayerId, PlayerInput, Position, Trail};
 use tron_zero_server as ts;
 use ts::systems::Human;
 use ts::turns::TurnLog;
@@ -172,7 +172,6 @@ impl TestServer {
             shape,
             Position(Vec2::ZERO),
             Direction(Vec2::X),
-            Velocity(Vec2::ZERO),
             IsAlive(true),
             Replicate::to_clients(NetworkTarget::All),
             InterpolationTarget::to_clients(NetworkTarget::All),
@@ -197,7 +196,6 @@ impl TestServer {
         self.app.world_mut().entity_mut(rider).insert((
             Position(position),
             Direction(direction),
-            Velocity(direction * (shared::BASE_SPEED * shared::TICK_SECS * 1000.0)),
             Trail::new(position),
         ));
     }

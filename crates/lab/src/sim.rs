@@ -587,7 +587,6 @@ impl Lab {
         self.world.entity_mut(entity).insert((
             Position(spawn.position),
             Direction(spawn.direction),
-            Velocity(spawn.direction * (BASE_SPEED * TICK_SECS * 1000.0)),
             SpeedMult::base(),
             TargetSpeedMult::default(),
             Rubber::default(),

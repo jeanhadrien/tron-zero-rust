@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize};
 /// fine and then silently mispredict. The lab's golden traces back this up:
 /// blessing changed goldens fails unless this was bumped (see
 /// `golden_traces_match` and `scenarios/goldens.protocol`).
-pub const PROTOCOL_VERSION: u32 = 9;
+pub const PROTOCOL_VERSION: u32 = 10;
 
 /// Bits of one sim constant, checked against its declared type: a constant
 /// listed under the wrong type does not compile.
@@ -521,7 +521,6 @@ pub fn register_protocol(app: &mut App) {
         .replicate()
         .predict()
         .add_interpolation_with(step);
-    app.component::<Velocity>().replicate().predict();
     app.component::<SpeedMult>().replicate().predict();
     app.component::<TargetSpeedMult>().replicate().predict();
     app.component::<Rubber>().replicate().predict();

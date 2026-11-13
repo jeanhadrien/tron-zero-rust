@@ -26,7 +26,6 @@ pub struct Cycle {
     entity: Entity,
     position: &'static mut Position,
     direction: &'static mut Direction,
-    velocity: &'static mut Velocity,
     speed: &'static mut SpeedMult,
     target: &'static mut TargetSpeedMult,
     rubber: &'static mut Rubber,
@@ -209,9 +208,6 @@ pub fn simulate_players(
         // JS inertia lives in TargetSpeedMult: collision changes actual speed,
         // but preserves accumulated boost for escape; boost affects next tick.
         player.speed.set_if_neq(SpeedMult(outcome.speed));
-        player
-            .velocity
-            .set_if_neq(Velocity(outcome.direction * (outcome.step * 1000.0)));
         player.position.set_if_neq(Position(outcome.position));
     }
 }
@@ -234,7 +230,6 @@ fn disable(player: &mut CycleItem<'_, '_>) {
     player.death.set_if_neq(ShouldHandleDeath(false));
     player.speed.set_if_neq(SpeedMult(0.0));
     player.target.set_if_neq(TargetSpeedMult(0.0));
-    player.velocity.set_if_neq(Velocity(Vec2::ZERO));
     player.rubber.set_if_neq(Rubber(0.0));
     player.sliding.set_if_neq(IsSliding(false));
     player.colliding.set_if_neq(IsColliding(false));
