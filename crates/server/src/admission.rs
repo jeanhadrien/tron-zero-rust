@@ -164,7 +164,6 @@ fn refresh_link_visibility(commands: &mut Commands, link: Entity) {
 /// link and confirm the final name, or reject with a reason and close the link
 /// once the refusal has had time to arrive. Links that never say hello are
 /// closed after the session timeout.
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn handle_hello(
     time: Res<Time<Real>>,
     max: Res<MaxPlayers>,

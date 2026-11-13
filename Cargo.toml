@@ -5,8 +5,9 @@ resolver = "2"
 # Code style checked by `cargo clippy --workspace --all-targets -- -D warnings`
 # (tests are exempt from the unwrap/expect lints, see clippy.toml).
 [workspace.lints.clippy]
-# Bevy system params (nested Query filters) always trip it.
+# Bevy system params (nested Query filters, many params) always trip these.
 type_complexity = "allow"
+too_many_arguments = "allow"
 # Systems early-return with `let ... else`; fail-fast exceptions opt out locally.
 unwrap_used = "deny"
 expect_used = "deny"

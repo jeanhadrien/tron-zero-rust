@@ -230,7 +230,6 @@ impl Preferences {
 /// [`SAVE_DEBOUNCE_SECS`], and immediately on app exit. The first run is
 /// skipped: resources just inserted from the file count as "changed".
 // Bevy injects each resource as its own parameter; the count is structural.
-#[allow(clippy::too_many_arguments)]
 pub fn persist_preferences(
     mut prefs: ResMut<Preferences>,
     name: Res<PlayerName>,

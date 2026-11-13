@@ -55,7 +55,6 @@ pub fn enabled_from_env() -> bool {
 ///
 /// `scores` is the same array `decide` argmaxed over — the caller computes it
 /// via `strategy.score(...)` so `decide` itself stays untouched.
-#[allow(clippy::too_many_arguments)]
 pub fn build_debug(
     strategy: &dyn Strategy,
     perception: &Perception,

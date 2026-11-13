@@ -321,7 +321,6 @@ pub fn draw_ray_cells(gizmos: &mut Gizmos, pos: Vec2, dir: Vec2, dbg: &BotDebug)
 /// Right-side egui panel for the selected debug bot. Hidden while the menu is
 /// open (same rule as the HUD); shows "no debug data" when absent.
 // Bevy injects each resource as its own parameter; the count is structural.
-#[allow(clippy::too_many_arguments)]
 pub fn debug_panel_ui(
     mut contexts: EguiContexts,
     overlay: Res<DebugOverlay>,

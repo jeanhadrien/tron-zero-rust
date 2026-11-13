@@ -941,7 +941,6 @@ pub fn quit_when_ready(
 
 /// `Draining`: wait for the Lightyear state-transition cleanup before allowing
 /// another link.
-#[allow(clippy::too_many_arguments)]
 pub fn finish_disconnect(
     mut session: ResMut<Session>,
     clients: Query<Has<Disconnected>, With<Client>>,

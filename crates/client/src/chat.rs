@@ -197,7 +197,6 @@ pub fn receive_chat(
 /// Top-left chat overlay: no background, a one-pixel shadow keeps the text
 /// legible over the arena. Non-interactive, so clicks fall through.
 // Bevy injects each resource as its own parameter; the count is structural.
-#[allow(clippy::too_many_arguments)]
 pub fn chat_ui(
     mut contexts: EguiContexts,
     time: Res<Time<Real>>,

@@ -412,7 +412,6 @@ fn look_screen(ui: &mut egui::Ui, theme: &Theme, look: Look, now: f64, action: &
 
 // One parameter per piece of state the screen draws; grouping them would only
 // add a struct used in a single place.
-#[allow(clippy::too_many_arguments)]
 fn rooms_screen(
     ui: &mut egui::Ui,
     theme: &Theme,
@@ -615,7 +614,6 @@ pub struct Appearance<'w> {
 }
 
 // Bevy injects each resource as its own parameter; the count is structural.
-#[allow(clippy::too_many_arguments)]
 pub fn menu_ui(
     mut contexts: EguiContexts,
     mut commands: Commands,

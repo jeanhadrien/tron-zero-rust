@@ -268,7 +268,6 @@ enum Progress {
 
 /// Advance the ranked join: store a new account, trade it for a ticket (or a
 /// placement), then connect with the ticket. Failures land in the session status.
-#[allow(clippy::too_many_arguments)]
 pub fn poll_ranked_join(
     mut join: ResMut<RankedJoin>,
     mut accounts: ResMut<Accounts>,
