@@ -210,7 +210,6 @@ fn drop_lag_on_resync(_: On<SyncEvent<InputTimelineConfig>>, mut riders: Query<&
     }
 }
 
-#[allow(clippy::type_complexity)]
 fn update_own_riders(
     mut commands: Commands,
     fixed: Res<Time<Fixed>>,
@@ -254,7 +253,6 @@ fn update_own_riders(
     }
 }
 
-#[allow(clippy::type_complexity)]
 fn update_other_riders(
     mut commands: Commands,
     timeline: Query<&InterpolationTimeline>,

@@ -627,7 +627,6 @@ pub fn add_lifecycle_systems(app: &mut App) {
     app.add_systems(PreUpdate, unlink_session.after(LinkSystems::Send));
 }
 
-#[allow(clippy::type_complexity)]
 pub fn monitor_connection(
     mut session: ResMut<Session>,
     mut menu: ResMut<MenuState>,

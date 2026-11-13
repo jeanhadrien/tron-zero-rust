@@ -10,6 +10,8 @@
 //! so a scenario costs its simulated duration in real time. The conditioner
 //! uses unseeded randomness: assert invariants, not exact numbers.
 
+#![allow(clippy::unwrap_used, clippy::expect_used)] // dev harness: fail fast on bad input
+
 pub mod analysis;
 pub mod client;
 pub mod server;

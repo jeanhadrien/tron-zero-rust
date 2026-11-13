@@ -187,7 +187,6 @@ fn step_particles(particles: &mut Vec<Particle>, dt: f32) {
 }
 
 /// Spot deaths, spawns and grinding, and make the matching particles.
-#[allow(clippy::type_complexity)]
 fn emit_fx(
     time: Res<Time>,
     settings: Res<FxSettings>,

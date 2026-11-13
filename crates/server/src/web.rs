@@ -253,6 +253,7 @@ pub struct WebListenerOf(pub Entity);
 /// Open the WebTransport listener, feeding sessions into `server`'s links.
 pub fn open_listener(commands: &mut Commands, server: Entity, endpoint: &WebEndpoint) {
     let address = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), endpoint.port);
+    #[allow(clippy::expect_used)] // MAX_IDLE is a constant within QUIC's range
     let config = ServerConfig::builder()
         .with_bind_address(address)
         .with_identity(endpoint.identity.clone_identity())

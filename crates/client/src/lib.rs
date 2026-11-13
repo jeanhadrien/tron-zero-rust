@@ -78,7 +78,6 @@ pub fn add_input_and_prediction(app: &mut App) {
 }
 
 /// Reconcile after replication, regardless of Player/Controlled arrival order.
-#[allow(clippy::type_complexity)]
 pub fn attach_local_input(
     mut commands: Commands,
     players: Query<

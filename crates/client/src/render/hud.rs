@@ -84,7 +84,6 @@ pub fn status_badge_ui(
         });
 }
 
-#[allow(clippy::type_complexity)]
 pub fn hud_ui(
     mut contexts: EguiContexts,
     session: Res<Session>,
@@ -256,7 +255,6 @@ mod tests {
     #[derive(Resource, Default)]
     struct Probe(bool, Option<u32>);
 
-    #[allow(clippy::type_complexity)]
     fn update_probe(
         session: Res<Session>,
         menu: Res<MenuState>,

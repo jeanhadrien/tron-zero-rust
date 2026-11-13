@@ -4,6 +4,14 @@
 //! Regenerate goldens after an intended change with `LAB_BLESS=1 cargo test
 //! -p tron-zero-lab`, then review the diff like code.
 
+// Test crate: unwraps and prints are fine here.
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::print_stdout,
+    clippy::print_stderr
+)]
+
 use std::path::{Path, PathBuf};
 
 use tron_zero_lab::{EventKind, Lab, Scenario, trace};

@@ -183,7 +183,6 @@ impl WorldSnapshot {
 #[derive(SystemParam)]
 pub struct WorldSnapshotBuilder<'w, 's> {
     walls: Query<'w, 's, &'static WallSegments, With<Arena>>,
-    #[allow(clippy::type_complexity)]
     riders: Query<
         'w,
         's,

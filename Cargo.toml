@@ -2,6 +2,18 @@
 members = ["crates/shared", "crates/bots", "crates/server", "crates/client", "crates/lab", "crates/nettest"]
 resolver = "2"
 
+# Code style checked by `cargo clippy --workspace --all-targets -- -D warnings`
+# (tests are exempt from the unwrap/expect lints, see clippy.toml).
+[workspace.lints.clippy]
+# Bevy system params (nested Query filters) always trip it.
+type_complexity = "allow"
+# Systems early-return with `let ... else`; fail-fast exceptions opt out locally.
+unwrap_used = "deny"
+expect_used = "deny"
+# `tracing` only, so a binary's log subscriber sees everything.
+print_stdout = "deny"
+print_stderr = "deny"
+
 [workspace.dependencies]
 # No default features: every crate opts in to what it uses (the default set pulls
 # in 3D, PBR, UI, audio, gamepad... which the game never touches).

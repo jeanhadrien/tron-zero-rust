@@ -91,7 +91,6 @@ pub fn setup_bots(mut commands: Commands) {
 /// is emitted only on its redecide tick; between epochs bots hold straight
 /// (`PlayerInput::None`). Re-emitting a cached turn every tick would spin the
 /// rider (Left, Left = 180° into its own trail).
-#[allow(clippy::type_complexity)]
 pub fn bot_brain_input(
     mut commands: Commands,
     debug_cfg: Res<BotDebugConfig>,
@@ -195,7 +194,6 @@ pub fn bot_brain_input(
 
 /// Auto-cycle after `CYCLE_DURATION_TICKS`; respawn dead bots after
 /// `RESPAWN_DELAY_TICKS`, preserving each slot's build.
-#[allow(clippy::type_complexity)]
 pub fn bot_spawner(
     mut commands: Commands,
     mut manager: ResMut<BotManager>,

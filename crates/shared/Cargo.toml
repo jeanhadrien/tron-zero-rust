@@ -14,3 +14,6 @@ lightyear = { workspace = true, features = ["input_native"] }
 [dev-dependencies]
 postcard.workspace = true
 proptest = "1"
+
+[lints]
+workspace = true

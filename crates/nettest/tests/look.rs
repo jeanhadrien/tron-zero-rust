@@ -3,6 +3,14 @@
 //! client; chat lines carry the sender color; a look set on the server for a
 //! non-human rider reaches clients.
 
+// Test crate: unwraps and prints are fine here.
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::print_stdout,
+    clippy::print_stderr
+)]
+
 use std::time::Duration;
 
 use bevy::input::keyboard::KeyCode;

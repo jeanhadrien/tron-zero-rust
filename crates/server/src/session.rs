@@ -139,7 +139,6 @@ impl SessionLease {
     }
 }
 
-#[allow(clippy::type_complexity)]
 pub fn receive_session_requests(
     time: Res<Time<Real>>,
     mut clients: Query<

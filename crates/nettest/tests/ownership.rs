@@ -2,6 +2,14 @@
 //! exactly its own rider as `Predicted` + `Controlled` and every other rider
 //! (human or bot) as `Interpolated` only.
 
+// Test crate: unwraps and prints are fine here.
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::print_stdout,
+    clippy::print_stderr
+)]
+
 use std::time::Duration;
 
 use tron_zero_nettest::client::RiderRole;

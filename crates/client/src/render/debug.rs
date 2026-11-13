@@ -143,7 +143,6 @@ type DebugBot = (With<Player>, With<BotDebug>);
 
 /// Draw rays, enemy link, rings, forks, and cell highlights for the nearest
 /// debug bot. Runs in `Update` after replication.
-#[allow(clippy::type_complexity)]
 pub fn draw_bot_debug(
     overlay: Res<DebugOverlay>,
     locals: Query<(&Rendered, Option<&ControlledBy>), LocalRider>,
@@ -321,7 +320,6 @@ pub fn draw_ray_cells(gizmos: &mut Gizmos, pos: Vec2, dir: Vec2, dbg: &BotDebug)
 
 /// Right-side egui panel for the selected debug bot. Hidden while the menu is
 /// open (same rule as the HUD); shows "no debug data" when absent.
-#[allow(clippy::type_complexity)]
 // Bevy injects each resource as its own parameter; the count is structural.
 #[allow(clippy::too_many_arguments)]
 pub fn debug_panel_ui(

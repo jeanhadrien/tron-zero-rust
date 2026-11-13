@@ -2,6 +2,14 @@
 //! protocol version), capacity, disconnect -> reconnect cycles, and the
 //! client-side latency simulation.
 
+// Test crate: unwraps and prints are fine here.
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::print_stdout,
+    clippy::print_stderr
+)]
+
 use std::time::Duration;
 
 use bevy::prelude::*;

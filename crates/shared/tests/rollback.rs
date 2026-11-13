@@ -3,6 +3,14 @@
 //! reads state that `protocol.rs` does not `predict()` (a `Local`, a resource,
 //! an unregistered component), client rollback diverges and this test fails.
 
+// Test crate: unwraps and prints are fine here.
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::print_stdout,
+    clippy::print_stderr
+)]
+
 use bevy_ecs::prelude::*;
 use glam::Vec2;
 use tron_zero_shared::*;

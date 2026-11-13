@@ -120,7 +120,6 @@ fn push_char(buffer: &mut String, c: char) {
 ///
 /// Runs in `PreUpdate` after `menu_controls` (which leaves Escape alone while
 /// the box is open) and before the turn keys are read.
-#[allow(clippy::type_complexity)]
 pub fn chat_controls(
     mut key_events: MessageReader<KeyboardInput>,
     mut chat: ResMut<ChatState>,

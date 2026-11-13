@@ -10,3 +10,6 @@ shared = { path = "../shared", package = "tron-zero-shared" }
 bevy_ecs.workspace = true
 glam.workspace = true
 serde.workspace = true
+
+[lints]
+workspace = true

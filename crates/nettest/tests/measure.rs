@@ -1,6 +1,14 @@
 //! Measurements behind the turn scheduling policy. Run with
 //! `cargo test -p tron-zero-nettest --test measure -- --ignored --nocapture`.
 
+// Test crate: unwraps and prints are fine here.
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::print_stdout,
+    clippy::print_stderr
+)]
+
 use tron_zero_nettest::analysis::{Distribution, Fate, deliveries};
 use tron_zero_nettest::{Impairment, Net, serial, staircase};
 

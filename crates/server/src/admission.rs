@@ -121,6 +121,7 @@ fn admit(
 
 /// `base`, or `base 2`, `base 3`... (trimming `base` to stay within the cap)
 /// until its [`name_key`] differs from that of every name in `taken`.
+#[allow(clippy::expect_used)] // the suffix range is unbounded and `taken` is finite
 fn unique_name(base: &str, taken: &[String]) -> String {
     let taken_keys: Vec<String> = taken.iter().map(|name| name_key(name)).collect();
     let is_taken = |candidate: &str| taken_keys.contains(&name_key(candidate));
@@ -163,7 +164,7 @@ fn refresh_link_visibility(commands: &mut Commands, link: Entity) {
 /// link and confirm the final name, or reject with a reason and close the link
 /// once the refusal has had time to arrive. Links that never say hello are
 /// closed after the session timeout.
-#[allow(clippy::type_complexity, clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn handle_hello(
     time: Res<Time<Real>>,
     max: Res<MaxPlayers>,
@@ -274,7 +275,6 @@ pub(crate) fn handle_hello(
 
 /// Handshake messages that reach an admitted link are never read: count them,
 /// drop them, and close the link if they keep coming.
-#[allow(clippy::type_complexity)]
 pub fn discard_late_handshakes(
     time: Res<Time<Real>>,
     mut links: Query<

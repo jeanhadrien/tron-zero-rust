@@ -294,7 +294,6 @@ pub fn on_client_disconnected(
 /// carry `Disconnecting`, and our lease timeout only sees `Connected` links, so
 /// a link that went `Unlinked`/`Disconnected` on its own would otherwise stay
 /// forever, still replicated to by replicon and buffering messages.
-#[allow(clippy::type_complexity)]
 pub fn reap_dead_links(
     dead: Query<
         Entity,

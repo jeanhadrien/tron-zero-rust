@@ -523,7 +523,6 @@ fn follow_timeline_resync(
     trace.shift_ticks(event.tick_delta);
 }
 
-#[allow(clippy::type_complexity)]
 fn record_client_tick(
     timeline: Res<LocalTimeline>,
     rollback: Query<(), (With<Client>, With<Rollback>)>,

@@ -44,7 +44,6 @@ pub fn death_message(
     }
 }
 
-#[allow(clippy::type_complexity)]
 pub fn death_ui(
     mut contexts: EguiContexts,
     session: Res<Session>,
@@ -172,7 +171,6 @@ mod tests {
     #[derive(Resource, Default)]
     struct Probe(String);
 
-    #[allow(clippy::type_complexity)]
     fn update_probe(
         session: Res<Session>,
         menu: Res<MenuState>,

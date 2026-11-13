@@ -15,7 +15,7 @@ manually (Space). Enter opens the player chat.
 - **Networking:** Lightyear 0.28 — server-authoritative, tick-based, client prediction + rollback, state replication. One server entity carries two transports: **raw UDP** for the desktop client (default `0.0.0.0:5000`, env `PORT`; unauthenticated, unencrypted) and **WebTransport** for browsers (UDP `WEB_PORT`, default 5001; self-signed ECDSA cert pinned by the `certHash` the server announces). Lightyear netcode connect tokens for the UDP path are planned, not wired.
 - **Client UI:** `bevy_egui` (menu, settings, server browser via `ehttp`, HUD, death overlay). Rendering is Bevy 2D.
 - **Lobby:** the server announces itself over HTTP to `server-manager/` (Bun + Express, in this repo): register, heartbeat, unregister, with a per-room bearer token.
-- **Other:** `serde` + `postcard` (wire), `tracing` (never `println!` in `crates/` non-test code; see `STYLE.md` §9), `rand` (bot spawns, the client's network simulator and its random first-launch rider look only, never in the sim).
+- **Other:** `serde` + `postcard` (wire), `tracing` (never `println!` in `crates/` non-test code; a clippy lint enforces it), `rand` (bot spawns, the client's network simulator and its random first-launch rider look only, never in the sim).
 
 ## Workspace layout
 
@@ -45,7 +45,10 @@ Implemented contract and measurements: `docs/specs/netcode-design.md`. Open item
 
 ## Architecture rules
 
-Code style (comments, newtypes, errors, constants, logging, fmt/clippy) is in `STYLE.md`. These rules are about where code goes and how it plugs into the sim:
+Code style is enforced by `cargo fmt -- --check` and `cargo clippy --workspace --all-targets -- -D warnings` (workspace lints in `Cargo.toml`, test exemptions in `clippy.toml`, CI in `.github/workflows/lint.yml`); run both before committing. These rules are about where code goes and how it plugs into the sim:
+
+- **Constants:** gameplay numbers are named consts in `shared/constants.rs` (or module-local next to their sole use), never inlined at call sites. Promote to a `Resource` only if it must vary at runtime.
+- **Logging:** `warn!` = denied/degraded, `info!` = lifecycle (join/leave/spawn accepted), `debug!` = stale or per-tick noise. A binary installs its log subscriber before reading config.
 
 - **Determinism:** the shared sim uses `f32`/`Vec2` only, headings as ±X/±Y swaps (no trig at turn sites), no `rand`, no wall clock, no unsorted `HashMap` iteration. Spawns come from a seed (`spawn_from_seed`, `find_safe_spawn`). Other randomness (bots, rotation) stays server-side outside the predicted state, or is seeded and replicated.
 - **System order:** Bevy runs unchained systems in parallel. A new `FixedUpdate` system declares `.after(simulate_players)` / `.before(...)` with a comment saying why. Build the obstacle snapshot in one piece before any mutation.
@@ -75,7 +78,7 @@ Code style (comments, newtypes, errors, constants, logging, fmt/clippy) is in `S
 - `docs/specs/audio.md` — generative audio proposal (not implemented; open questions).
 - `docs/specs/web.md` — browser client and WebTransport decisions; `web/README.md` — build, serve, deploy.
 - `deploy/gce/` — game server VM (Container-Optimized OS) on GCP; image via `cloudbuild.server.yaml`.
-- `NOTES.md` — open feature ideas (audio, spectator mode). `EXPLORATION.md` (Armagetron ideas), `BOT-AI-*.md` (bot research) — not committed work. `STYLE.md` — code style; must pass fmt + clippy `-D warnings` (not checked by CI).
+- `NOTES.md` — open feature ideas (audio, spectator mode). `EXPLORATION.md` (Armagetron ideas), `BOT-AI-*.md` (bot research) — not committed work.
 
 # Agent (you)
 

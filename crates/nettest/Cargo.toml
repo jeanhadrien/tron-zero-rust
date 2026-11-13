@@ -13,3 +13,6 @@ bevy.workspace = true
 glam.workspace = true
 lightyear = { workspace = true, features = ["udp", "raw_connection", "input_native", "webtransport"] }
 lightyear_transport.workspace = true
+
+[lints]
+workspace = true

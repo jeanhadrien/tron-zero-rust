@@ -236,7 +236,6 @@ fn count_sent_bytes(
     }
 }
 
-#[allow(clippy::type_complexity)]
 fn record_server_tick(
     timeline: Res<LocalTimeline>,
     riders: Query<

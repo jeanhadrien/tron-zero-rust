@@ -1,6 +1,14 @@
 //! Player chat over real UDP loopback: typed lines reach every player with the
 //! server-known sender name, bad input is dropped, floods are bounded.
 
+// Test crate: unwraps and prints are fine here.
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::print_stdout,
+    clippy::print_stderr
+)]
+
 use std::time::Duration;
 
 use tron_zero_nettest::{Impairment, Net, serial};

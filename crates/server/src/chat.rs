@@ -17,7 +17,6 @@ use crate::systems::Human;
 /// Messages over the soft rate limit, empty after sanitizing, or from a link
 /// without a rider yet are dropped silently; a flood far above any human rate
 /// closes the link like the other message kinds.
-#[allow(clippy::type_complexity)]
 pub fn collect_chat(
     time: Res<Time<Real>>,
     mut links: Query<

@@ -318,7 +318,6 @@ fn rider_view(alive: &IsAlive, generation: &LifeGeneration) -> RiderView {
 /// `Last`, even on frames without a fixed tick, so drain every frame. Ownership
 /// comes from the link (no entity id in the message). A link that exceeds its
 /// message or rejection budget is closed.
-#[allow(clippy::type_complexity)]
 pub fn collect_turn_commands(
     timeline: Res<LocalTimeline>,
     time: Res<Time<Real>>,

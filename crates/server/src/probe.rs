@@ -16,7 +16,6 @@ use crate::systems::Human;
 
 /// Replies to probes on freshly created client links (a link's first payload). The reply leaves in
 /// PostUpdate; the link is despawned in `Last`, so it is flushed first.
-#[allow(clippy::type_complexity)]
 pub fn answer_probes(
     mut fresh: Query<(Entity, &mut Link), (Added<Link>, With<LinkOf>)>,
     humans: Query<(), With<Human>>,

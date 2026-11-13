@@ -48,7 +48,6 @@ type OwnedRiders<'w, 's> = Query<
 ///
 /// A link sending far more changes than a client ever does (it coalesces to a
 /// few per second) is closed, like the other message floods.
-#[allow(clippy::type_complexity)]
 pub(crate) fn collect_looks(
     time: Res<Time<Real>>,
     mut links: Query<

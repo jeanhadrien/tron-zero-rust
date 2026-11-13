@@ -106,7 +106,7 @@ type InputReady = (
     With<NativeBuffer<PlayerInput>>,
 );
 
-#[allow(clippy::type_complexity, clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)]
 pub fn buffer_keyboard_input(
     mut key_events: MessageReader<KeyboardInput>,
     mut pending: ResMut<PendingInput>,
@@ -283,7 +283,7 @@ fn apply_turn_ack(acks: &mut TurnAckState, ack: TurnAck) {
 ///
 /// Skipped during rollback (the `Without<Rollback>` filter), so replays reuse
 /// Lightyear's recorded input history and never send or consume anything.
-#[allow(clippy::type_complexity, clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)]
 pub fn read_keyboard(
     client: Single<
         (Entity, &InputTimeline),

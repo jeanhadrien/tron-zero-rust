@@ -6,6 +6,8 @@
 //! JSONL event trace and PNG snapshots. Built for agents and tests that can't
 //! play at 120 Hz: edit the scenario, re-run from tick 0, read the outcome.
 
+#![allow(clippy::unwrap_used, clippy::expect_used)] // dev harness: fail fast on bad input
+
 pub mod render;
 pub mod scenario;
 pub mod sim;
