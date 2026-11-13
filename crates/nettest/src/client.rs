@@ -299,6 +299,17 @@ impl TestClient {
         query.iter(world).next().map(|id| id.0.clone())
     }
 
+    /// This client's current `Trail` corners for the rider `player_id`: the
+    /// predicted value for its own rider, the interpolated one for others.
+    pub fn trail_of(&mut self, player_id: &str) -> Option<shared::Trail> {
+        let world = self.app.world_mut();
+        let mut query = world.query_filtered::<(&PlayerId, &shared::Trail), With<Player>>();
+        query
+            .iter(world)
+            .find(|(id, _)| id.0 == player_id)
+            .map(|(_, trail)| trail.clone())
+    }
+
     pub fn rider_alive(&mut self) -> bool {
         let world = self.app.world_mut();
         let mut query = world.query_filtered::<&IsAlive, (With<Predicted>, With<Controlled>)>();

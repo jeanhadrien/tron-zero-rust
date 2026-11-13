@@ -1,7 +1,6 @@
 //! Rollout forecasting. `PhysicsForecaster` reuses the exact shared physics
 //! step so a projected world cannot diverge from the authoritative sim.
 
-use shared::Trail;
 use shared::physics::{RiderState, RiderStep, step_riders};
 
 use crate::strategy::Action;
@@ -37,14 +36,14 @@ impl Forecaster for PhysicsForecaster {
                         .copied()
                         .unwrap_or(Action::Hold)
                         .to_input(),
-                    trail: Trail(std::mem::take(&mut rider.trail)),
+                    trail: std::mem::take(&mut rider.trail),
                 }
             })
             .collect();
         let outcomes = step_riders(&mut steps, obstacles);
         for ((index, step), outcome) in live.into_iter().zip(steps).zip(outcomes) {
             let rider = &mut riders[index];
-            rider.trail = step.trail.0;
+            rider.trail = step.trail;
             rider.pos = outcome.position;
             rider.dir = outcome.direction;
             rider.rubber = outcome.rubber;
@@ -52,7 +51,7 @@ impl Forecaster for PhysicsForecaster {
             rider.target_speed_mult = outcome.target_speed;
             if outcome.died {
                 rider.alive = false;
-                rider.trail.clear();
+                rider.trail.0.clear();
                 rider.speed_mult = 0.0;
                 rider.target_speed_mult = 0.0;
             }
@@ -91,7 +90,7 @@ mod tests {
         let riders = entities
             .iter()
             .map(|entity| {
-                let trail = world.get::<Trail>(*entity).unwrap().0.clone();
+                let trail = world.get::<Trail>(*entity).unwrap().clone();
                 RiderSnapshot {
                     id: entity.to_bits(),
                     pos: world.get::<Position>(*entity).unwrap().0,
@@ -136,11 +135,8 @@ mod tests {
         let a = cycle(&mut world, Vec2::new(-300.0, 0.0), Vec2::X);
         let b = cycle(&mut world, Vec2::new(300.0, 400.0), Vec2::NEG_Y);
         // A cornered trail so turning and side-sliding both come into play.
-        *world.get_mut::<Trail>(b).unwrap() = Trail(vec![
-            Vec2::new(300.0, 500.0),
-            Vec2::new(300.0, 400.0),
-            Vec2::new(200.0, 400.0),
-        ]);
+        *world.get_mut::<Trail>(b).unwrap() =
+            Trail(vec![Vec2::new(200.0, 500.0), Vec2::new(300.0, 500.0)]);
 
         let mut schedule = Schedule::default();
         schedule.add_systems(simulate_players);
@@ -203,10 +199,8 @@ mod tests {
         // sim stops B, and the forecast must too.
         let a = cycle(&mut world, Vec2::new(-1.0, 0.0), Vec2::X);
         let b = cycle(&mut world, Vec2::new(0.0, -2.0), Vec2::Y);
-        *world.get_mut::<Trail>(a).unwrap() =
-            Trail(vec![Vec2::new(-50.0, 0.0), Vec2::new(-1.0, 0.0)]);
-        *world.get_mut::<Trail>(b).unwrap() =
-            Trail(vec![Vec2::new(0.0, -50.0), Vec2::new(0.0, -2.0)]);
+        *world.get_mut::<Trail>(a).unwrap() = Trail(vec![Vec2::new(-50.0, 0.0)]);
+        *world.get_mut::<Trail>(b).unwrap() = Trail(vec![Vec2::new(0.0, -50.0)]);
         let mut schedule = Schedule::default();
         schedule.add_systems(simulate_players);
 

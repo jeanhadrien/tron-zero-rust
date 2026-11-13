@@ -10,14 +10,19 @@
 //!   exactly the correction: predicted vs corrected head at the same tick) and
 //!   catches up within about 100 ms. Anything that is not a plain correction
 //!   (respawn, death, first sight) snaps; a timeline resync only drops the lag.
-//! * Opponents: the replicated `Trail` is already interpolated by Lightyear
+//! * Opponents: the replicated `Trail` holds corners only and `Position` steps
+//!   tick to tick, so the trail is rebuilt from the two confirmed snapshots
+//!   around the interpolation time and its head slides between them
 //!   (`shared::polyline::interpolate_trail`); the body is drawn from its head.
 
 use bevy::prelude::*;
 use lightyear::prelude::client::InputTimelineConfig;
 use lightyear::prelude::input::native::InputMarker;
-use lightyear::prelude::{InterpolationSystems, Predicted, RollbackSystems, SyncEvent};
-use shared::polyline::{arc_to_end, truncate_back};
+use lightyear::prelude::{
+    ConfirmedHistory, InterpolationSystems, InterpolationTimeline, NetworkTimeline, Predicted,
+    RollbackSystems, SyncEvent, Tick, interpolation_fraction,
+};
+use shared::polyline::{arc_to_end, interpolate_trail, truncate_back};
 use shared::{IsAlive, LifeGeneration, Player, PlayerInput, Position, Trail};
 
 /// Time constant of the rollback-correction catch-up (4x it is about 100 ms).
@@ -66,10 +71,11 @@ impl Rendered {
             .unwrap_or(fallback)
     }
 
-    fn set(&mut self, head: Vec2, trail: &Trail) {
+    /// The sim trail as is, with the rider at `head` (snaps, opponents'
+    /// fallback). Fills the existing buffer.
+    fn snap(&mut self, trail: &Trail, head: Vec2) {
         self.head = head;
-        self.trail.clear();
-        self.trail.extend_from_slice(&trail.0);
+        trail.points_into(head, &mut self.trail);
     }
 }
 
@@ -120,17 +126,15 @@ fn decay_lag(lag: f32, dt: f32) -> f32 {
     if lag < LAG_EPSILON { 0.0 } else { lag }
 }
 
-/// Fill `out` with the sim trail whose last point is `head`, then cut `lag`
+/// Move the last point of the sim trail in `trail` to `head`, then cut `lag`
 /// off the end. Returns the drawn head.
-fn draw_trail(out: &mut Vec<Vec2>, sim_trail: &[Vec2], head: Vec2, lag: f32) -> Vec2 {
-    out.clear();
-    out.extend_from_slice(sim_trail);
-    match out.last_mut() {
+fn draw_head(trail: &mut Vec<Vec2>, head: Vec2, lag: f32) -> Vec2 {
+    match trail.last_mut() {
         Some(last) => *last = head,
-        None => out.push(head),
+        None => trail.push(head),
     }
-    truncate_back(out, lag);
-    out.last().copied().unwrap_or(head)
+    truncate_back(trail, lag);
+    trail.last().copied().unwrap_or(head)
 }
 
 pub fn add_smoothing(app: &mut App) {
@@ -188,9 +192,10 @@ fn capture_predicted_head(mut riders: Query<&mut OwnRider>) {
 
 /// Runs after the re-simulation: `curr` is now the corrected head of the same
 /// tick the prediction had reached, so the difference is the correction alone.
-fn measure_correction(mut riders: Query<(&Trail, &mut OwnRider)>) {
-    for (trail, mut own) in &mut riders {
-        own.lag = match correction_lag(&trail.0, own.predicted_before_rollback) {
+fn measure_correction(mut riders: Query<(&Trail, &Position, &mut OwnRider)>) {
+    for (trail, position, mut own) in &mut riders {
+        let corrected = trail.points(position.0);
+        own.lag = match correction_lag(&corrected, own.predicted_before_rollback) {
             Some(correction) => (own.lag + correction).min(MAX_LAG),
             None => 0.0,
         };
@@ -226,7 +231,7 @@ fn update_own_riders(
         let life = (*generation, alive.0);
         let (Some(mut own), Some(mut rendered)) = (own, rendered) else {
             let mut first = Rendered::default();
-            first.set(position.0, trail);
+            first.snap(trail, position.0);
             commands
                 .entity(entity)
                 .insert((OwnRider::new(position.0, life), first));
@@ -238,39 +243,155 @@ fn update_own_riders(
         if own.life != life || !alive.0 {
             *own = OwnRider::new(position.0, life);
             own.teleported = teleported;
-            rendered.set(position.0, trail);
+            rendered.snap(trail, position.0);
             continue;
         }
         own.teleported = false;
 
         let head = own.prev.lerp(own.curr, fixed.overstep_fraction());
-        rendered.head = draw_trail(&mut rendered.trail, &trail.0, head, own.lag);
+        trail.points_into(position.0, &mut rendered.trail);
+        rendered.head = draw_head(&mut rendered.trail, head, own.lag);
     }
 }
 
+#[allow(clippy::type_complexity)]
 fn update_other_riders(
     mut commands: Commands,
-    mut riders: Query<(Entity, &Position, &Trail, Option<&mut Rendered>), OtherPlayer>,
+    timeline: Query<&InterpolationTimeline>,
+    mut riders: Query<
+        (
+            Entity,
+            &Position,
+            &Trail,
+            Option<&ConfirmedHistory<Position>>,
+            Option<&ConfirmedHistory<Trail>>,
+            Option<&mut Rendered>,
+        ),
+        OtherPlayer,
+    >,
 ) {
-    for (entity, position, trail, rendered) in &mut riders {
-        let head = trail.0.last().copied().unwrap_or(position.0);
-        match rendered {
-            Some(mut rendered) => rendered.set(head, trail),
-            None => {
-                let mut first = Rendered::default();
-                first.set(head, trail);
-                commands.entity(entity).insert(first);
+    let now = timeline
+        .single()
+        .ok()
+        .map(|timeline| (timeline.tick(), timeline.overstep().to_f32()));
+    for (entity, position, trail, heads, trails, rendered) in &mut riders {
+        let interpolated = match (now, heads, trails) {
+            (Some((tick, overstep)), Some(heads), Some(trails)) => {
+                interpolated_points(heads, trails, tick, overstep)
             }
+            _ => None,
+        };
+        let mut fresh = None;
+        let rendered = match rendered {
+            Some(rendered) => rendered.into_inner(),
+            None => fresh.insert(Rendered::default()),
+        };
+        match interpolated {
+            Some(points) => {
+                rendered.head = points.last().copied().unwrap_or(position.0);
+                rendered.trail = points;
+            }
+            None => rendered.snap(trail, position.0),
+        }
+        if let Some(fresh) = fresh {
+            commands.entity(entity).insert(fresh);
         }
     }
+}
+
+/// An opponent's trail at the interpolation time `tick + overstep`: rebuilt
+/// from the confirmed snapshots just before and after it (corners and head of
+/// the same tick), the head sliding along the newer one. Mirrors Lightyear's
+/// `InterpolationRegistry::sample` (crate-private): the same bracketing, no
+/// extrapolation past the newest snapshot. `None` before the first snapshot.
+fn interpolated_points(
+    heads: &ConfirmedHistory<Position>,
+    trails: &ConfirmedHistory<Trail>,
+    tick: Tick,
+    overstep: f32,
+) -> Option<Vec<Vec2>> {
+    let before = (0..heads.len())
+        .take_while(|&i| heads.get_nth_tick(i).is_some_and(|t| t <= tick))
+        .last()?;
+    let (start_tick, start_head) = heads.get_nth_present(before)?;
+    let start = trails.get_present(start_tick)?.points(start_head.0);
+    let end = heads
+        .get_nth_present(before + 1)
+        .and_then(|(end_tick, end_head)| {
+            let end = trails.get_present(end_tick)?.points(end_head.0);
+            Some((end_tick, end))
+        });
+    let Some((end_tick, end)) = end else {
+        return Some(start);
+    };
+    let t = interpolation_fraction(start_tick, end_tick, tick, overstep).clamp(0.0, 1.0);
+    Some(interpolate_trail(&start, &end, t))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use lightyear::prelude::HistoryState;
 
     fn trail() -> Vec<Vec2> {
         vec![Vec2::new(0.0, 0.0), Vec2::new(100.0, 0.0)]
+    }
+
+    /// Confirmed opponent snapshots: `(tick, corners, head)`.
+    fn histories(
+        snapshots: &[(u32, Vec<Vec2>, Vec2)],
+    ) -> (ConfirmedHistory<Position>, ConfirmedHistory<Trail>) {
+        let mut heads = ConfirmedHistory::default();
+        let mut trails = ConfirmedHistory::default();
+        for (tick, corners, head) in snapshots {
+            heads.insert_explicit(Tick(*tick), HistoryState::Updated(Position(*head)));
+            trails.insert_explicit(Tick(*tick), HistoryState::Updated(Trail(corners.clone())));
+        }
+        (heads, trails)
+    }
+
+    #[test]
+    fn opponent_head_slides_through_a_corner_between_snapshots() {
+        let (heads, trails) = histories(&[
+            (10, vec![Vec2::ZERO], Vec2::new(8.0, 0.0)),
+            (
+                11,
+                vec![Vec2::ZERO, Vec2::new(10.0, 0.0)],
+                Vec2::new(10.0, 4.0),
+            ),
+        ]);
+        // 6 units travelled; half of it undone leaves the head at (10, 1).
+        let points = interpolated_points(&heads, &trails, Tick(10), 0.5).unwrap();
+        assert_eq!(points.len(), 3);
+        assert!(points[2].distance(Vec2::new(10.0, 1.0)) < 1e-3);
+        let end = interpolated_points(&heads, &trails, Tick(11), 0.0).unwrap();
+        assert_eq!(
+            end,
+            trails
+                .newest_present()
+                .unwrap()
+                .1
+                .points(Vec2::new(10.0, 4.0))
+        );
+    }
+
+    #[test]
+    fn opponent_respawn_steps_and_a_missing_end_holds() {
+        let start = vec![Vec2::ZERO, Vec2::new(8.0, 0.0)];
+        let (heads, trails) = histories(&[
+            (10, vec![Vec2::ZERO], Vec2::new(8.0, 0.0)),
+            (11, vec![Vec2::splat(500.0)], Vec2::splat(500.0)),
+        ]);
+        assert_eq!(
+            interpolated_points(&heads, &trails, Tick(10), 0.9),
+            Some(start.clone())
+        );
+        let (heads, trails) = histories(&[(10, vec![Vec2::ZERO], Vec2::new(8.0, 0.0))]);
+        assert_eq!(
+            interpolated_points(&heads, &trails, Tick(12), 0.5),
+            Some(start)
+        );
+        assert_eq!(interpolated_points(&heads, &trails, Tick(9), 0.5), None);
     }
 
     #[test]
@@ -286,15 +407,14 @@ mod tests {
         let lag = correction_lag(&sim, predicted).unwrap();
         assert_eq!(lag, 0.0);
         let head = Vec2::new(97.5, 0.0);
-        let mut out = Vec::new();
-        assert_eq!(draw_trail(&mut out, &sim, head, lag), head);
+        let mut out = sim.clone();
+        assert_eq!(draw_head(&mut out, head, lag), head);
         assert_eq!(out, vec![sim[0], head]);
     }
 
     #[test]
     fn lag_cuts_the_drawn_head_back_along_the_trail() {
-        let mut out = Vec::new();
-        let head = draw_trail(&mut out, &trail(), Vec2::new(100.0, 0.0), 10.0);
+        let head = draw_head(&mut trail(), Vec2::new(100.0, 0.0), 10.0);
         assert!(head.distance(Vec2::new(90.0, 0.0)) < 1e-3);
     }
 

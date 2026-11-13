@@ -7,7 +7,7 @@ use bevy::prelude::*;
 use glam::Vec2;
 use lightyear::prelude::input::native::NativeBuffer;
 use lightyear::prelude::*;
-use shared::{ActionState, Direction, IsAlive, PlayerId, PlayerInput, Position, Trail, Velocity};
+use shared::{ActionState, Direction, IsAlive, PlayerId, PlayerInput, Position, Trail};
 use tron_zero_server as ts;
 use ts::systems::Human;
 use ts::turns::TurnLog;
@@ -56,6 +56,15 @@ impl TestServer {
         app.init_resource::<TurnLog>();
         app.init_resource::<ServerTrace>();
         app.add_systems(FixedLast, record_server_tick);
+        app.init_resource::<SentBytes>();
+        // After the transport has written this frame's packets into each link,
+        // before the IO backend drains them.
+        app.add_systems(
+            PostUpdate,
+            count_sent_bytes
+                .after(lightyear_transport::plugin::TransportSystems::Send)
+                .before(LinkSystems::Send),
+        );
         install_conditioner(&mut app, impairment);
         // Startup systems (arena + listener) run on the first update.
         app.finish();
@@ -67,6 +76,12 @@ impl TestServer {
     /// The server's last simulated tick.
     pub fn tick(&self) -> u32 {
         self.app.world().resource::<LocalTimeline>().tick().0
+    }
+
+    /// Payload bytes the server has handed to client links so far, summed over
+    /// every link (packet payloads, without UDP/IP headers).
+    pub fn sent_bytes(&self) -> u64 {
+        self.app.world().resource::<SentBytes>().0
     }
 
     pub fn turn_log(&self) -> &TurnLog {
@@ -157,7 +172,6 @@ impl TestServer {
             shape,
             Position(Vec2::ZERO),
             Direction(Vec2::X),
-            Velocity(Vec2::ZERO),
             IsAlive(true),
             Replicate::to_clients(NetworkTarget::All),
             InterpolationTarget::to_clients(NetworkTarget::All),
@@ -182,9 +196,14 @@ impl TestServer {
         self.app.world_mut().entity_mut(rider).insert((
             Position(position),
             Direction(direction),
-            Velocity(direction * (shared::BASE_SPEED * shared::TICK_SECS * 1000.0)),
             Trail::new(position),
         ));
+    }
+
+    /// The authoritative `Trail` corners of a rider, by player id.
+    pub fn trail_of(&mut self, player_id: &str) -> Option<Trail> {
+        let (rider, _) = self.rider(player_id)?;
+        self.app.world().get::<Trail>(rider).cloned()
     }
 
     /// Kill a rider as if it had crashed (the queue and life rules must cope).
@@ -194,6 +213,26 @@ impl TestServer {
             .world_mut()
             .entity_mut(rider)
             .insert(IsAlive(false));
+    }
+}
+
+/// Running total behind [`TestServer::sent_bytes`].
+#[derive(Resource, Default)]
+struct SentBytes(u64);
+
+/// Adds up the payloads queued on every client link this frame. The queue is
+/// drained and refilled in order, since `LinkSender` only iterates by draining.
+fn count_sent_bytes(
+    mut links: Query<&mut Link, With<lightyear::prelude::server::ClientOf>>,
+    mut total: ResMut<SentBytes>,
+    mut scratch: Local<Vec<lightyear::link::SendPayload>>,
+) {
+    for mut link in &mut links {
+        scratch.extend(link.send.drain());
+        for payload in scratch.drain(..) {
+            total.0 += payload.len() as u64;
+            link.send.push(payload);
+        }
     }
 }
 

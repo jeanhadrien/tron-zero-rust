@@ -10,6 +10,8 @@ bevy_app = "0.19"
 bevy_ecs = "0.19"
 bevy_reflect = "0.19"
 lightyear = "0.28"
+# Only for `TransportSystems`, which the lightyear facade does not re-export.
+lightyear_transport = "0.28"
 bevy_egui = { version = "0.41", default-features = false }
 glam = "0.32"
 serde = { version = "1", features = ["derive"] }

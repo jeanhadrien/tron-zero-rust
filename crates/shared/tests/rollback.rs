@@ -11,7 +11,6 @@ use tron_zero_shared::*;
 type Predicted = (
     Position,
     Direction,
-    Velocity,
     SpeedMult,
     TargetSpeedMult,
     Rubber,
@@ -32,7 +31,6 @@ fn snapshot(world: &World, riders: &[Entity]) -> Vec<Predicted> {
             (
                 *world.get::<Position>(e).unwrap(),
                 *world.get::<Direction>(e).unwrap(),
-                *world.get::<Velocity>(e).unwrap(),
                 *world.get::<SpeedMult>(e).unwrap(),
                 *world.get::<TargetSpeedMult>(e).unwrap(),
                 *world.get::<Rubber>(e).unwrap(),

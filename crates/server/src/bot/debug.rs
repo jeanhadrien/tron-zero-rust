@@ -157,7 +157,7 @@ mod tests {
             id,
             pos,
             dir,
-            trail: vec![pos - dir * 10.0, pos],
+            trail: shared::Trail(vec![pos - dir * 10.0]),
             alive: true,
             rubber: 0.0,
             speed_mult: 1.0,

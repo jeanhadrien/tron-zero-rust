@@ -15,7 +15,6 @@ use crate::constants::BASE_RUBBER;
     DisplayName,
     Position,
     Direction,
-    Velocity,
     SpeedMult,
     TargetSpeedMult,
     IsAlive,
@@ -52,11 +51,6 @@ impl Default for Direction {
         Self(Vec2::new(1.0, 0.0))
     }
 }
-
-/// Per-tick displacement × 1000 (Position advances by `Velocity / 1000` each
-/// tick). Kept for parity with the JS codebase's fixed-point convention.
-#[derive(Component, Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Reflect)]
-pub struct Velocity(pub Vec2);
 
 /// Current speed multiplier (1.0 = base speed).
 #[derive(Component, Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Reflect)]

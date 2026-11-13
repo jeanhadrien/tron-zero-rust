@@ -7,6 +7,11 @@ use glam::Vec2;
 /// and still count as on it: the sim is bit-identical, so only float noise.
 const SNAPSHOT_TOLERANCE: f32 = 0.1;
 
+/// Total arc length of the polyline.
+pub fn length(points: &[Vec2]) -> f32 {
+    points.windows(2).map(|p| p[0].distance(p[1])).sum()
+}
+
 /// Arc length from `point` to the end of `points`, if `point` lies within
 /// `tolerance` of the polyline. The closest segment wins (the later one on a
 /// tie), so a point just before a corner is not read as sitting past it.

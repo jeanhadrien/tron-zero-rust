@@ -17,7 +17,7 @@ use bots::world::WorldSnapshotBuilder;
 use lightyear::prelude::*;
 use shared::{
     ActionState, Direction, DisplayName, IsAlive, Player, PlayerColor, PlayerInput, Position,
-    SpeedMult, Trail, Velocity,
+    SpeedMult, Trail,
 };
 
 pub use bots::schedule::SchedulerConfig;
@@ -280,7 +280,6 @@ fn spawn_bot_entity(
             DisplayName(build.name.clone()),
             Position(pos),
             Direction(dir),
-            Velocity(Vec2::ZERO),
             SpeedMult::base(),
             PlayerColor(color),
             IsAlive(true),

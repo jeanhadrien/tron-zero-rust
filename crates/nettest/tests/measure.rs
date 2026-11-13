@@ -65,6 +65,50 @@ fn measure(impairment: Impairment, turns: usize) {
     );
 }
 
+/// Server → client bandwidth while two riders lay long staircase trails (one
+/// corner every 16 ticks, so each trail grows to ~40 corners). Prints the mean
+/// payload rate per client link over the staircase.
+#[test]
+#[ignore = "prints measurements; takes about fifteen seconds"]
+fn downlink_bandwidth_with_long_trails() {
+    let _guard = serial();
+    let mut net = Net::new(Impairment::NONE);
+    net.add_client();
+    net.add_client();
+    net.join_and_settle();
+    let start = net.clients[0].tick() + 30;
+    for client in &mut net.clients {
+        staircase(client, start, TURNS, 16);
+    }
+    // Skip the lead-in; measure from the first corner to the last.
+    assert!(
+        net.run_until(std::time::Duration::from_secs(10), |net| net.clients[0]
+            .tick()
+            >= start),
+        "client never reached the first corner"
+    );
+    let (bytes_before, tick_before) = (net.server.sent_bytes(), net.server.tick());
+    let done = net.run_until(std::time::Duration::from_secs(30), |net| {
+        net.clients
+            .iter()
+            .all(|c| c.scripted_remaining() == 0 && c.pending_presses() == 0)
+    });
+    assert!(done);
+    let bytes = net.server.sent_bytes() - bytes_before;
+    let secs = f64::from(net.server.tick() - tick_before) / shared::TICK_HZ;
+    let links = net.clients.len() as f64;
+    println!(
+        "  downlink per client: {:.1} KB/s ({} bytes over {secs:.2} s, {} links), riders alive {:?}",
+        bytes as f64 / secs / links / 1000.0,
+        bytes,
+        net.clients.len(),
+        net.clients
+            .iter_mut()
+            .map(|c| c.rider_alive())
+            .collect::<Vec<_>>()
+    );
+}
+
 #[test]
 #[ignore = "prints measurements; takes about a minute"]
 fn arrival_offsets_by_profile() {

@@ -359,6 +359,43 @@ fn late_turns_run_within_the_window_and_expire_beyond_it() {
     );
 }
 
+/// A rejected turn's predicted corner must not survive on the client: the
+/// server never re-sends an unchanged `Trail`, so only Lightyear's completed
+/// mutate tick (unchanged check and confirmed restore) can remove it. Both the
+/// predicting client and an observer must end with the server's exact corners.
+#[test]
+fn a_rejected_turn_leaves_no_ghost_corner_on_any_client() {
+    let _guard = serial();
+    let mut net = Net::new(Impairment::new(2, 0, 0.0));
+    net.add_client();
+    net.add_client();
+    let ids = net.join_and_settle();
+    let t0 = net.clients[0].tick() + 30;
+    for (i, key) in [LEFT, RIGHT, LEFT].into_iter().enumerate() {
+        net.clients[0].schedule(t0 + 80 * i as u32, key);
+    }
+    // The middle press arrives about 30 ticks late: past the window.
+    let phases = [(t0 + 70, 250), (t0 + 150, 0)];
+    for (tick, extra_ms) in phases {
+        net.run_until(Duration::from_secs(20), |net| net.clients[0].tick() >= tick);
+        set_uplink_delay(&mut net, Duration::from_millis(extra_ms));
+    }
+    finish_script(&mut net, 0);
+
+    let run = Run::collect(&mut net, 0);
+    assert_eq!(run.log[1].fate, Fate::Rejected(TurnRejectReason::TooLate));
+    let server = net.server.trail_of(&ids[0]).expect("server trail");
+    assert_eq!(server.0.len(), 3, "anchor + two executed turns: {server:?}");
+    // The sim is bit-identical: exact equality, no tolerance.
+    for client in 0..2 {
+        assert_eq!(
+            net.clients[client].trail_of(&ids[0]),
+            Some(server.clone()),
+            "client {client} disagrees with the server"
+        );
+    }
+}
+
 #[test]
 fn respawn_and_reconnect_never_leak_turns() {
     let _guard = serial();
