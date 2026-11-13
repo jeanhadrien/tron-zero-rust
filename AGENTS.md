@@ -45,7 +45,7 @@ Implemented contract and measurements: `docs/specs/netcode-design.md`. Open item
 
 ## Architecture rules
 
-Code style is enforced by `cargo fmt -- --check` and `cargo clippy --workspace --all-targets -- -D warnings` (workspace lints in `Cargo.toml`, test exemptions in `clippy.toml`, CI in `.github/workflows/lint.yml`); run both before committing. These rules are about where code goes and how it plugs into the sim:
+Code style is enforced by `cargo fmt -- --check` and `cargo clippy --workspace --all-targets -- -D warnings` (workspace lints in `Cargo.toml`, test exemptions in `clippy.toml`, CI on PRs to `main` in `.github/workflows/lint.yml`); run both before committing. These rules are about where code goes and how it plugs into the sim:
 
 - **Constants:** gameplay numbers are named consts in `shared/constants.rs` (or module-local next to their sole use), never inlined at call sites. Promote to a `Resource` only if it must vary at runtime.
 - **Logging:** `warn!` = denied/degraded, `info!` = lifecycle (join/leave/spawn accepted), `debug!` = stale or per-tick noise. A binary installs its log subscriber before reading config.

@@ -3,10 +3,9 @@ name: lint
 # Code style gate: rustfmt + clippy with the workspace lints (Cargo.toml,
 # clippy.toml). Windows runner so the Bevy client needs no extra system libs.
 on:
-  push:
+  pull_request:
     branches:
       - main
-  pull_request:
 
 permissions:
   contents: read
