@@ -128,7 +128,7 @@ is a "connection" as soon as one packet arrives (see `NETWORK.md`). Lightyear
   `simulate_players` writes it, like every other sim component, with
   `set_if_neq`: replicon sends whatever change detection flags, so an
   unchanged value rewritten through `Mut` would go out every tick (measured
-  with two staircasing riders: 58 → 15 KB/s per client downlink,
+  with two staircasing riders: 58 → 13 KB/s per client downlink,
   `nettest --test measure downlink_bandwidth_with_long_trails`). A rider
   turning every tick still resends its whole corner list each tick; replicon's
   diff replication (`replicate_diff`/`predict_diff`) would bound that. Corners
