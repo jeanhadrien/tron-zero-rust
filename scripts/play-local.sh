@@ -26,7 +26,7 @@ fi
 export TRON_SIM_LATENCY_MS="${TRON_SIM_LATENCY_MS:-20}"
 export TRON_AUTOCONNECT="127.0.0.1:5000"
 # Game settings: 5 last-standing rounds. Point SERVER_CONFIG
-# at another file (e.g. crates/server/config/official.toml: one long round with respawns).
+# at another file to play other rules (docs/specs/match-rules.md).
 export SERVER_CONFIG="${SERVER_CONFIG:-crates/server/config/local.toml}"
 
 cargo run "${cargo_flags[@]}" -p tron-zero-server &

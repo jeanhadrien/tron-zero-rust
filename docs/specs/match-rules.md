@@ -29,9 +29,9 @@ A round may have no end condition (it lasts until the match is dropped), but
 only with `anytime` respawns: with `next_round` and no end condition the dead
 would never come back, so the config is refused.
 
-Shipped configs (`crates/server/config/`): `official.toml` and `dev-cloud.toml`
-play one 600 s round with respawns; `local.toml` (`scripts/play-local.*`)
-plays five 90 s last-standing rounds.
+Shipped configs (`crates/server/config/`): `official.toml`, `dev-cloud.toml`
+and `local.toml` (`scripts/play-local.*`) all play five 90 s last-standing
+rounds.
 
 ## Rules
 

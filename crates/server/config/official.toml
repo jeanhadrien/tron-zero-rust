@@ -3,22 +3,22 @@
 # settings only: ports, advertised host, manager and secrets are env vars
 # (docs/guides/building.md). Keys: see `src/config.rs`.
 #
-# One long round with respawns: ride, crash, press Space, ride again; the
-# scores reset every 10 minutes.
+# Five last-standing rounds of at most 90 seconds: a crashed rider waits for
+# the next round; the scores reset with each new match.
 
 [server]
 name = "Tron Zero EU"
 max_players = 10
 
 [match]
-rounds = 1
+rounds = 5
 intermission_secs = 3
 end_screen_secs = 8
 
 [round]
-secs = 600
-respawn = "anytime"
-last_standing = false
+secs = 90
+respawn = "next_round"
+last_standing = true
 
 [bots]
 roster = "builtin"

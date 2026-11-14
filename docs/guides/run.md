@@ -34,8 +34,9 @@ scripts\play-local.bat            # or: scripts\play-local.bat release  (Linux/m
 Server with bots + a client that joins by itself with a simulated 20 ms ping.
 The server plays **5 last-standing rounds** from
 `crates/server/config/local.toml` (see `docs/specs/match-rules.md`). Set
-`SERVER_CONFIG` to another config file before running the script, e.g.
-`crates/server/config/official.toml` for one 10-minute round with respawns. The bots are
+`SERVER_CONFIG` to another config file before running the script, e.g. a
+copy with `rounds = 1`, `respawn = "anytime"` and `last_standing = false` for
+one long round with respawns. The bots are
 the built-in roster (`Moth (Medium)`, four hard bots of different
 personalities, and the artist `Escher (Artist)`; the old difficulty ladder is
 `crates/bots/rosters/ladder.toml`); `bots.roster` in a config file seats the

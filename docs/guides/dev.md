@@ -109,7 +109,7 @@ Environment variables (all opt-in, read by the client; `TRON_BOT_DEBUG=1` is rea
 
 Server game settings (room name and capacity, match rules, bot roster) come
 from a config file: `SERVER_CONFIG=path`, else the official one built into the
-binary (`crates/server/config/official.toml`, one long round with respawns).
+binary (`crates/server/config/official.toml`, five last-standing rounds).
 `scripts/play-local.*` uses `crates/server/config/local.toml` (five
 last-standing rounds, `docs/specs/match-rules.md`). Keys and the server's env vars (`PORT`,
 `WEB_PORT`, the lobby ones) are in `docs/guides/building.md`. `bots.roster`

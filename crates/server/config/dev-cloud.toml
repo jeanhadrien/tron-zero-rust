@@ -6,14 +6,14 @@ name = "JH dev"
 max_players = 10
 
 [match]
-rounds = 1
+rounds = 5
 intermission_secs = 3
 end_screen_secs = 8
 
 [round]
-secs = 600
-respawn = "anytime"
-last_standing = false
+secs = 90
+respawn = "next_round"
+last_standing = true
 
 [bots]
 roster = "builtin"

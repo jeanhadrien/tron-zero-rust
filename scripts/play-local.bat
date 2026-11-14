@@ -18,7 +18,7 @@ if /i "%~1"=="release" (set "CARGO_FLAGS=--release" & set "CLIENT_FLAGS=")
 if not defined TRON_SIM_LATENCY_MS set "TRON_SIM_LATENCY_MS=20"
 set "TRON_AUTOCONNECT=127.0.0.1:5000"
 REM Game settings: 5 last-standing rounds. Set SERVER_CONFIG beforehand
-REM for another file (e.g. crates\server\config\official.toml: one long round with respawns).
+REM for another file to play other rules (docs\specs\match-rules.md).
 if not defined SERVER_CONFIG set "SERVER_CONFIG=crates\server\config\local.toml"
 REM Windows inherit the variables above; the server ignores the client ones.
 start "tron-zero-server" cmd /k cargo run %CARGO_FLAGS% -p tron-zero-server

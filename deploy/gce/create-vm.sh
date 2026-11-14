@@ -4,7 +4,7 @@
 #   deploy/gce/create-vm.sh <image-tag>
 #
 # The VM runs Container-Optimized OS; cloud-init.yaml starts the server image
-# under systemd. Room name, capacity and game mode come from the official config
+# under systemd. Room name, capacity and match rules come from the official config
 # built into the image (crates/server/config/official.toml). Stop the VM when nobody plays (it is billed while running):
 #   gcloud compute instances stop tron-zero-eu --zone europe-west1-b
 set -euo pipefail

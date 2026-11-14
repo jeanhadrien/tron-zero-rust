@@ -24,7 +24,7 @@ gcloud builds submit --project tron-zero-js --region europe-west1 \
 deploy/gce/create-vm.sh <image-tag>
 ```
 
-The room name, capacity, game mode and bots are the official config built into
+The room name, capacity, match rules (five last-standing rounds) and bots are the official config built into
 the image (`crates/server/config/official.toml`); change them there and ship a
 new image.
 
