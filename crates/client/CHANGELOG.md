@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.16.0](https://github.com/jeanhadrien/tron-zero-rust/compare/client-v0.15.0...client-v0.16.0) (2026-11-14)
+
+
+### Features
+
+* **bots:** one planner with a weight vector replaces the five strategies ([bbfe840](https://github.com/jeanhadrien/tron-zero-rust/commit/bbfe84013c5dc294847c72ae6e1301a76e26a19f))
+* rounds game mode (last rider standing over X rounds) ([79b2ebe](https://github.com/jeanhadrien/tron-zero-rust/commit/79b2ebe2149ad1f5e11edcedf2b37678ff94d97f))
+
 ## [0.15.0](https://github.com/jeanhadrien/tron-zero-rust/compare/client-v0.14.0...client-v0.15.0) (2026-11-11)
 
 
