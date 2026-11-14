@@ -237,6 +237,16 @@ before riding them. `crates/lab/puzzles/` holds hard spots (closed room, dead
 end, narrow gap) with one bot each; `tests/gates.rs` requires strong builds to
 solve them and a small tournament to stay under a self-kill rate.
 
+Fighting: the planner adds three terms, `pressure` (squeeze or seal the
+target's territory, or cut it off), `control` (own share of the race over
+riding straight) and `engage` (head toward the nearest opponent), all gated by
+a safety factor and by contact distance. `Personality::Passive` ("passive" in a
+scenario's `bot_build`) zeroes them: use it as the reference opponent.
+`puzzles/intercept.toml` has a scripted straight rider the duelist must cut
+off. `suites/fight.toml` runs each preset and Passive in 1v1 rounds. Chasing
+an evader that is as fast gives shadowing, not kills: speed (grinding) is the
+next phase.
+
 `tier = "full"` (or `t1`, `t2`) at the top of a scenario pins the bots' level
 of detail; without it the tier follows the number of living riders, as on the
 server.

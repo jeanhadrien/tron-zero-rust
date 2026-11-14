@@ -14,6 +14,7 @@ pub mod noise;
 pub mod objective;
 pub mod plan;
 pub mod planner;
+pub mod race;
 pub mod schedule;
 pub mod space;
 pub mod world;
@@ -25,7 +26,8 @@ use schedule::{SchedulerConfig, Tier, should_redecide};
 use space::Scratch;
 use world::WorldSnapshot;
 
-/// One bot's decision state across a life. A fresh life gets a fresh brain.
+/// One bot's decision state across a life (or a round). A fresh life or round
+/// gets a fresh brain.
 #[derive(Clone, Debug)]
 pub struct Brain {
     pub build: BotBuild,
@@ -37,6 +39,13 @@ pub struct Brain {
     /// Phase of this bot's planning ticks, so bots do not all plan at once.
     slot: usize,
     scratch: Scratch,
+    /// Tick of the first look: the start of this brain's round.
+    born: Option<u32>,
+    /// The opponent being pressured, kept from one plan to the next so the
+    /// bot does not dither between targets.
+    target: Option<u64>,
+    /// The last plan was to ride straight on.
+    steady: bool,
 }
 
 /// What one tick decided.
@@ -55,6 +64,9 @@ impl Brain {
             seed,
             slot,
             scratch: Scratch::default(),
+            born: None,
+            target: None,
+            steady: false,
         }
     }
 
@@ -83,7 +95,9 @@ impl Brain {
         scheduler: &SchedulerConfig,
     ) -> Decision {
         let tick = world.tick;
-        let params = Params::new(&self.build, tier, self.seed);
+        let mut params = Params::new(&self.build, tier, self.seed);
+        params.steady = self.steady;
+        params.age = tick.saturating_sub(*self.born.get_or_insert(tick));
         self.plan.drop_before(tick);
         let cadence = should_redecide(scheduler, tick, self.slot, self.build.knobs.reaction_ticks);
         let rest = self.plan.remaining(tick);
@@ -92,7 +106,10 @@ impl Brain {
                 .as_ref()
                 .is_some_and(|rest| self.plan.due(tick) && !survives(world, index, rest, &params));
         let report = replan.then(|| {
-            let outcome = plan_maneuver(world, index, &params, &mut self.scratch, rest);
+            let outcome =
+                plan_maneuver(world, index, &params, &mut self.scratch, rest, self.target);
+            self.target = outcome.report.target;
+            self.steady = outcome.maneuver.kind == plan::Kind::Hold;
             self.plan = Plan::start(tick, &outcome.maneuver);
             outcome.report
         });

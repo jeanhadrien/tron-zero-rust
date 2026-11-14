@@ -27,7 +27,16 @@ const FOREVER: u16 = u16::MAX;
 #[derive(Clone, Debug)]
 pub struct Space {
     free_at: Vec<u16>,
+    /// The same grid at `COARSE` times the cell size, a cell freeing up when
+    /// the last of its fine cells does: the board of the territory race.
+    coarse: Vec<u16>,
 }
+
+/// Fine cells per coarse cell side.
+pub const COARSE: usize = 2;
+/// Coarse cells per axis.
+pub const M: usize = N / COARSE;
+const _: () = assert!(N.is_multiple_of(COARSE));
 
 fn cell_index(p: Vec2) -> usize {
     let local = (p + Vec2::splat(ARENA_WIDTH * 0.5)) / CELL;
@@ -52,6 +61,7 @@ impl Space {
     pub fn build(walls: &[[f32; 4]], trails: &[Vec<Vec2>]) -> Self {
         let mut space = Self {
             free_at: vec![0; CELLS],
+            coarse: Vec::new(),
         };
         for w in walls {
             let (a, b) = (Vec2::new(w[0], w[1]), Vec2::new(w[2], w[3]));
@@ -74,7 +84,18 @@ impl Space {
                 arc += length;
             }
         }
+        let mut coarse = vec![0; M * M];
+        for (cell, &frees) in space.free_at.iter().enumerate() {
+            let at = (cell / N / COARSE) * M + (cell % N) / COARSE;
+            coarse[at] = coarse[at].max(frees);
+        }
+        space.coarse = coarse;
         space
+    }
+
+    /// Per coarse cell, the tick it frees up (see `race`).
+    pub fn coarse(&self) -> &[u16] {
+        &self.coarse
     }
 }
 
@@ -87,6 +108,7 @@ pub struct Scratch {
     dist: Vec<u16>,
     queue: Vec<u32>,
     path_cells: Vec<u32>,
+    pub race: crate::race::RaceScratch,
 }
 
 impl Default for Scratch {
@@ -98,6 +120,7 @@ impl Default for Scratch {
             dist: vec![0; CELLS],
             queue: Vec::new(),
             path_cells: Vec::new(),
+            race: crate::race::RaceScratch::default(),
         }
     }
 }

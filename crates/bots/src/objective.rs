@@ -6,7 +6,7 @@
 //! that measures it. Every term is "higher is better": losses are negative.
 
 /// How many terms there are; the length of both `values` arrays.
-pub const TERM_COUNT: usize = 7;
+pub const TERM_COUNT: usize = 10;
 
 /// What a candidate maneuver achieves, one measurement per term.
 #[derive(Clone, Copy, Debug, Default)]
@@ -26,6 +26,16 @@ pub struct Terms {
     pub fill: f32,
     /// 1 for the plan already being followed.
     pub commit: f32,
+    /// Kill pressure: how little room the target keeps (its share of the
+    /// arena it reaches first, small is high), plus a bonus when it is sealed
+    /// in a pocket or has no survivable reply, `0..=2`.
+    pub pressure: f32,
+    /// Territory control: share of the claimed arena the bot reaches before
+    /// every opponent, `0..=1`.
+    pub control: f32,
+    /// Engagement: how far the bot's heading keeps it from every opponent,
+    /// `-1..=0`, scaled up as the round goes on.
+    pub engage: f32,
 }
 
 impl Terms {
@@ -38,6 +48,9 @@ impl Terms {
             self.turn,
             self.fill,
             self.commit,
+            self.pressure,
+            self.control,
+            self.engage,
         ]
     }
 }
@@ -52,6 +65,13 @@ pub struct Weights {
     pub turn: f32,
     pub fill: f32,
     pub commit: f32,
+    pub pressure: f32,
+    pub control: f32,
+    pub engage: f32,
+    /// Not a term: how much of the survival score a bot gives up to fight.
+    /// The fight terms only choose among lines at most this far below the
+    /// best by the survival terms, so they never pay for a death.
+    pub risk: f32,
 }
 
 impl Weights {
@@ -64,7 +84,43 @@ impl Weights {
         turn: 0.15,
         fill: 0.5,
         commit: 0.2,
+        pressure: 1.5,
+        control: 0.3,
+        engage: 0.5,
+        risk: 0.25,
     };
+
+    /// The same bot without will to fight: no pressure, control or engagement.
+    pub fn passive(self) -> Self {
+        Self {
+            pressure: 0.0,
+            control: 0.0,
+            engage: 0.0,
+            ..self
+        }
+    }
+
+    /// The same bot a while into the round: it cares less about room and
+    /// margin (`k` in `0..=1`, `1` = not at all worn), so a round whose riders
+    /// all play safe still comes to an end.
+    pub fn worn(self, k: f32) -> Self {
+        Self {
+            space: self.space * k,
+            pocket: self.pocket * k,
+            clear: self.clear * k,
+            ..self
+        }
+    }
+
+    /// Whether any fight term is on.
+    pub fn fights(&self) -> bool {
+        self.pressure > 0.0 || self.control > 0.0 || self.engage > 0.0
+    }
+
+    /// Whether any term needs the territory race (the costly measurement).
+    pub fn races(&self) -> bool {
+        self.pressure > 0.0 || self.control > 0.0
+    }
 
     pub fn values(&self) -> [f32; TERM_COUNT] {
         [
@@ -75,6 +131,9 @@ impl Weights {
             self.turn,
             self.fill,
             self.commit,
+            self.pressure,
+            self.control,
+            self.engage,
         ]
     }
 

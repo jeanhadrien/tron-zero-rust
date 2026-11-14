@@ -256,6 +256,7 @@ pub fn bot_build(
         "territorialist" => Personality::Territorialist,
         "duelist" => Personality::Duelist,
         "roamer" => Personality::Roamer,
+        "passive" => Personality::Passive,
         other => return Err(format!("{name}: unknown bot {other:?}")),
     };
     let mut set = Difficulty(difficulty).knobs();

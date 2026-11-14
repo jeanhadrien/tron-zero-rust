@@ -1,0 +1,42 @@
+# Do the roster's personalities fight better than a bot with no will to? Each
+# preset plays the passive reference (same difficulty, no pressure, control or
+# engagement weights) and the other presets, last rider standing, five rounds
+# per match. A preset should win clearly more rounds than the reference.
+seeds = 8
+
+[[build]]
+name = "Survivalist"
+bot = "survivalist"
+difficulty = 2000
+[[build]]
+name = "Adaptive"
+bot = "adaptive"
+difficulty = 2000
+[[build]]
+name = "Territorialist"
+bot = "territorialist"
+difficulty = 2000
+[[build]]
+name = "Duelist"
+bot = "duelist"
+difficulty = 2000
+[[build]]
+name = "Trapper"
+bot = "trapper"
+difficulty = 2000
+[[build]]
+name = "Passive"
+bot = "passive"
+difficulty = 2000
+
+[[setup]]
+name = "fight"
+riders = 2
+
+[setup.match]
+respawn = "never"
+rounds = 5
+
+[setup.match.end]
+last_standing = true
+time_limit = 3600

@@ -9,7 +9,7 @@
 //! what it does.
 
 use glam::Vec2;
-use shared::physics::{Segment, nearest};
+use shared::physics::{Segment, nearest, ray_hit};
 use shared::{rotate_left, rotate_right};
 
 use crate::config::BotBuild;
@@ -17,8 +17,9 @@ use crate::forecast::Rollout;
 use crate::noise;
 use crate::objective::{Terms, Weights};
 use crate::plan::{Action, Kind, MAX_TURNS, Maneuver, Turn};
+use crate::race::{self, Cells, Laid, MAX_RACERS};
 use crate::schedule::Tier;
-use crate::space::{STEP, Scratch, Space};
+use crate::space::{CELL, COARSE, STEP, Scratch, Space};
 use crate::world::{RiderSnapshot, WorldSnapshot};
 
 /// Cells of room a bot wants around it: about 650 ticks of riding in a
@@ -31,6 +32,58 @@ const CLEAR_TICKS: f32 = 20.0;
 const VERIFY_TOP: usize = 6;
 /// Slowest cruise assumed when tracing a line (a rider that just turned).
 const MIN_CRUISE: f32 = 0.8;
+/// Candidates (best first, plus riding straight) that get the territory race.
+const RACE_TOP: usize = 7;
+/// Opponents closer than this need no engagement.
+const ENGAGE_RANGE: f32 = 250.0;
+/// Further than `ENGAGE_RANGE` by this much, engagement is at its worst.
+const ENGAGE_SPAN: f32 = 1200.0;
+/// Engagement tells headings apart in steps of `1 / ENGAGE_STEPS` of cosine.
+const ENGAGE_STEPS: f32 = 3.0;
+/// Ticks of a bot's life for engagement to count one more time over.
+const ENGAGE_RAMP: f32 = 600.0;
+/// Engagement never counts more than this many times its weight.
+const ENGAGE_MAX: f32 = 4.0;
+/// Territory (coarse cells) under which an opponent is sealed in a pocket.
+const SEAL_CELLS: f32 = NEED_CELLS / (COARSE * COARSE) as f32;
+/// How much territory is worth in the choice of a target: a target counts as
+/// this many logs of cells closer for every 1000 units it is away.
+const TARGET_DISTANCE: f32 = 1.2;
+/// A new target must beat the current one by this much (logs of cells).
+const TARGET_STICK: f32 = 0.6;
+/// Ticks ahead the race looks: every rider is taken to ride straight on after
+/// its maneuver until then (or an obstacle), laying trail as it goes.
+const RACE_TICKS: f32 = 160.0;
+/// Ticks of company for a bot to care half as much about room and margin, and
+/// the least it ever cares (share of its weights).
+const WEAR_TICKS: f32 = 3000.0;
+const WEAR_FLOOR: f32 = 0.25;
+/// Territory only matters to a bot with an opponent this close (units); the
+/// weight fades out over `CONTACT_SPAN` further.
+const CONTACT_NEAR: f32 = 900.0;
+const CONTACT_SPAN: f32 = 1200.0;
+/// Best lines (after the race) whose effect on the target's replies is
+/// checked, and how close the target must be for it.
+const REPLY_TOP: usize = 3;
+const REPLY_RANGE: f32 = 700.0;
+/// What the target may do in reply: turn now or later, or ride straight.
+const REPLIES: [(u32, Action); 6] = [
+    (0, Action::Left),
+    (0, Action::Right),
+    (6, Action::Left),
+    (6, Action::Right),
+    (18, Action::Left),
+    (18, Action::Right),
+];
+/// A cut across the foe's line needs at least this many ticks to spare, counts
+/// in full up to `CUT_BEST_MARGIN`, and fades out over `CUT_FADE` more.
+const CUT_MIN_MARGIN: f32 = 3.0;
+/// How far ahead (ticks) the bot's line is followed when looking for a cut.
+const CUT_TICKS: f32 = 450.0;
+const CUT_BEST_MARGIN: f32 = 30.0;
+const CUT_FADE: f32 = 150.0;
+/// Pressure at which a line counts as an attack.
+const ATTACK_PRESSURE: f32 = 0.6;
 
 /// What a decision is made with: the tier-clamped budget and the objective.
 #[derive(Clone, Copy, Debug)]
@@ -43,6 +96,12 @@ pub struct Params {
     pub flood_cap: u32,
     /// The brain's seed: the source of its misjudgments.
     pub seed: u64,
+    /// Ticks since the brain began to look: how long the round has lasted for
+    /// this bot.
+    pub age: u32,
+    /// The last plan was to ride straight on: riding straight still is
+    /// following it.
+    pub steady: bool,
 }
 
 impl Params {
@@ -57,6 +116,8 @@ impl Params {
             weights: build.weights(),
             flood_cap: tier.flood_cap(),
             seed,
+            age: 0,
+            steady: false,
         }
     }
 }
@@ -99,6 +160,8 @@ pub struct Report {
     /// The chosen line's space, reach and clearance terms.
     pub terms: Terms,
     pub horizon: u32,
+    /// The opponent being pressured (entity bits), if any.
+    pub target: Option<u64>,
 }
 
 /// The chosen maneuver and why.
@@ -124,6 +187,17 @@ impl Path {
         self.points[self.len - 1]
     }
 
+    /// Where to start measuring room from: the end, or a little before it
+    /// when an obstacle stopped the line (the room is on this side of it).
+    fn flood_start(&self) -> Vec2 {
+        let end = self.end();
+        if !self.blocked || self.len < 2 {
+            return end;
+        }
+        let leg = end - self.points[self.len - 2];
+        end - leg.clamp_length_max(CELL * 0.75)
+    }
+
     fn legs(&self) -> Vec<(Vec2, Vec2)> {
         self.points[..self.len]
             .windows(2)
@@ -134,11 +208,18 @@ impl Path {
 
 struct Scored {
     index: usize,
+    path: Path,
     maneuver: Maneuver,
     score: f32,
     terms: Terms,
     area: u32,
     reach: f32,
+    /// How safe the line is to fight on, `0..=1`: fighting terms are scaled by
+    /// it, so a bot never pays for a pocket or a collision with a kill.
+    safe: f32,
+    /// Within the bot's risk of the best survival score: the fight terms may
+    /// choose it. Ranked above every line that is not.
+    eligible: bool,
 }
 
 /// Everything one decision shares between its candidates.
@@ -153,19 +234,45 @@ struct Context<'a> {
     step: f32,
     /// How far the bot reads distances this decision: `1` is exact.
     scale: f32,
+    /// The living opponents, nearest first.
+    foes: Vec<Foe>,
+    /// Engagement's weight in this decision: it grows with the round.
+    ramp: f32,
+    /// The objective of this decision: the build's, worn down by the round.
+    weights: Weights,
+}
+
+/// An opponent as the bot sees it: where it is and where it is likely to be.
+struct Foe {
+    index: usize,
+    id: u64,
+    pos: Vec2,
+    /// Where it ends up riding straight on until an obstacle or the horizon.
+    future: Vec2,
+    /// The same, until the end of the race's lookahead.
+    line_end: Vec2,
+    /// Distance it covers per tick.
+    pace: f32,
+    /// How far it can ride straight before an obstacle.
+    clear: f32,
+    /// Ticks it needs to cross a coarse cell.
+    cost: u16,
 }
 
 /// Plan for bot `me`. `current` is what is left of the plan it is following;
-/// it competes with the fresh candidates and gets a commitment bonus.
+/// it competes with the fresh candidates and gets a commitment bonus. `focus`
+/// is the opponent it pressured last time, kept unless another is clearly
+/// more vulnerable.
 pub fn plan(
     world: &WorldSnapshot,
     me: usize,
     params: &Params,
     scratch: &mut Scratch,
     current: Option<Maneuver>,
+    focus: Option<u64>,
 ) -> Outcome {
     let rider = &world.riders[me];
-    let cx = Context {
+    let mut cx = Context {
         world,
         me,
         rider,
@@ -174,14 +281,27 @@ pub fn plan(
         params,
         step: STEP * rider.target_speed_mult.max(MIN_CRUISE),
         scale: 1.0 + params.noise * noise::unit(params.seed, world.tick, 0, 0),
+        foes: Vec::new(),
+        ramp: 1.0 + (params.age as f32 / ENGAGE_RAMP).min(ENGAGE_MAX - 1.0),
+        weights: params.weights,
     };
+    cx.foes = foes(&cx);
+    if !cx.foes.is_empty() {
+        let wear = 1.0 / (1.0 + params.age as f32 / WEAR_TICKS);
+        cx.weights = params.weights.worn(wear.max(WEAR_FLOOR));
+    }
     let mut scored: Vec<Scored> = candidates(params, current)
         .iter()
         .enumerate()
         .map(|(index, maneuver)| evaluate(&cx, index, maneuver, scratch))
         .collect();
     // Best first; equal scores keep the candidate order, so ties are stable.
-    scored.sort_by(|a, b| b.score.total_cmp(&a.score).then(a.index.cmp(&b.index)));
+    sort(&mut scored);
+    let target = if params.weights.fights() && !cx.foes.is_empty() {
+        fight(&cx, &mut scored, scratch, focus)
+    } else {
+        None
+    };
 
     let pick = verified_pick(&cx, &scored);
     let chosen = &scored[pick];
@@ -190,6 +310,8 @@ pub fn plan(
         Mode::Escape
     } else if (chosen.area as f32) < NEED_CELLS {
         Mode::Survival
+    } else if chosen.terms.pressure >= ATTACK_PRESSURE {
+        Mode::Attack
     } else {
         Mode::Explore
     };
@@ -208,8 +330,303 @@ pub fn plan(
             open: scored.iter().filter(|s| s.reach >= 0.999).count() as u32,
             terms: chosen.terms,
             horizon: params.horizon,
+            target,
         },
     }
+}
+
+fn sort(scored: &mut [Scored]) {
+    scored.sort_by(|a, b| {
+        (b.eligible.cmp(&a.eligible))
+            .then(b.score.total_cmp(&a.score))
+            .then(a.index.cmp(&b.index))
+    });
+}
+
+/// Ticks a rider at `speed` needs to cross one coarse cell.
+fn cell_cost(speed: f32) -> u16 {
+    (CELL * COARSE as f32 / (STEP * speed.max(MIN_CRUISE)))
+        .round()
+        .max(1.0) as u16
+}
+
+/// The living opponents with their likely whereabouts, nearest first, at most
+/// as many as a race holds.
+fn foes(cx: &Context) -> Vec<Foe> {
+    let me = cx.rider.pos;
+    let horizon = cx.params.horizon as f32;
+    let mut list: Vec<Foe> = cx
+        .world
+        .riders
+        .iter()
+        .enumerate()
+        .filter(|&(i, r)| i != cx.me && r.alive)
+        .map(|(index, r)| {
+            let speed = r.speed_mult.max(r.target_speed_mult);
+            let pace = STEP * speed.max(MIN_CRUISE);
+            let hit = nearest(cx.obstacles, Some(index as u64), r.pos, r.dir, false);
+            Foe {
+                index,
+                id: r.id,
+                pos: r.pos,
+                future: r.pos + r.dir * hit.min(horizon * pace),
+                line_end: r.pos + r.dir * hit.min(RACE_TICKS * pace),
+                pace,
+                clear: hit,
+                cost: cell_cost(speed),
+            }
+        })
+        .collect();
+    list.sort_by(|a, b| {
+        me.distance_squared(a.pos)
+            .total_cmp(&me.distance_squared(b.pos))
+            .then(a.index.cmp(&b.index))
+    });
+    list.truncate(MAX_RACERS - 1);
+    list
+}
+
+/// How much territory matters to a bot with the nearest opponent `near` units
+/// away: all of it close by, nothing far off.
+fn contact(near: f32) -> f32 {
+    (1.0 - (near - CONTACT_NEAR) / CONTACT_SPAN).clamp(0.0, 1.0)
+}
+
+/// Bring the fight terms into the choice, among the lines nearly as good as
+/// the best for survival (within the bot's risk): engagement for all of them,
+/// and when an opponent is close, the territory race. Returns the target.
+fn fight(
+    cx: &Context,
+    scored: &mut [Scored],
+    scratch: &mut Scratch,
+    focus: Option<u64>,
+) -> Option<u64> {
+    let floor = scored[0].score - cx.weights.risk;
+    for line in scored.iter_mut() {
+        line.eligible = line.score >= floor;
+        if line.eligible {
+            line.score = cx.weights.value(&line.terms);
+        }
+    }
+    sort(scored);
+    if cx.weights.races() {
+        race_top(cx, scored, scratch, focus)
+    } else {
+        None
+    }
+}
+
+/// Run the territory race for the best candidates (and riding straight),
+/// pick whom to pressure, and fold the race's terms into their scores. The
+/// race terms never go below zero, so a refined candidate never falls behind
+/// one left unrefined. Returns the target, if the race ran.
+fn race_top(
+    cx: &Context,
+    scored: &mut [Scored],
+    scratch: &mut Scratch,
+    focus: Option<u64>,
+) -> Option<u64> {
+    let me = cx.rider.pos;
+    // Far from every opponent, territory says nothing but "stay central".
+    let contact = contact(cx.foes.first()?.pos.distance(me));
+    if contact <= 0.0 {
+        return None;
+    }
+    let mut picks: Vec<usize> = (0..scored.len().min(RACE_TOP)).collect();
+    picks.retain(|&i| scored[i].eligible);
+    if let Some(hold) = scored.iter().position(|s| s.maneuver.kind == Kind::Hold)
+        && !picks.contains(&hold)
+    {
+        picks.push(hold);
+    }
+    let mut costs = vec![cell_cost(cx.step / STEP)];
+    costs.extend(cx.foes.iter().map(|foe| foe.cost));
+    let foe_lines: Vec<Laid> = cx
+        .foes
+        .iter()
+        .enumerate()
+        .map(|(n, foe)| Laid {
+            owner: n + 1,
+            from: foe.pos,
+            to: foe.line_end,
+            tick_from: 0.0,
+            tick_to: foe.pos.distance(foe.line_end) / foe.pace,
+        })
+        .collect();
+    let results: Vec<(usize, Cells, Vec<Laid>)> = picks
+        .iter()
+        .filter(|&&i| !scored[i].path.blocked)
+        .map(|&i| {
+            let path = &scored[i].path;
+            let mut lines = laid_legs(path, cx.step);
+            // The bot rides straight on after its maneuver.
+            let end = path.end();
+            let ahead = nearest(cx.obstacles, Some(cx.me as u64), end, path.end_dir, false)
+                .min((RACE_TICKS - path.free).max(0.0) * cx.step);
+            let last = lines.last().map_or(0.0, |leg| leg.tick_to);
+            lines.push(Laid {
+                owner: 0,
+                from: end,
+                to: end + path.end_dir * ahead,
+                tick_from: last,
+                tick_to: last + ahead / cx.step,
+            });
+            // The cut-off looks further along the same line.
+            let far = nearest(cx.obstacles, Some(cx.me as u64), end, path.end_dir, false)
+                .min((CUT_TICKS - path.free).max(0.0) * cx.step);
+            let mut mine = lines.clone();
+            if let Some(leg) = mine.last_mut() {
+                leg.to = end + path.end_dir * far;
+                leg.tick_to = last + far / cx.step;
+            }
+            lines.extend(foe_lines.iter().copied());
+            (
+                i,
+                race::run(cx.space, &mut scratch.race, &costs, &lines),
+                mine,
+            )
+        })
+        .collect();
+    // The target is judged from the race of the plain ride, else the best line.
+    let base = results
+        .iter()
+        .find(|(i, ..)| scored[*i].maneuver.kind == Kind::Hold)
+        .or(results.first())?
+        .1;
+    let vulnerability = |foe: usize| {
+        (1.0 + base[foe + 1] as f32).ln() + TARGET_DISTANCE * me.distance(cx.foes[foe].pos) / 1000.0
+    };
+    let best = (0..cx.foes.len()).min_by(|&a, &b| vulnerability(a).total_cmp(&vulnerability(b)))?;
+    let kept = focus.and_then(|id| cx.foes.iter().position(|f| f.id == id));
+    let target = match kept {
+        Some(k) if vulnerability(k) <= vulnerability(best) + TARGET_STICK => k,
+        _ => best,
+    };
+    let share =
+        |cells: &Cells| cells[0] as f32 / cells[..costs.len()].iter().sum::<u32>().max(1) as f32;
+    let (base_share, base_held) = (share(&base).max(0.01), (base[target + 1] as f32).max(1.0));
+    for (i, cells, mine) in &results {
+        let line = &mut scored[*i];
+        if !line.eligible {
+            continue;
+        }
+        // Gains over riding straight; fighting only picks among safe lines.
+        let gain = (share(cells) / base_share - 1.0).clamp(0.0, 1.0);
+        let held = cells[target + 1] as f32;
+        let squeeze = (1.0 - held / base_held).clamp(0.0, 1.0);
+        let sealed = (1.0 - held / SEAL_CELLS).max(0.0);
+        let safe = contact * line.safe;
+        line.terms.control = safe * gain;
+        let cut = cut_off(cx, mine, &cx.foes[target]);
+        line.terms.pressure = safe * (squeeze + sealed + 2.0 * cut);
+        line.score = cx.weights.value(&line.terms);
+    }
+    sort(scored);
+    if me.distance(cx.foes[target].pos) <= REPLY_RANGE {
+        for line in scored.iter_mut().filter(|l| l.eligible).take(REPLY_TOP) {
+            let kill = sealing(cx, line, &cx.foes[target], scratch);
+            line.terms.pressure += contact * line.safe * kill;
+            line.score = cx.weights.value(&line.terms);
+        }
+        sort(scored);
+    }
+    Some(cx.foes[target].id)
+}
+
+/// How well the bot's lines stand across the straight line of `foe`: `0` when
+/// they do not cross it, or the bot gets there too late or too close to the
+/// foe's own arrival to be safe; up to `1` when they cross it just ahead of the
+/// foe, so little that it has time to react. The sooner the better.
+fn cut_off(cx: &Context, mine: &[Laid], foe: &Foe) -> f32 {
+    let dir = cx.world.riders[foe.index].dir;
+    let mut best = 0.0f32;
+    for leg in mine {
+        let Some(along) = ray_hit(foe.pos, dir, leg.from, leg.to) else {
+            continue;
+        };
+        if along > foe.clear {
+            continue;
+        }
+        let point = foe.pos + dir * along;
+        let ours = leg.tick_from + point.distance(leg.from) / cx.step;
+        let margin = along / foe.pace - ours;
+        if margin < CUT_MIN_MARGIN {
+            continue;
+        }
+        // Full value while the foe has little time to answer, fading as the
+        // cut lies further ahead of it.
+        let value = (1.0 - (margin - CUT_BEST_MARGIN) / CUT_FADE).clamp(0.0, 1.0);
+        best = best.max(value);
+    }
+    best
+}
+
+/// How hard `line` leaves the target in the replies it has: nothing when it
+/// keeps room, up to `1` when none of its replies lives through the horizon.
+fn sealing(cx: &Context, line: &Scored, foe: &Foe, scratch: &mut Scratch) -> f32 {
+    if line.path.blocked {
+        return 0.0;
+    }
+    let rider = &cx.world.riders[foe.index];
+    let points = &line.path.points[..line.path.len];
+    // The line the bot would ride stands in the target's way.
+    let mut obstacles = cx.obstacles.to_vec();
+    obstacles.extend(Segment::trail_legs(points, cx.me as u64));
+    let ride = Ride {
+        obstacles: &obstacles,
+        owner: foe.index,
+        pos: rider.pos,
+        dir: rider.dir,
+        step: foe.pace,
+        horizon: cx.params.horizon,
+    };
+    let mine: Vec<(Vec2, Vec2)> = points.windows(2).map(|pair| (pair[0], pair[1])).collect();
+    let straight = Maneuver::hold();
+    let replies = std::iter::once(straight).chain(
+        REPLIES
+            .iter()
+            .map(|&(at, action)| Maneuver::new(Kind::Turn, &[Turn { at, action }])),
+    );
+    let mut best: Option<u32> = None;
+    for reply in replies {
+        let path = ride.trace(&reply);
+        if path.blocked {
+            continue;
+        }
+        let mut laid = path.legs();
+        laid.extend_from_slice(&mine);
+        let room = cx.space.measure(
+            scratch,
+            &laid,
+            path.flood_start(),
+            cx.params.horizon,
+            cx.params.flood_cap,
+        );
+        best = Some(best.map_or(room.area, |b| b.max(room.area)));
+    }
+    match best {
+        None => 1.0,
+        Some(area) => 0.5 * (1.0 - area as f32 / NEED_CELLS).max(0.0),
+    }
+}
+
+/// A path's legs with the tick each end is ridden.
+fn laid_legs(path: &Path, step: f32) -> Vec<Laid> {
+    let mut arc = 0.0;
+    path.legs()
+        .into_iter()
+        .map(|(from, to)| {
+            let tick_from = arc / step;
+            arc += from.distance(to);
+            Laid {
+                owner: 0,
+                from,
+                to,
+                tick_from,
+                tick_to: arc / step,
+            }
+        })
+        .collect()
 }
 
 /// Index (into `scored`, best first) of the first candidate the physics lets
@@ -312,52 +729,92 @@ fn candidates(params: &Params, current: Option<Maneuver>) -> Vec<Maneuver> {
 /// Ride `maneuver` for the horizon along straight legs, stopping at the first
 /// obstacle each leg meets.
 fn trace(cx: &Context, maneuver: &Maneuver) -> Path {
-    let horizon = cx.params.horizon;
-    let mut pos = cx.rider.pos;
-    let mut dir = cx.rider.dir;
-    let mut path = Path {
-        points: [pos; MAX_TURNS + 2],
-        len: 1,
-        end_dir: dir,
-        free: 0.0,
-        blocked: false,
+    let ride = Ride {
+        obstacles: cx.obstacles,
+        owner: cx.me,
+        pos: cx.rider.pos,
+        dir: cx.rider.dir,
+        step: cx.step,
+        horizon: cx.params.horizon,
     };
-    let mut tick = 0;
-    let mut turns = maneuver
-        .turns()
-        .iter()
-        .filter(|t| t.at < horizon)
-        .peekable();
-    while tick < horizon {
-        // The turn that opens this leg happens before it moves.
-        if let Some(turn) = turns.next_if(|t| t.at <= tick) {
-            dir = match turn.action {
-                Action::Left => rotate_left(dir),
-                Action::Right => rotate_right(dir),
-                Action::Hold => dir,
-            };
-        }
-        let until = turns.peek().map_or(horizon, |t| t.at);
-        let length = (until - tick) as f32 * cx.step;
-        if length > 0.0 {
-            let hit = nearest(cx.obstacles, Some(cx.me as u64), pos, dir, false);
-            if hit < length {
-                pos += dir * hit;
-                path.free += hit / cx.step;
-                path.blocked = true;
-                path.points[path.len] = pos;
-                path.len += 1;
-                break;
+    ride.trace(maneuver)
+}
+
+/// Where a rider starts a line, and what stands in its way.
+struct Ride<'a> {
+    obstacles: &'a [Segment],
+    /// Index of the rider in the snapshot (the owner of its own trail).
+    owner: usize,
+    pos: Vec2,
+    dir: Vec2,
+    step: f32,
+    horizon: u32,
+}
+
+impl Ride<'_> {
+    fn trace(&self, maneuver: &Maneuver) -> Path {
+        let horizon = self.horizon;
+        let mut pos = self.pos;
+        let mut dir = self.dir;
+        let mut path = Path {
+            points: [pos; MAX_TURNS + 2],
+            len: 1,
+            end_dir: dir,
+            free: 0.0,
+            blocked: false,
+        };
+        let mut tick = 0;
+        let mut turns = maneuver
+            .turns()
+            .iter()
+            .filter(|t| t.at < horizon)
+            .peekable();
+        while tick < horizon {
+            // The turn that opens this leg happens before it moves.
+            if let Some(turn) = turns.next_if(|t| t.at <= tick) {
+                dir = match turn.action {
+                    Action::Left => rotate_left(dir),
+                    Action::Right => rotate_right(dir),
+                    Action::Hold => dir,
+                };
             }
-            pos += dir * length;
-            path.free += (until - tick) as f32;
+            let until = turns.peek().map_or(horizon, |t| t.at);
+            let length = (until - tick) as f32 * self.step;
+            if length > 0.0 {
+                let hit = nearest(self.obstacles, Some(self.owner as u64), pos, dir, false);
+                if hit < length {
+                    pos += dir * hit;
+                    path.free += hit / self.step;
+                    path.blocked = true;
+                    path.points[path.len] = pos;
+                    path.len += 1;
+                    break;
+                }
+                pos += dir * length;
+                path.free += (until - tick) as f32;
+            }
+            path.points[path.len] = pos;
+            path.len += 1;
+            tick = until;
         }
-        path.points[path.len] = pos;
-        path.len += 1;
-        tick = until;
+        path.end_dir = dir;
+        path
     }
-    path.end_dir = dir;
-    path
+}
+
+/// How far a line's final heading points away from the nearest opponent,
+/// `-1..=0` times the round's ramp, as soon as that opponent is out of
+/// range. The heading is judged in coarse steps, so a foe on a diagonal does
+/// not make the bot zigzag towards it. Without opponents it is nothing.
+fn engage(cx: &Context, path: &Path) -> f32 {
+    let Some(foe) = cx.foes.first() else {
+        return 0.0;
+    };
+    let away = foe.pos - path.end();
+    let far = ((away.length() - ENGAGE_RANGE) / ENGAGE_SPAN).clamp(0.0, 1.0);
+    let cos = path.end_dir.dot(away.normalize_or_zero());
+    let heading = (cos * ENGAGE_STEPS).floor() / ENGAGE_STEPS;
+    -far * (1.0 - heading) * 0.5 * cx.ramp
 }
 
 /// Measure and score one candidate.
@@ -365,9 +822,16 @@ fn evaluate(cx: &Context, index: usize, maneuver: &Maneuver, scratch: &mut Scrat
     let params = cx.params;
     let path = trace(cx, maneuver);
     let end = path.end();
-    let room = cx
-        .space
-        .measure(scratch, &path.legs(), end, params.horizon, params.flood_cap);
+    // The opponents' lines ahead close room behind them as they ride.
+    let mut laid = path.legs();
+    laid.extend(cx.foes.iter().map(|foe| (foe.pos, foe.future)));
+    let room = cx.space.measure(
+        scratch,
+        &laid,
+        path.flood_start(),
+        params.horizon,
+        params.flood_cap,
+    );
     // Per-candidate misjudgment of room; distances share the decision's error.
     let area_seen = room.area as f32
         * (1.0 + params.noise * noise::unit(params.seed, cx.world.tick, index + 1, 1));
@@ -379,6 +843,8 @@ fn evaluate(cx: &Context, index: usize, maneuver: &Maneuver, scratch: &mut Scrat
         (front / cx.step * cx.scale / CLEAR_TICKS).clamp(0.0, 1.0)
     };
     let cramped = 1.0 - (area_seen / NEED_CELLS).clamp(0.0, 1.0);
+    let roomy = (area_seen / params.flood_cap as f32).clamp(0.0, 1.0);
+    let safe = if path.blocked { 0.0 } else { roomy * roomy };
     let terms = Terms {
         space: ((1.0 + area_seen.max(0.0)).ln() / (1.0 + params.flood_cap as f32).ln())
             .clamp(0.0, 1.0),
@@ -387,15 +853,27 @@ fn evaluate(cx: &Context, index: usize, maneuver: &Maneuver, scratch: &mut Scrat
         clear,
         turn: -(maneuver.turns().len() as f32) / MAX_TURNS as f32,
         fill: cramped * room.hug,
-        commit: f32::from(maneuver.kind == Kind::Continue),
+        commit: f32::from(
+            maneuver.kind == Kind::Continue || (maneuver.kind == Kind::Hold && params.steady),
+        ),
+        pressure: 0.0,
+        control: 0.0,
+        engage: safe * engage(cx, &path),
     };
     Scored {
         index,
+        path,
         maneuver: *maneuver,
-        score: params.weights.value(&terms),
+        // The fight terms join the score later, among the safe lines only.
+        score: cx.weights.value(&Terms {
+            engage: 0.0,
+            ..terms
+        }),
         terms,
         area: room.area,
         reach,
+        safe,
+        eligible: true,
     }
 }
 
@@ -433,7 +911,7 @@ mod tests {
     }
 
     fn decide(world: &WorldSnapshot, params: &Params) -> Outcome {
-        plan(world, 0, params, &mut Scratch::default(), None)
+        plan(world, 0, params, &mut Scratch::default(), None, None)
     }
 
     #[test]

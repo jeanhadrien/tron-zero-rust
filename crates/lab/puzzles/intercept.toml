@@ -1,0 +1,20 @@
+# A rider that never turns rides east across the lower half; the bot starts
+# ahead of it, higher up. Riding on east, the bot lets the rider run into the
+# east wall (a `wall` death, no kill). The bot only wins by cutting down across
+# the rider's line, early enough for its trail to stand there when the rider
+# arrives: the rider must die on the bot's trail.
+# Pass: the rider's death is `trail:bot`, and the bot is alive.
+until = 700
+seed = 1
+
+[[rider]]
+name = "prey"
+at = [-900, -650]
+heading = "+x"
+
+[[rider]]
+name = "bot"
+bot = "duelist"
+difficulty = 4000
+at = [0, 0]
+heading = "+x"

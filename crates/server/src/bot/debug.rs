@@ -247,7 +247,7 @@ mod tests {
         let world = head_on_world();
         let build = BotBuild::from_difficulty("t", Personality::Duelist, Difficulty(2000));
         let params = Params::new(&build, Tier::Full, 1);
-        let outcome = plan(&world, 0, &params, &mut Scratch::default(), None);
+        let outcome = plan(&world, 0, &params, &mut Scratch::default(), None, None);
         let action = outcome.maneuver.first_action();
         let dbg = build_debug(&outcome.report, &world, 0, action, &build.knobs);
         assert_eq!(dbg.scores, outcome.report.scores);

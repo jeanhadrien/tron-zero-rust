@@ -35,6 +35,9 @@ pub enum Personality {
     Duelist,
     /// Plain base weights.
     Roamer,
+    /// Adaptive without any will to fight (no pressure, control or
+    /// engagement): the reference opponent of the fight measurements.
+    Passive,
 }
 
 /// The budget. Never physics values: bots drive ordinary inputs.
@@ -63,7 +66,13 @@ impl BotKnobs {
             self.variety,
             self.noise.to_bits(),
         ];
-        let weights = personality.weights().values().map(f32::to_bits);
+        let weights = personality.weights();
+        let weights = weights
+            .values()
+            .into_iter()
+            .chain([weights.risk])
+            .map(f32::to_bits)
+            .collect::<Vec<u32>>();
         personality
             .label()
             .bytes()
@@ -167,12 +176,15 @@ impl Personality {
             Personality::Territorialist => "territorialist",
             Personality::Duelist => "duelist",
             Personality::Roamer => "roamer",
+            Personality::Passive => "passive",
         }
     }
 
-    /// The objective of this personality. Presets stay close to
-    /// [`Weights::BASE`] until bots fight; they differ in how much room and
-    /// margin they want and how freely they turn.
+    /// The objective of this personality. Every one but `Passive` wants to
+    /// fight; they differ in how much room and margin they want, how freely
+    /// they turn, and how they fight: the survivalist keeps its distance, the
+    /// territorialist grabs the arena, the duelist hunts and takes risks, the
+    /// trapper shuts opponents in.
     pub fn weights(self) -> Weights {
         let base = Weights::BASE;
         match self {
@@ -180,24 +192,41 @@ impl Personality {
                 space: 1.3,
                 clear: 1.1,
                 turn: 0.2,
+                pressure: 0.5,
+                control: 0.2,
+                engage: 0.25,
+                risk: 0.08,
                 ..base
             },
             Personality::Territorialist => Weights {
                 space: 1.2,
                 fill: 0.7,
+                pressure: 1.0,
+                control: 0.8,
+                engage: 0.5,
+                risk: 0.2,
                 ..base
             },
             Personality::Duelist => Weights {
-                clear: 0.5,
-                turn: 0.08,
+                clear: 0.6,
+                turn: 0.1,
+                pressure: 2.5,
+                control: 0.3,
+                engage: 0.8,
+                risk: 0.4,
                 ..base
             },
             Personality::Trapper => Weights {
                 turn: 0.12,
                 commit: 0.3,
+                pressure: 2.0,
+                control: 0.5,
+                engage: 0.4,
+                risk: 0.25,
                 ..base
             },
             Personality::Adaptive | Personality::Roamer => base,
+            Personality::Passive => base.passive(),
         }
     }
 }

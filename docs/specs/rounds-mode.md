@@ -36,7 +36,9 @@ The server reads its environment at start; an invalid value stops it (exit 2).
 - **Round start:** every rider (also those that joined during the previous
   round) is placed with the deterministic safe-spawn search on an arena without
   trails, alive, at base speed and full rubber. Humans enter a new life
-  (`LifeGeneration` is incremented), so commands of the previous round are stale.
+  (`LifeGeneration` is incremented), so commands of the previous round are stale. A bot gets a fresh brain
+  (no plan, no target, its engagement clock at zero): the bots' wish to
+  engage grows with the age of the brain, so a round starts calm.
 - **During a round** nobody respawns. A manual respawn request is answered
   `RespawnOutcome::WaitForNextRound`; bots are not respawned or replaced
   (bot auto-cycle is paused). A rider that joins during a round (or a break) is

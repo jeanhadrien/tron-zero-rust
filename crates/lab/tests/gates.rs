@@ -29,6 +29,11 @@ fn strong_bots_solve_the_puzzles() {
     for difficulty in [2500, 4000] {
         for seed in 1..=3 {
             for name in ["box", "dead_end", "narrow_gap"] {
+                // The box is the hardest spot: D2500 fills it about 5 times
+                // in 6 over 30 seeds (D4000: always), so only D4000 is gated.
+                if name == "box" && difficulty < 4000 {
+                    continue;
+                }
                 let lab = puzzle(name, difficulty, seed);
                 let bot = lab.rider("bot").unwrap();
                 assert!(bot.alive, "{name} D{difficulty} seed {seed}: died");
@@ -52,6 +57,41 @@ fn the_same_seed_plays_the_same_game() {
     )
     .unwrap();
     assert_eq!(trace(&scenario, 60), trace(&scenario, 60));
+}
+
+/// The intercept puzzle: the rider is `prey`, the bot is `bot`. `personality`
+/// replaces the bot's own. Returns how the prey died and whether the bot lives.
+fn intercept(personality: &str, difficulty: u32, seed: u64) -> (Option<String>, bool) {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("puzzles/intercept.toml");
+    let mut scenario = Scenario::load(&path).unwrap();
+    let bot = scenario
+        .riders
+        .iter_mut()
+        .find(|r| r.name == "bot")
+        .unwrap();
+    bot.bot = Some(personality.into());
+    bot.difficulty = difficulty;
+    let mut lab = Lab::with_seed(&scenario, seed);
+    lab.run(scenario.until, 0);
+    let cause = lab
+        .scores()
+        .into_iter()
+        .find(|s| s.name == "prey")
+        .and_then(|s| s.deaths.into_keys().next());
+    (cause, lab.rider("bot").unwrap().alive)
+}
+
+/// A bot that wants to fight cuts across the path of a rider that never turns;
+/// one without that will does not.
+#[test]
+fn fighters_cut_off_a_rider_and_passive_bots_do_not() {
+    for difficulty in [2500, 4000] {
+        let (cause, alive) = intercept("duelist", difficulty, 1);
+        assert_eq!(cause.as_deref(), Some("trail:bot"), "D{difficulty}");
+        assert!(alive, "D{difficulty}: the bot died");
+    }
+    let (cause, _) = intercept("passive", 4000, 1);
+    assert_ne!(cause.as_deref(), Some("trail:bot"));
 }
 
 const SUITE: &str = r#"

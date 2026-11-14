@@ -333,6 +333,11 @@ fn begin_round(world: &mut World, roster: &[(Entity, bool)], new_match: bool) {
             Some(spawn) => {
                 placed.push(spawn.position);
                 rider.insert(crate::systems::placed(&spawn));
+                // A bot starts the round with a fresh brain: no plan, no
+                // target, and its engagement clock back at zero.
+                if let Some(mut bot) = rider.get_mut::<crate::bot::BotBrain>() {
+                    bot.brain = bot.brain.reborn(rand::random());
+                }
             }
             None => warn!(
                 ?entity,
