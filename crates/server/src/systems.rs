@@ -16,8 +16,8 @@ use crate::session::SessionLease;
 #[require(shared::LifeGeneration)]
 pub struct Human;
 
-/// A human rider that has not been placed yet (placed on the next fixed tick,
-/// or, in rounds mode, when the next round starts).
+/// A human rider that has not been placed yet (placed on the next fixed tick
+/// when the match allows it, else when the next round starts).
 #[derive(Component)]
 pub(crate) struct InitialSpawn;
 
@@ -154,27 +154,55 @@ pub(crate) fn spawn_human(
             shared::DisplayName(name),
             shared::PlayerColor(look.color),
             look.shape,
+            shared::Score::default(),
+            shared::RoundTrip::default(),
         ))
         .id()
+}
+
+/// Seconds between two updates of the riders' [`shared::RoundTrip`]: often
+/// enough for a scoreboard, rare enough not to replicate every frame.
+const ROUND_TRIP_PERIOD: f64 = 1.0;
+
+/// Copy each human's link round-trip time onto its rider for the scoreboard.
+pub fn publish_round_trips(
+    time: Res<Time<Real>>,
+    mut next: Local<f64>,
+    links: Query<&Link>,
+    mut riders: Query<(&ControlledBy, &mut shared::RoundTrip), With<Human>>,
+) {
+    let now = time.elapsed_secs_f64();
+    if now < *next {
+        return;
+    }
+    *next = now + ROUND_TRIP_PERIOD;
+    for (controlled, mut rtt) in &mut riders {
+        let Ok(link) = links.get(controlled.owner) else {
+            continue;
+        };
+        let ms = link.stats.rtt.as_millis().min(u128::from(u16::MAX)) as u16;
+        rtt.set_if_neq(shared::RoundTrip(ms));
+    }
 }
 
 /// Drain queued per-link requests, deriving ownership from the link rather than
 /// trusting a player identifier supplied by a client. Exclusive access makes
 /// simultaneous allocations see each other's freshly reset trail and rider.
 pub fn handle_respawns(world: &mut World) {
-    // In rounds mode the round controller places riders (and keeps late
-    // joiners and the dead waiting); only a free server spawns and respawns.
-    let rounds_run = world
-        .get_resource::<crate::rounds::MatchState>()
-        .is_some_and(|state| state.is_running());
-    let initial: Vec<_> = if rounds_run {
-        Vec::new()
-    } else {
+    // The match decides whether a human may be placed now; when not, the
+    // round start places late joiners and the dead.
+    let riders = crate::game::Riders::of(world);
+    let allowed = world
+        .resource::<crate::game::MatchState>()
+        .may_spawn(true, &riders);
+    let initial: Vec<_> = if allowed {
         world
             .query_filtered::<(Entity, &ControlledBy, &shared::LifeGeneration), (With<Human>, With<InitialSpawn>)>()
             .iter(world)
             .map(|(entity, controlled, generation)| (entity, controlled.owner, generation.0))
             .collect()
+    } else {
+        Vec::new()
     };
     for (entity, owner, generation) in initial {
         world.entity_mut(entity).remove::<InitialSpawn>();
@@ -190,10 +218,10 @@ pub fn handle_respawns(world: &mut World) {
 
     let requests = std::mem::take(&mut world.resource_mut::<PendingRespawns>().0);
     for (owner, request) in requests {
-        let outcome = if rounds_run {
-            RespawnOutcome::WaitForNextRound
-        } else {
+        let outcome = if allowed {
             try_respawn(world, owner, request)
+        } else {
+            RespawnOutcome::WaitForNextRound
         };
         match outcome {
             RespawnOutcome::Accepted => info!(
@@ -334,6 +362,7 @@ mod tests {
     fn setup() -> (World, Entity, Entity) {
         let mut world = World::new();
         world.init_resource::<PendingRespawns>();
+        world.insert_resource(crate::game::MatchState::new(MatchRules::default()));
         world.spawn((Arena, WallSegments(arena_walls(ARENA_WIDTH, ARENA_HEIGHT))));
         let owner = world.spawn((RemoteId(PeerId::Local(1)), Connected)).id();
         let player = world

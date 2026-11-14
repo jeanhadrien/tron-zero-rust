@@ -144,11 +144,11 @@ impl Net {
         }
     }
 
-    /// Like [`Net::new`], with the server in rounds mode under `rules`.
-    pub fn new_rounds(rules: shared::MatchRules) -> Self {
+    /// Like [`Net::new`], with the server playing matches by `rules`.
+    pub fn with_rules(rules: shared::MatchRules) -> Self {
         let port = free_port();
         Self {
-            server: TestServer::with_rounds(port, rules, Impairment::NONE),
+            server: TestServer::with_rules(port, rules, Impairment::NONE),
             clients: Vec::new(),
             port,
             web: None,

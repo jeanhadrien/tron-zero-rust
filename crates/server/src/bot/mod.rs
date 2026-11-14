@@ -21,8 +21,9 @@ use shared::{ActionState, DisplayName, IsAlive, Player, PlayerColor, PlayerInput
 pub use bots::schedule::SchedulerConfig;
 pub use debug::BotDebugConfig;
 
-/// Ticks a dead bot waits before it is placed again.
-const RESPAWN_DELAY_TICKS: u32 = 240;
+/// Ticks a dead bot waits before it is placed again when the rules allow
+/// respawns (`respawn = "anytime"` in the config).
+pub const RESPAWN_DELAY_TICKS: u32 = 240;
 
 const BOT_COLORS: [u32; 8] = [
     0xFF4444, 0x44FF44, 0x4488FF, 0xFFCC00, 0xFF44FF, 0x44FFFF, 0xFF8800, 0x8844FF,
@@ -55,6 +56,7 @@ pub fn setup_bots(mut commands: Commands, roster: Res<BotRoster>) {
                 shared::PlayerId(format!("bot-{}", slot + 1)),
                 DisplayName(build.name.clone()),
                 PlayerColor(BOT_COLORS[slot % BOT_COLORS.len()]),
+                shared::Score::default(),
                 IsAlive(false),
                 RespawnIn(1),
                 Replicate::to_clients(NetworkTarget::All),
@@ -128,27 +130,28 @@ pub fn bot_brain_input(
     }
 }
 
-/// Place dead bots again: `RESPAWN_DELAY_TICKS` after the death, the same
-/// entity gets a safe spawn (the search humans use) and a fresh brain. In
-/// rounds mode the round flow places the bots instead. Exclusive: a spawn must
-/// see the riders placed a moment ago, humans' included.
+/// Place dead bots again when the match allows it: the rules' respawn delay
+/// after the death, the same entity gets a safe spawn (the search humans use)
+/// and a fresh brain. Otherwise the round start places them. Exclusive: a
+/// spawn must see the riders placed a moment ago, humans' included.
 pub fn respawn_bots(world: &mut World) {
-    let rounds_run = world
-        .get_resource::<crate::rounds::MatchState>()
-        .is_some_and(|state| state.is_running());
+    let riders = crate::game::Riders::of(world);
+    let state = world.resource::<crate::game::MatchState>();
+    let allowed = state.may_spawn(false, &riders);
+    let delay = state.rules().respawn.delay().unwrap_or(RESPAWN_DELAY_TICKS);
     let bots: Vec<(Entity, bool, Option<u32>)> = world
         .query_filtered::<(Entity, &IsAlive, Option<&RespawnIn>), (With<BotBrain>, With<Player>)>()
         .iter(world)
         .map(|(entity, alive, timer)| (entity, alive.0, timer.map(|t| t.0)))
         .collect();
     for (entity, alive, timer) in bots {
-        if alive || rounds_run {
+        if alive || !allowed {
             if timer.is_some() {
                 world.entity_mut(entity).remove::<RespawnIn>();
             }
             continue;
         }
-        let left = timer.unwrap_or(RESPAWN_DELAY_TICKS).saturating_sub(1);
+        let left = timer.unwrap_or(delay).saturating_sub(1);
         if left > 0 {
             world.entity_mut(entity).insert(RespawnIn(left));
             continue;
@@ -173,9 +176,13 @@ pub fn respawn_bots(world: &mut World) {
 mod tests {
     use super::*;
 
-    /// An arena and one dead bot due at once.
+    /// An arena and one dead bot due at once, in a round with respawns.
     fn arena_with_bot() -> (World, Entity) {
         let mut world = World::new();
+        world.insert_resource(crate::game::MatchState::in_round(shared::MatchRules {
+            respawn: shared::Respawn::After(RESPAWN_DELAY_TICKS),
+            ..shared::MatchRules::default()
+        }));
         world.spawn((
             shared::Arena,
             shared::ArenaSize::default(),

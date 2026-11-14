@@ -1,16 +1,19 @@
-# Local play (`scripts/play-local.*`): rounds mode with the built-in bots.
-# Copy this file to try other settings; every key is required.
+# Local play (`scripts/play-local.*`): five last-standing rounds with the
+# built-in bots. Copy this file to try other settings; keys: see `src/config.rs`.
 
 [server]
 name = "Local"
 max_players = 10
 
-[game]
-mode = "rounds"
+[match]
 rounds = 5
-round_secs = 90
 intermission_secs = 3
-final_intermission_secs = 8
+end_screen_secs = 8
+
+[round]
+secs = 90
+respawn = "next_round"
+last_standing = true
 
 [bots]
 roster = "builtin"

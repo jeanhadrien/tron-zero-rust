@@ -323,11 +323,25 @@ impl TestClient {
         query.iter(world).next().map(|life| life.0)
     }
 
-    /// The rounds-mode status this client has received, if the server has one.
+    /// The match status this client has received, once replicated.
     pub fn match_status(&mut self) -> Option<shared::MatchStatus> {
         let world = self.app.world_mut();
         let mut query = world.query::<&shared::MatchStatus>();
         query.iter(world).next().cloned()
+    }
+
+    /// The scores this client sees, by rider name, sorted by name.
+    pub fn scores(&mut self) -> Vec<(String, shared::Score)> {
+        let world = self.app.world_mut();
+        let mut query =
+            world.query_filtered::<(&shared::DisplayName, &shared::Score), With<Player>>();
+        let mut scores: Vec<_> = query
+            .iter(world)
+            .map(|(name, score)| (name.0.clone(), *score))
+            .collect();
+        scores.sort_by(|a, b| a.0.cmp(&b.0));
+        scores.dedup_by(|a, b| a.0 == b.0);
+        scores
     }
 
     /// The server's last answer to this client's respawn request.

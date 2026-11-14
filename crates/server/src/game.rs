@@ -1,29 +1,25 @@
-//! Rounds mode: last rider standing per round, over a fixed number of rounds.
+//! The match: one or more rounds played by the configured `MatchRules`.
 //!
-//! The server has this mode when [`MatchState`] exists (`mode = "rounds"` in
-//! the server config, see `config`); without it the game is the free-for-all. The state
-//! machine is `shared::MatchFlow`; the system [`advance_match`] applies its
-//! decisions to the world: it retires and places riders, keeps the scores and
-//! publishes the replicated [`MatchStatus`]. Nothing here is read by
-//! `simulate_players`. Normative rules: `docs/specs/rounds-mode.md`.
+//! Every server runs one ([`MatchState`], from the config's `[match]` and
+//! `[round]`). The state machine is `shared::MatchFlow`; the system
+//! [`advance_match`] applies its decisions to the world: it retires and places
+//! riders, keeps the scores and publishes the replicated [`MatchStatus`].
+//! Respawns ask [`MatchState::may_spawn`]. Nothing here is read by
+//! `simulate_players`. Normative rules: `docs/specs/match-rules.md`.
 
 use bevy::prelude::*;
 use lightyear::prelude::*;
 use shared::spawn::{SpawnField, placed};
 use shared::{
-    DisplayName, IsAlive, IsColliding, IsSliding, LifeGeneration, MatchFlow, MatchRules,
-    MatchStatus, MatchStep, Player, Rubber, ShouldHandleDeath, SpeedMult, TargetSpeedMult, Trail,
+    DeathLog, DisplayName, IsAlive, IsColliding, IsSliding, LifeGeneration, MatchFlow, MatchRules,
+    MatchStatus, MatchStep, Player, Roster, RoundEnd, Rubber, Score, ShouldHandleDeath, SpeedMult,
+    TargetSpeedMult, Trail, top_scorer,
 };
 
 use crate::systems::{Human, InitialSpawn};
 
-/// Round wins of a rider, this match. Server-only; clients get the names and
-/// totals through [`MatchStatus::standings`].
-#[derive(Component, Default, Debug, PartialEq, Eq)]
-pub struct Wins(pub u32);
-
 /// The match as the server runs it: the shared flow, plus what only the server
-/// keeps. Present only in rounds mode.
+/// keeps.
 #[derive(Resource, Debug)]
 pub struct MatchState {
     flow: MatchFlow,
@@ -45,13 +41,25 @@ impl MatchState {
         }
     }
 
-    /// Whether the flow runs the riders. When false the server behaves as
-    /// free-for-all: free spawns and manual respawns.
-    pub fn is_running(&self) -> bool {
-        self.flow.is_running()
+    /// Already playing round 1 (unit tests of the respawn paths).
+    #[cfg(test)]
+    pub(crate) fn in_round(rules: MatchRules) -> Self {
+        Self {
+            flow: MatchFlow::in_round(rules),
+            ..Self::new(rules)
+        }
     }
 
-    /// The replicated view of the match, without the standings.
+    pub fn rules(&self) -> &MatchRules {
+        self.flow.rules()
+    }
+
+    /// Whether a dead rider may be placed now (see `MatchFlow::may_spawn`).
+    pub fn may_spawn(&self, human: bool, riders: &Riders) -> bool {
+        self.flow.may_spawn(human, &riders.roster())
+    }
+
+    /// The replicated view of the match.
     fn status(&self) -> MatchStatus {
         MatchStatus {
             rounds: self.flow.rules().rounds,
@@ -59,7 +67,58 @@ impl MatchState {
             phase: self.flow.phase(),
             secs_left: self.flow.secs_left(),
             winner: self.winner.clone(),
-            standings: Vec::new(),
+            respawns: self.flow.rules().respawn.delay().is_some(),
+        }
+    }
+}
+
+/// Every rider in the arena, sorted so placement is stable: what the flow
+/// sees of the world.
+#[derive(Debug)]
+pub struct Riders {
+    /// (rider, alive, human).
+    all: Vec<(Entity, bool, bool)>,
+    alive: Vec<Entity>,
+}
+
+impl Riders {
+    pub fn of(world: &mut World) -> Self {
+        let mut all: Vec<(Entity, bool, bool)> = world
+            .query_filtered::<(Entity, &IsAlive, Has<Human>), With<Player>>()
+            .iter(world)
+            .map(|(entity, alive, human)| (entity, alive.0, human))
+            .collect();
+        all.sort_by_key(|(entity, ..)| *entity);
+        let alive = all
+            .iter()
+            .filter(|(_, alive, _)| *alive)
+            .map(|(entity, ..)| *entity)
+            .collect();
+        Self { all, alive }
+    }
+
+    fn roster(&self) -> Roster<'_> {
+        let humans = |alive_only: bool| {
+            self.all
+                .iter()
+                .filter(|(_, alive, human)| *human && (*alive || !alive_only))
+                .count()
+        };
+        Roster {
+            riders: self.all.len(),
+            humans: humans(false),
+            alive: &self.alive,
+            humans_alive: humans(true),
+        }
+    }
+}
+
+/// Credit this tick's deaths to the scores. Runs after `simulate_players` and
+/// before `resolve_deaths`, which drains the log.
+pub fn count_scores(deaths: Res<DeathLog>, mut scores: Query<&mut Score, With<Player>>) {
+    for (entity, credit) in Score::credits(&deaths.0) {
+        if let Ok(mut score) = scores.get_mut(entity) {
+            score.add(credit);
         }
     }
 }
@@ -68,58 +127,56 @@ impl MatchState {
 /// Runs after the tick's simulation and death resolution. Exclusive: placing
 /// riders needs every rider's fresh pose.
 pub fn advance_match(world: &mut World) {
-    // Every rider gets a score; the roster is sorted so placement is stable.
-    let unscored: Vec<Entity> = world
-        .query_filtered::<Entity, (With<Player>, Without<Wins>)>()
-        .iter(world)
-        .collect();
-    for entity in unscored {
-        world.entity_mut(entity).insert(Wins::default());
-    }
-    let mut roster: Vec<(Entity, bool)> = world
-        .query_filtered::<(Entity, &IsAlive), With<Player>>()
-        .iter(world)
-        .map(|(entity, alive)| (entity, alive.0))
-        .collect();
-    roster.sort_by_key(|(entity, _)| *entity);
-    let alive: Vec<Entity> = roster
-        .iter()
-        .filter(|(_, alive)| *alive)
-        .map(|(entity, _)| *entity)
-        .collect();
-
+    let riders = Riders::of(world);
     let step = world
         .resource_mut::<MatchState>()
         .flow
-        .advance(roster.len(), &alive);
+        .advance(&riders.roster());
     match step {
         MatchStep::Idle => {}
         MatchStep::Starting => {
-            info!(riders = roster.len(), "Rounds: a match is starting");
-            retire(world, &alive);
+            info!(riders = riders.all.len(), "Match: starting");
+            retire(world, &riders.alive);
         }
-        MatchStep::RoundOver { winner, .. } => {
+        MatchStep::RoundOver { reason, winner } => {
+            // A round that ran out of time goes to its top scorer.
+            let winner = winner
+                .or_else(|| (reason == RoundEnd::TimeLimit).then(|| top_scorer(&scores(world)))?);
             let name = winner.and_then(|entity| {
-                world.get_mut::<Wins>(entity)?.0 += 1;
+                world.get_mut::<Score>(entity)?.wins += 1;
                 Some(world.get::<DisplayName>(entity)?.0.clone())
             });
-            info!(winner = ?name, "Rounds: round over");
+            info!(winner = ?name, ?reason, "Match: round over");
             world.resource_mut::<MatchState>().winner = name;
-            retire(world, &alive);
+            retire(world, &riders.alive);
         }
-        MatchStep::Begin { new_match } => begin_round(world, &roster, new_match),
+        MatchStep::Begin { new_match } => begin_round(world, &riders, new_match),
     }
-    // A match dropped for lack of riders leaves no winner to show.
-    let mut state = world.resource_mut::<MatchState>();
-    if !state.is_running() {
-        state.winner = None;
+    if !world.resource::<MatchState>().flow.is_running() {
+        // Waiting: no winner to show, and only humans ride.
+        world.resource_mut::<MatchState>().winner = None;
+        let bots: Vec<Entity> = riders
+            .all
+            .iter()
+            .filter(|(_, alive, human)| *alive && !*human)
+            .map(|(entity, ..)| *entity)
+            .collect();
+        retire(world, &bots);
     }
     publish_status(world);
 }
 
+fn scores(world: &mut World) -> Vec<(Entity, Score)> {
+    world
+        .query_filtered::<(Entity, &Score), With<Player>>()
+        .iter(world)
+        .map(|(entity, score)| (entity, *score))
+        .collect()
+}
+
 /// Stop riders where they are: dead, trail gone, as after a crash. Used on the
-/// round's survivor, who would otherwise keep riding through the intermission
-/// (and could die in it, which would reach the ranked reports).
+/// round's survivors, who would otherwise keep riding through the break (and
+/// could die in it, which would reach the ranked reports).
 fn retire(world: &mut World, riders: &[Entity]) {
     for &entity in riders {
         world.entity_mut(entity).insert((
@@ -136,9 +193,9 @@ fn retire(world: &mut World, riders: &[Entity]) {
 }
 
 /// Place every rider, one after the other, on a clear arena (all trails are
-/// gone: the dead lost theirs and the survivor was retired), humans in a new
+/// gone: the dead lost theirs and the survivors were retired), humans in a new
 /// life so their previous round's commands are stale.
-fn begin_round(world: &mut World, roster: &[(Entity, bool)], new_match: bool) {
+fn begin_round(world: &mut World, riders: &Riders, new_match: bool) {
     let (round, begun) = {
         let mut state = world.resource_mut::<MatchState>();
         state.begun += 1;
@@ -148,16 +205,16 @@ fn begin_round(world: &mut World, roster: &[(Entity, bool)], new_match: bool) {
         (state.flow.round(), state.begun)
     };
     let Some(mut field) = SpawnField::walls(world) else {
-        warn!("Rounds: no arena, nobody can be placed");
+        warn!("Match: no arena, nobody can be placed");
         return;
     };
-    info!(round, riders = roster.len(), "Rounds: round starts");
+    info!(round, riders = riders.all.len(), "Match: round starts");
 
-    for &(entity, _) in roster {
+    for &(entity, ..) in &riders.all {
         let mut rider = world.entity_mut(entity);
         rider.remove::<InitialSpawn>();
-        if new_match && let Some(mut wins) = rider.get_mut::<Wins>() {
-            wins.0 = 0;
+        if new_match && let Some(mut score) = rider.get_mut::<Score>() {
+            *score = Score::default();
         }
         let life = rider
             .get::<LifeGeneration>()
@@ -179,23 +236,15 @@ fn begin_round(world: &mut World, roster: &[(Entity, bool)], new_match: bool) {
             }
             None => warn!(
                 ?entity,
-                "Rounds: no safe spawn, the rider sits this round out"
+                "Match: no safe spawn, the rider sits this round out"
             ),
         }
     }
 }
 
-/// Mirror the match into the replicated status entity, standings included.
+/// Mirror the match into the replicated status entity.
 fn publish_status(world: &mut World) {
-    let mut status = world.resource::<MatchState>().status();
-    let mut scores: Vec<(String, u32)> = world
-        .query_filtered::<(&DisplayName, &Wins), With<Player>>()
-        .iter(world)
-        .map(|(name, wins)| (name.0.clone(), wins.0))
-        .collect();
-    scores.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
-    status.standings = scores;
-
+    let status = world.resource::<MatchState>().status();
     let existing = world.resource::<MatchState>().status;
     match existing.and_then(|entity| world.get_mut::<MatchStatus>(entity)) {
         Some(mut current) => {
@@ -221,10 +270,12 @@ mod tests {
             end: EndRules {
                 time_limit: limit,
                 last_standing: true,
+                no_human_left: true,
             },
             rounds,
             intermission: 3,
             final_intermission: 5,
+            needs_human: true,
         }
     }
 
@@ -243,7 +294,8 @@ mod tests {
         ));
         let riders = (0..n)
             .map(|i| {
-                let mut rider = world.spawn((Player, DisplayName(format!("r{i}"))));
+                let mut rider =
+                    world.spawn((Player, Score::default(), DisplayName(format!("r{i}"))));
                 if i == 0 {
                     rider.insert((Human, LifeGeneration(7)));
                 }
@@ -255,6 +307,10 @@ mod tests {
 
     fn kill(world: &mut World, rider: Entity) {
         world.entity_mut(rider).insert(IsAlive(false));
+    }
+
+    fn alive(world: &World, rider: Entity) -> bool {
+        world.get::<IsAlive>(rider).unwrap().0
     }
 
     fn status(world: &mut World) -> MatchStatus {
@@ -274,7 +330,7 @@ mod tests {
         }
         assert_eq!(status(&mut world).phase, MatchPhase::Playing);
         for &rider in &riders {
-            assert!(world.get::<IsAlive>(rider).unwrap().0);
+            assert!(alive(&world, rider));
         }
         assert_eq!(world.get::<LifeGeneration>(riders[0]).unwrap().0, 8);
         let heads: Vec<Vec2> = riders
@@ -283,15 +339,15 @@ mod tests {
             .collect();
         assert!(heads[0].distance(heads[1]) >= shared::spawn::SPAWN_CLEARANCE);
 
-        // r1 and r2 die: r0 wins, is retired, and the standings say so.
+        // r1 and r2 die: r0 wins, is retired, and its score says so.
         kill(&mut world, riders[1]);
         kill(&mut world, riders[2]);
         advance_match(&mut world);
         let now = status(&mut world);
         assert_eq!(now.phase, MatchPhase::Intermission);
         assert_eq!(now.winner.as_deref(), Some("r0"));
-        assert_eq!(now.standings[0], ("r0".to_owned(), 1));
-        assert!(!world.get::<IsAlive>(riders[0]).unwrap().0);
+        assert_eq!(world.get::<Score>(riders[0]).unwrap().wins, 1);
+        assert!(!alive(&world, riders[0]));
 
         // After the break the second round places everybody again.
         for _ in 0..3 {
@@ -299,13 +355,13 @@ mod tests {
         }
         let now = status(&mut world);
         assert_eq!((now.phase, now.round), (MatchPhase::Playing, 2));
-        assert!(world.get::<IsAlive>(riders[1]).unwrap().0);
+        assert!(alive(&world, riders[1]));
         assert_eq!(world.get::<LifeGeneration>(riders[0]).unwrap().0, 9);
     }
 
     #[test]
     fn a_rider_joining_mid_round_waits_and_is_placed_with_the_next_round() {
-        let (mut world, riders) = world_with(rules(3, None), 2);
+        let (mut world, riders) = world_with(rules(3, None), 3);
         for _ in 0..4 {
             advance_match(&mut world);
         }
@@ -313,21 +369,68 @@ mod tests {
             .spawn((
                 Player,
                 Human,
+                Score::default(),
                 LifeGeneration(1),
                 InitialSpawn,
                 DisplayName("late".into()),
             ))
             .id();
         advance_match(&mut world);
-        // Dead and counted for nothing: the round goes on with two alive.
-        assert!(!world.get::<IsAlive>(late).unwrap().0);
+        // Dead and counted for nothing: the round goes on.
+        assert!(!alive(&world, late));
         assert_eq!(status(&mut world).phase, MatchPhase::Playing);
         kill(&mut world, riders[1]);
+        kill(&mut world, riders[2]);
         for _ in 0..4 {
             advance_match(&mut world);
         }
-        assert!(world.get::<IsAlive>(late).unwrap().0);
+        assert!(alive(&world, late));
         assert!(!world.entity(late).contains::<InitialSpawn>());
-        assert_eq!(status(&mut world).standings.len(), 3);
+    }
+
+    #[test]
+    fn the_round_ends_when_the_last_human_is_out_and_bots_wait_without_humans() {
+        let (mut world, riders) = world_with(rules(3, None), 3);
+        for _ in 0..4 {
+            advance_match(&mut world);
+        }
+        // The human dies; two bots still ride: the round is over at once.
+        kill(&mut world, riders[0]);
+        advance_match(&mut world);
+        let now = status(&mut world);
+        assert_eq!(now.phase, MatchPhase::Intermission);
+        assert_eq!(now.winner, None);
+
+        // The human leaves: the match is dropped and the bots stay off.
+        world.despawn(riders[0]);
+        for _ in 0..10 {
+            advance_match(&mut world);
+        }
+        assert_eq!(status(&mut world).phase, MatchPhase::Free);
+        assert!(!alive(&world, riders[1]) && !alive(&world, riders[2]));
+    }
+
+    #[test]
+    fn a_round_out_of_time_goes_to_the_top_scorer() {
+        let rules = MatchRules {
+            respawn: Respawn::After(10),
+            end: EndRules {
+                time_limit: Some(5),
+                ..EndRules::default()
+            },
+            ..rules(1, None)
+        };
+        let (mut world, riders) = world_with(rules, 2);
+        for _ in 0..4 {
+            advance_match(&mut world);
+        }
+        world.get_mut::<Score>(riders[1]).unwrap().kills = 2;
+        for _ in 0..5 {
+            advance_match(&mut world);
+        }
+        let now = status(&mut world);
+        assert_eq!(now.phase, MatchPhase::MatchOver);
+        assert_eq!(now.winner.as_deref(), Some("r1"));
+        assert!(now.respawns);
     }
 }

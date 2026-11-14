@@ -1,6 +1,7 @@
-//! Rounds mode over real UDP loopback: a lone rider rides free, a second one
-//! starts a match, a round ends with a winner, the dead cannot respawn, the
-//! next round places everybody again and the last one ends the match.
+//! Matches over real UDP loopback: a lone rider rides free, a second one
+//! starts a last-standing match, a round ends with a winner, the dead cannot
+//! respawn, the next round places everybody again and the last one ends the
+//! match. Separately, a round with respawns ends on its clock.
 
 // Test crate: unwraps and prints are fine here.
 #![allow(
@@ -19,17 +20,19 @@ use tron_zero_nettest::{Net, serial};
 
 const WAIT: Duration = Duration::from_secs(20);
 
-/// Two rounds, no time limit, half-second breaks.
+/// Two last-standing rounds, no time limit, half-second breaks.
 fn rules() -> MatchRules {
     MatchRules {
         respawn: Respawn::Never,
         end: EndRules {
             time_limit: None,
             last_standing: true,
+            no_human_left: true,
         },
         rounds: 2,
         intermission: 60,
         final_intermission: 60,
+        needs_human: true,
     }
 }
 
@@ -39,10 +42,18 @@ fn phase(net: &mut Net, client: usize) -> Option<(MatchPhase, u32)> {
         .map(|s| (s.phase, s.round))
 }
 
+fn wins(net: &mut Net, client: usize) -> Vec<(String, u32)> {
+    net.clients[client]
+        .scores()
+        .into_iter()
+        .map(|(name, score)| (name, score.wins))
+        .collect()
+}
+
 #[test]
 fn a_match_runs_from_the_first_round_to_the_standings_and_a_new_match() {
     let _guard = serial();
-    let mut net = Net::new_rounds(rules());
+    let mut net = Net::with_rules(rules());
     let ann = net.add_client_with("Ann", |_| {});
     let free = net.run_until(WAIT, |net| {
         net.clients[ann].is_playing()
@@ -68,10 +79,8 @@ fn a_match_runs_from_the_first_round_to_the_standings_and_a_new_match() {
     let won = net.run_until(WAIT, |net| {
         [ann, bob].iter().all(|&i| {
             net.clients[i].match_status().is_some_and(|s| {
-                s.phase == MatchPhase::Intermission
-                    && s.winner.as_deref() == Some("Ann")
-                    && s.standings.first() == Some(&("Ann".to_owned(), 1))
-            })
+                s.phase == MatchPhase::Intermission && s.winner.as_deref() == Some("Ann")
+            }) && wins(net, i) == [("Ann".to_owned(), 1), ("Bob".to_owned(), 0)]
         })
     });
     assert!(won, "{:?}", net.clients[ann].match_status());
@@ -97,23 +106,60 @@ fn a_match_runs_from_the_first_round_to_the_standings_and_a_new_match() {
     let ann_id = net.clients[ann].player_id().unwrap();
     net.server.kill_rider(&ann_id);
     let over = net.run_until(WAIT, |net| {
-        net.clients[bob].match_status().is_some_and(|s| {
-            s.phase == MatchPhase::MatchOver
-                && s.winner.as_deref() == Some("Bob")
-                && s.standings.iter().all(|(_, wins)| *wins == 1)
-        })
+        net.clients[bob]
+            .match_status()
+            .is_some_and(|s| s.phase == MatchPhase::MatchOver && s.winner.as_deref() == Some("Bob"))
+            && wins(net, bob).iter().all(|(_, wins)| *wins == 1)
     });
     assert!(over, "{:?}", net.clients[bob].match_status());
 
     // A new match starts with the scores back at zero.
     let again = net.run_until(WAIT, |net| {
         net.clients[bob].rider_alive()
-            && net.clients[bob].match_status().is_some_and(|s| {
-                s.phase == MatchPhase::Playing
-                    && s.round == 1
-                    && s.standings.iter().all(|(_, wins)| *wins == 0)
-            })
+            && net.clients[bob]
+                .match_status()
+                .is_some_and(|s| s.phase == MatchPhase::Playing && s.round == 1)
+            && wins(net, bob).iter().all(|(_, wins)| *wins == 0)
     });
     assert!(again, "{:?}", net.clients[bob].match_status());
     assert_eq!(net.server.link_count(), 2);
+}
+
+#[test]
+fn a_round_with_respawns_takes_riders_back_and_ends_on_its_clock() {
+    let _guard = serial();
+    let mut net = Net::with_rules(MatchRules {
+        respawn: Respawn::After(1),
+        end: EndRules {
+            time_limit: Some(240),
+            ..EndRules::default()
+        },
+        rounds: 1,
+        intermission: 30,
+        final_intermission: 600,
+        needs_human: true,
+    });
+    let ann = net.add_client_with("Ann", |_| {});
+    let playing = net.run_until(WAIT, |net| {
+        net.clients[ann].rider_alive() && phase(net, ann) == Some((MatchPhase::Playing, 1))
+    });
+    assert!(playing, "a lone human starts the match");
+    assert!(net.clients[ann].match_status().unwrap().respawns);
+
+    // Ann crashes and comes back in the same round.
+    let ann_id = net.clients[ann].player_id().unwrap();
+    net.server.kill_rider(&ann_id);
+    let dead = net.run_until(WAIT, |net| !net.clients[ann].rider_alive());
+    assert!(dead);
+    net.clients[ann].press(KeyCode::Space);
+    let back = net.run_until(WAIT, |net| {
+        net.clients[ann].rider_alive() && phase(net, ann) == Some((MatchPhase::Playing, 1))
+    });
+    assert!(back, "{:?}", net.clients[ann].respawn_outcome());
+
+    // Two seconds in, the clock ends the match.
+    let over = net.run_until(WAIT, |net| {
+        phase(net, ann).is_some_and(|(phase, _)| phase == MatchPhase::MatchOver)
+    });
+    assert!(over, "{:?}", net.clients[ann].match_status());
 }

@@ -36,33 +36,44 @@ pub struct TestServer {
 }
 
 impl TestServer {
+    /// A server running [`TestServer::endless`].
     pub fn new(port: u16, impairment: Impairment) -> Self {
-        Self::build(port, None, None, impairment)
+        Self::build(port, None, Self::endless(), impairment)
     }
 
-    /// A server in rounds mode (what `mode = "rounds"` selects in production).
-    pub fn with_rounds(port: u16, rules: shared::MatchRules, impairment: Impairment) -> Self {
-        Self::build(port, None, Some(rules), impairment)
+    /// A server playing matches by `rules`.
+    pub fn with_rules(port: u16, rules: shared::MatchRules, impairment: Impairment) -> Self {
+        Self::build(port, None, rules, impairment)
     }
 
     /// A server that also accepts WebTransport sessions on `web_port`, with a
     /// fresh self-signed certificate (its digest is `endpoint.cert_hash`).
     pub fn with_web(port: u16, web: ts::web::WebEndpoint, impairment: Impairment) -> Self {
-        Self::build(port, Some(web), None, impairment)
+        Self::build(port, Some(web), Self::endless(), impairment)
+    }
+
+    /// The rules most tests play by: one endless round with respawns, which
+    /// starts on the tick after the first human arrives (no countdown).
+    pub fn endless() -> shared::MatchRules {
+        shared::MatchRules {
+            respawn: shared::Respawn::After(ts::bot::RESPAWN_DELAY_TICKS),
+            end: shared::EndRules::default(),
+            rounds: 1,
+            intermission: 0,
+            final_intermission: 0,
+            needs_human: true,
+        }
     }
 
     fn build(
         port: u16,
         web: Option<ts::web::WebEndpoint>,
-        rules: Option<shared::MatchRules>,
+        rules: shared::MatchRules,
         impairment: Impairment,
     ) -> Self {
         let mut app = App::new();
         app.add_plugins(MinimalPlugins);
-        if let Some(rules) = rules {
-            app.insert_resource(ts::rounds::MatchState::new(rules));
-        }
-        ts::add_core(&mut app, port);
+        ts::add_core(&mut app, port, rules);
         if let Some(web) = web {
             ts::add_web(&mut app, web);
         }

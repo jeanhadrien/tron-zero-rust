@@ -1,26 +1,31 @@
-//! Game settings of a server, from a TOML file: the room, the game mode and the
-//! bots. `SERVER_CONFIG=path` loads a file; without it the server runs the
-//! official config embedded at build time (`config/official.toml` in this
-//! crate). Deployment settings (ports, advertised host, manager, secrets)
-//! stay in env vars.
+//! Game settings of a server, from a TOML file: the room, the match and round
+//! rules, and the bots. `SERVER_CONFIG=path` loads a file; without it the
+//! server runs the official config embedded at build time
+//! (`config/official.toml` in this crate). Deployment settings (ports,
+//! advertised host, manager, secrets) stay in env vars.
 //!
 //! ```toml
 //! [server]
 //! name = "Tron Zero"
 //! max_players = 10            # humans; bots do not count
 //!
-//! [game]
-//! mode = "rounds"             # or "ffa" (no other key then)
+//! [match]
 //! rounds = 5
-//! round_secs = 90             # 0: no time limit
-//! intermission_secs = 3
-//! final_intermission_secs = 8
+//! intermission_secs = 3       # before round 1 and between rounds
+//! end_screen_secs = 8         # after the last round, showing the scores
+//!
+//! [round]
+//! secs = 90                   # 0: no time limit
+//! respawn = "next_round"      # or "anytime"
+//! last_standing = true        # needs respawn = "next_round"
+//! end_without_humans = true   # optional, true by default
 //!
 //! [bots]
 //! roster = "builtin"          # or a roster file, relative to this file
 //! ```
 //!
-//! Every key is required. An invalid file stops the server.
+//! Every key is required unless marked optional. An invalid file stops the
+//! server.
 
 use std::path::{Path, PathBuf};
 
@@ -38,7 +43,9 @@ const BUILTIN: &str = "builtin";
 #[serde(deny_unknown_fields)]
 pub struct ServerConfig {
     pub server: Room,
-    pub game: Game,
+    #[serde(rename = "match")]
+    pub game: Match,
+    pub round: Round,
     pub bots: Bots,
     /// Directory relative paths resolve against: the file's.
     #[serde(skip)]
@@ -53,18 +60,37 @@ pub struct Room {
     pub max_players: u32,
 }
 
+/// A match: its rounds and the breaks around them.
 #[derive(Debug, Deserialize)]
-#[serde(tag = "mode", rename_all = "lowercase", deny_unknown_fields)]
-pub enum Game {
-    /// Free-for-all: free spawns, manual respawns, no end.
-    Ffa,
-    /// Last rider standing per round (`docs/specs/rounds-mode.md`).
-    Rounds {
-        rounds: u32,
-        round_secs: u32,
-        intermission_secs: u32,
-        final_intermission_secs: u32,
-    },
+#[serde(deny_unknown_fields)]
+pub struct Match {
+    pub rounds: u32,
+    pub intermission_secs: u32,
+    pub end_screen_secs: u32,
+}
+
+/// One round: its length, respawns and end conditions.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Round {
+    pub secs: u32,
+    pub respawn: RespawnRule,
+    pub last_standing: bool,
+    #[serde(default = "yes")]
+    pub end_without_humans: bool,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RespawnRule {
+    /// A dead rider comes back during the round.
+    Anytime,
+    /// A dead rider waits for the next round.
+    NextRound,
+}
+
+fn yes() -> bool {
+    true
 }
 
 #[derive(Debug, Deserialize)]
@@ -103,33 +129,30 @@ impl ServerConfig {
         Ok(config)
     }
 
-    /// The match rules of rounds mode, `None` for the free-for-all. Rules that
-    /// cannot run are an error.
-    pub fn rules(&self) -> Result<Option<MatchRules>, String> {
-        let Game::Rounds {
-            rounds,
-            round_secs,
-            intermission_secs,
-            final_intermission_secs,
-        } = self.game
-        else {
-            return Ok(None);
+    /// The match rules. A match always needs a human: bots alone never play.
+    /// Rules that cannot run are an error.
+    pub fn rules(&self) -> Result<MatchRules, String> {
+        let respawn = match self.round.respawn {
+            RespawnRule::Anytime => Respawn::After(crate::bot::RESPAWN_DELAY_TICKS),
+            RespawnRule::NextRound => Respawn::Never,
         };
         let rules = MatchRules {
-            respawn: Respawn::Never,
+            respawn,
             end: EndRules {
-                time_limit: (round_secs > 0).then(|| secs_to_ticks(round_secs)),
-                last_standing: true,
+                time_limit: (self.round.secs > 0).then(|| secs_to_ticks(self.round.secs)),
+                last_standing: self.round.last_standing,
+                no_human_left: self.round.end_without_humans,
             },
-            rounds,
-            intermission: secs_to_ticks(intermission_secs),
-            final_intermission: secs_to_ticks(final_intermission_secs),
+            rounds: self.game.rounds,
+            intermission: secs_to_ticks(self.game.intermission_secs),
+            final_intermission: secs_to_ticks(self.game.end_screen_secs),
+            needs_human: true,
         };
         rules.validate()?;
         if rules.intermission == 0 || rules.final_intermission == 0 {
-            return Err("intermissions must last at least 1 second".into());
+            return Err("intermission_secs and end_screen_secs must be at least 1".into());
         }
-        Ok(Some(rules))
+        Ok(rules)
     }
 
     /// The builds to seat, one bot each.
@@ -146,28 +169,38 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_official_config_and_its_roster_load() {
-        let config = ServerConfig::official().unwrap();
-        config.rules().unwrap();
-        assert!(!config.roster().unwrap().is_empty());
+    fn every_shipped_config_and_its_roster_load() {
+        for text in [
+            include_str!("../config/official.toml"),
+            include_str!("../config/local.toml"),
+            include_str!("../config/dev-cloud.toml"),
+        ] {
+            let config = ServerConfig::parse(text, Path::new("")).unwrap();
+            config.rules().unwrap();
+            assert!(!config.roster().unwrap().is_empty());
+        }
     }
 
     #[test]
-    fn rounds_rules_come_from_the_file_and_bad_ones_are_refused() {
-        let file = |game: &str| {
+    fn rules_come_from_the_file_and_bad_ones_are_refused() {
+        let file = |round: &str| {
             let text = format!(
-                "[server]\nname = \"t\"\nmax_players = 4\n[game]\n{game}\n[bots]\nroster = \"builtin\"\n"
+                "[server]\nname = \"t\"\nmax_players = 4\n\
+                 [match]\nrounds = 7\nintermission_secs = 3\nend_screen_secs = 8\n\
+                 [round]\n{round}\n[bots]\nroster = \"builtin\"\n"
             );
             ServerConfig::parse(&text, Path::new(""))
         };
-        assert_eq!(file("mode = \"ffa\"").unwrap().rules(), Ok(None));
-        let rounds = "mode = \"rounds\"\nrounds = 7\nround_secs = 0\nintermission_secs = 3\nfinal_intermission_secs = 8";
-        let rules = file(rounds).unwrap().rules().unwrap().unwrap();
-        assert_eq!(rules.rounds, 7);
-        assert_eq!(rules.end.time_limit, None);
-        assert!(file("mode = \"tdm\"").is_err());
-        assert!(file("mode = \"rounds\"\nrounds = 5").is_err());
-        let zero = rounds.replace("rounds = 7", "rounds = 0");
-        assert!(file(&zero).unwrap().rules().is_err());
+        let rounds = "secs = 0\nrespawn = \"next_round\"\nlast_standing = true";
+        let rules = file(rounds).unwrap().rules().unwrap();
+        assert_eq!((rules.rounds, rules.end.time_limit), (7, None));
+        assert!(rules.end.no_human_left && rules.needs_human);
+        let off = file(&format!("{rounds}\nend_without_humans = false")).unwrap();
+        assert!(!off.rules().unwrap().end.no_human_left);
+        // Last standing with respawns could never end a round.
+        let bad = rounds.replace("next_round", "anytime");
+        assert!(file(&bad).unwrap().rules().is_err());
+        assert!(file("secs = 90").is_err());
+        assert!(file(&rounds.replace("next_round", "sometimes")).is_err());
     }
 }

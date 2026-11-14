@@ -11,10 +11,10 @@ pub mod budget;
 pub mod chat;
 pub mod config;
 pub mod elimination;
+pub mod game;
 mod look;
 pub mod probe;
 pub mod ranked;
-pub mod rounds;
 pub mod session;
 pub mod systems;
 pub mod turns;
@@ -27,10 +27,11 @@ use lightyear::prelude::{LinkSystems, MessageSystems};
 use lightyear_transport::plugin::TransportSystems;
 
 /// Everything a server needs except bots, the manager announcer and logging:
-/// Lightyear, protocol, connection lifecycle, respawns, turns and simulation.
-/// Expects `MinimalPlugins` to be present; `port` is the UDP port to bind.
-/// Browser players need [`add_web`] on top.
-pub fn add_core(app: &mut App, port: u16) {
+/// Lightyear, protocol, connection lifecycle, the match played by `rules`,
+/// respawns, turns and simulation. Expects `MinimalPlugins` to be present;
+/// `port` is the UDP port to bind. Browser players need [`add_web`] on top.
+pub fn add_core(app: &mut App, port: u16, rules: shared::MatchRules) {
+    app.insert_resource(game::MatchState::new(rules));
     // Required by lightyear replication internals.
     app.add_plugins(bevy::state::app::StatesPlugin);
     app.add_plugins(ServerPlugins {
@@ -98,11 +99,12 @@ pub fn add_core(app: &mut App, port: u16) {
             systems::handle_respawns,
             turns::apply_turn_commands,
             shared::simulate_players,
+            // Reads the death log before `resolve_deaths` drains it.
+            game::count_scores,
             // Reads the end-of-tick state before anything is despawned.
             elimination::resolve_deaths,
-            // Rounds mode: ends the round on this tick's deaths, then places
-            // the next one. Absent in free-for-all.
-            rounds::advance_match.run_if(resource_exists::<rounds::MatchState>),
+            // Ends the round on this tick's deaths, then places the next one.
+            game::advance_match,
             // Only ranked servers report results (see `ranked`).
             ranked::forward_eliminations.run_if(resource_exists::<ranked::RankedMode>),
         )
@@ -110,7 +112,10 @@ pub fn add_core(app: &mut App, port: u16) {
     );
     app.add_systems(
         Update,
-        ranked::publish_roster.run_if(resource_exists::<ranked::RankedMode>),
+        (
+            ranked::publish_roster.run_if(resource_exists::<ranked::RankedMode>),
+            systems::publish_round_trips,
+        ),
     );
 
     // Spawn the arena once on startup (replicated to all clients).
