@@ -1,5 +1,5 @@
-//! Tune and ladder are deterministic for a seed and do not depend on the
-//! thread count; rosters round-trip. Tiny configs: the numbers mean nothing.
+//! Tune and ladder do not depend on the thread count; rosters round-trip.
+//! Tiny configs: the numbers mean nothing.
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
@@ -32,9 +32,7 @@ time_limit = 300
 fn tune() -> Tune {
     let text = format!(
         r#"
-seed = 7
-train_seeds = 1
-holdout_seeds = 1
+seeds = 1
 
 [base]
 name = "T"
@@ -55,9 +53,6 @@ idle_share = -0.5
 
 [sweep]
 steps = 2
-[search]
-population = 4
-generations = 2
 {SETUP}"#
     );
     Tune::parse(&text, Path::new("")).unwrap()
@@ -69,15 +64,6 @@ fn sweep_is_the_same_on_one_and_many_threads() {
     let one = serde_json::to_string(&tune.sweep(Some(1)).unwrap()).unwrap();
     let many = serde_json::to_string(&tune.sweep(Some(4)).unwrap()).unwrap();
     assert_eq!(one, many);
-}
-
-#[test]
-fn search_is_the_same_on_one_and_many_threads_and_repeatable() {
-    let tune = tune();
-    let one = serde_json::to_string(&tune.search(Some(1)).unwrap()).unwrap();
-    let many = serde_json::to_string(&tune.search(Some(4)).unwrap()).unwrap();
-    assert_eq!(one, many);
-    assert!(one.contains("\"generation\":2"));
 }
 
 #[test]

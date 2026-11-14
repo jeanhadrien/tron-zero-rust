@@ -1,13 +1,11 @@
-//! `lab tune`: search the knobs and weights of a bot build for a game setup.
+//! `lab tune`: sweep the knobs and weights of a bot build for a game setup.
 //!
-//! A tune file (TOML) names a base build, the parameters to search with their
-//! ranges, the setups and the reference pool to play against, two seed sets
-//! and the fitness (see `bench`):
+//! A tune file (TOML) names a base build, the parameters to sweep with their
+//! ranges, the setups, the reference pool to play against, the seeds and the
+//! fitness (see `bench`):
 //!
 //! ```toml
-//! seed = 1                    # the search's random seed
-//! train_seeds = 4             # the search sees seeds train_first.. (default 1)
-//! holdout_seeds = 8           # the winner is re-scored on holdout_first.. (default 100000)
+//! seeds = 4                   # seeds first_seed.. (default first_seed = 1)
 //! default_roster = true       # the pool: default roster, a roster file, [[pool]] builds
 //!
 //! [base]                      # the build to start from, see `crate::builds`
@@ -35,25 +33,17 @@
 //!
 //! [sweep]                     # optional
 //! steps = 5                   # values per parameter
-//! [search]                    # optional
-//! population = 8              # default: CMA-ES's own choice
-//! generations = 10
-//! sigma = 0.25                # initial step, as a share of each range
-//! patience = 3                # stop when the best held-out score did not improve for 3 generations
 //! ```
 //!
-//! Two modes: `sweep` moves one parameter at a time and prints how every
-//! metric follows (a parameter that moves nothing is a dead knob); `search`
-//! runs CMA-ES over all parameters at once. Fitness is deterministic for a
-//! given build and seed set, so the search is reproducible from `seed` and
+//! The sweep moves one parameter at a time, the others at the base, and
+//! reports how every metric follows (a parameter that moves nothing is a dead
+//! knob). Fitness is deterministic for a build and a seed set, so the report
 //! does not depend on the thread count.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
 
 use bots::config::BotBuild;
-use cmaes::{CMAESOptions, DVector, Mode};
 use serde::{Deserialize, Serialize};
 
 use crate::bench::{Bench, Fitness, mean_metrics};
@@ -64,14 +54,9 @@ use crate::tournament::{METRICS, SetupSpec, thread_pool};
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct File {
+    seeds: u64,
     #[serde(default = "one")]
-    seed: u64,
-    train_seeds: u64,
-    #[serde(default = "one")]
-    train_first: u64,
-    holdout_seeds: u64,
-    #[serde(default = "holdout_first")]
-    holdout_first: u64,
+    first_seed: u64,
     #[serde(default)]
     tier: Option<TierPin>,
     base: BuildSpec,
@@ -88,16 +73,10 @@ struct File {
     fitness: Fitness,
     #[serde(default)]
     sweep: SweepSpec,
-    #[serde(default)]
-    search: SearchSpec,
 }
 
 fn one() -> u64 {
     1
-}
-
-fn holdout_first() -> u64 {
-    100_000
 }
 
 #[derive(Debug, Deserialize)]
@@ -125,45 +104,7 @@ fn five() -> usize {
     5
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct SearchSpec {
-    #[serde(default)]
-    population: Option<usize>,
-    #[serde(default = "twenty")]
-    generations: usize,
-    #[serde(default = "quarter")]
-    sigma: f64,
-    /// Generations without a better held-out score after which the search
-    /// stops.
-    #[serde(default = "three")]
-    patience: usize,
-}
-
-impl Default for SearchSpec {
-    fn default() -> Self {
-        Self {
-            population: None,
-            generations: 20,
-            sigma: 0.25,
-            patience: 3,
-        }
-    }
-}
-
-fn twenty() -> usize {
-    20
-}
-
-fn three() -> usize {
-    3
-}
-
-fn quarter() -> f64 {
-    0.25
-}
-
-/// One searched parameter, resolved against the base build.
+/// One swept parameter, resolved against the base build.
 #[derive(Clone, Debug)]
 struct Dim {
     name: String,
@@ -175,18 +116,15 @@ struct Dim {
 
 /// A loaded tune file.
 pub struct Tune {
-    seed: u64,
-    train: (u64, u64),
-    holdout: (u64, u64),
+    seeds: (u64, u64),
     base: BotBuild,
     dims: Vec<Dim>,
     bench: Bench,
     fitness: Fitness,
     sweep: SweepSpec,
-    search: SearchSpec,
 }
 
-/// A candidate's score on one seed set.
+/// A candidate's score.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct Eval {
     pub fitness: f64,
@@ -232,23 +170,8 @@ impl Tune {
         if dims.is_empty() {
             return Err("give at least one [[param]]".into());
         }
-        if file.train_seeds == 0 || file.holdout_seeds == 0 {
-            return Err("train_seeds and holdout_seeds must be at least 1".into());
-        }
-        let train_end = file.train_first + file.train_seeds;
-        let holdout_end = file.holdout_first + file.holdout_seeds;
-        if file.train_first < holdout_end && file.holdout_first < train_end {
-            return Err("the train and holdout seed sets overlap".into());
-        }
-        if file.search.sigma <= 0.0
-            || file.search.generations == 0
-            || file.search.patience == 0
-            || file.sweep.steps < 2
-        {
-            return Err(
-                "search.sigma > 0, search.generations >= 1, search.patience >= 1 and sweep.steps >= 2"
-                    .into(),
-            );
+        if file.seeds == 0 || file.sweep.steps < 2 {
+            return Err("seeds >= 1 and sweep.steps >= 2".into());
         }
         let pool = builds::resolve(
             file.default_roster,
@@ -258,69 +181,32 @@ impl Tune {
         )?;
         let bench = Bench::new(file.setups, file.tier, pool)?;
         Ok(Self {
-            seed: file.seed,
-            train: (file.train_first, file.train_seeds),
-            holdout: (file.holdout_first, file.holdout_seeds),
+            seeds: (file.first_seed, file.seeds),
             base,
             dims,
             bench,
             fitness: file.fitness,
             sweep: file.sweep,
-            search: file.search,
         })
     }
 
-    /// The parameter values a point of the unit cube stands for.
-    fn decode(&self, x: &[f64]) -> Vec<(String, f64)> {
-        self.dims
-            .iter()
-            .zip(x)
-            .map(|(d, u)| {
-                let value = d.min + u.clamp(0.0, 1.0) * (d.max - d.min);
-                (
-                    d.name.clone(),
-                    if d.integer { value.round() } else { value },
-                )
-            })
-            .collect()
-    }
-
-    fn unit(d: &Dim, value: f64) -> f64 {
-        ((value - d.min) / (d.max - d.min)).clamp(0.0, 1.0)
-    }
-
-    fn candidate(&self, values: &[(String, f64)]) -> Result<BotBuild, String> {
-        builds::with_params(&self.base, values)
-    }
-
-    fn eval(&self, build: &BotBuild, (first, count): (u64, u64)) -> Result<Eval, String> {
-        let rows = self.bench.play(build, first, count)?;
+    fn eval_values(&self, values: &[(String, f64)]) -> Result<Eval, String> {
+        let build = builds::with_params(&self.base, values)?;
+        let rows = self.bench.play(&build, self.seeds.0, self.seeds.1)?;
         Ok(Eval {
             fitness: self.fitness.score(&rows, self.bench.setups())?,
             metrics: mean_metrics(&rows),
         })
     }
 
-    fn eval_values(&self, values: &[(String, f64)], seeds: (u64, u64)) -> Result<Eval, String> {
-        self.eval(&self.candidate(values)?, seeds)
-    }
-
     fn base_values(&self) -> Vec<(String, f64)> {
         self.dims.iter().map(|d| (d.name.clone(), d.base)).collect()
-    }
-
-    fn scored(&self, values: &[(String, f64)]) -> Result<Scored, String> {
-        Ok(Scored {
-            values: values.iter().cloned().collect(),
-            train: self.eval_values(values, self.train)?,
-            holdout: self.eval_values(values, self.holdout)?,
-        })
     }
 
     /// Move one parameter at a time over its range, the others at the base.
     pub fn sweep(&self, threads: Option<usize>) -> Result<SweepReport, String> {
         thread_pool(threads)?.install(|| {
-            let base = self.eval_values(&self.base_values(), self.train)?;
+            let base = self.eval_values(&self.base_values())?;
             let mut params = Vec::new();
             for (i, d) in self.dims.iter().enumerate() {
                 let mut grid: Vec<f64> = (0..self.sweep.steps)
@@ -334,7 +220,7 @@ impl Tune {
                     values[i].1 = value;
                     points.push(SweepPoint {
                         value,
-                        eval: self.eval_values(&values, self.train)?,
+                        eval: self.eval_values(&values)?,
                     });
                 }
                 let dead = points.iter().all(|p| p.eval == points[0].eval);
@@ -349,96 +235,20 @@ impl Tune {
         })
     }
 
-    /// Seeded CMA-ES over all parameters, scored on the train seeds; the
-    /// winner and the base are then scored on the train and held-out seeds.
-    pub fn search(&self, threads: Option<usize>) -> Result<SearchReport, String> {
-        thread_pool(threads)?.install(|| {
-            let memo: Mutex<HashMap<Vec<u64>, f64>> = Mutex::new(HashMap::new());
-            // Integer parameters make many points equal: score each build once.
-            let fitness = |x: &DVector<f64>| -> f64 {
-                let values = self.decode(x.as_slice());
-                let key: Vec<u64> = values.iter().map(|(_, v)| v.to_bits()).collect();
-                if let Some(&known) = memo.lock().expect("memo lock").get(&key) {
-                    return known;
-                }
-                let score = self
-                    .eval_values(&values, self.train)
-                    .expect("validated candidate")
-                    .fitness;
-                memo.lock().expect("memo lock").insert(key, score);
-                score
-            };
-            let start: Vec<f64> = self.dims.iter().map(|d| Self::unit(d, d.base)).collect();
-            let mut options = CMAESOptions::new(start, self.search.sigma)
-                .mode(Mode::Maximize)
-                .seed(self.seed)
-                .max_generations(self.search.generations);
-            if let Some(population) = self.search.population {
-                options = options.population_size(population);
-            }
-            let mut cma = options
-                .build(&fitness)
-                .map_err(|e| format!("cmaes: {e:?}"))?;
-            let mut history = Vec::new();
-            // The generation's best build is also played on the held-out
-            // seeds; the winner is the best of those, and the search stops
-            // when it has not improved for `patience` generations.
-            let mut held: Option<(f64, Vec<(String, f64)>)> = None;
-            let mut best_generation = 0;
-            let mut stopped = Vec::new();
-            loop {
-                let done = cma.next_parallel();
-                if let Some(b) = cma.current_best_individual() {
-                    let values = self.decode(b.point.as_slice());
-                    let holdout = self.eval_values(&values, self.holdout)?.fitness;
-                    if held.as_ref().is_none_or(|(best, _)| holdout > *best) {
-                        best_generation = cma.generation();
-                        held = Some((holdout, values.clone()));
-                    }
-                    history.push(Generation {
-                        generation: cma.generation(),
-                        evals: cma.function_evals(),
-                        best_fitness: b.value,
-                        holdout_fitness: holdout,
-                        best: values.into_iter().collect(),
-                        mean: self.decode(cma.mean().as_slice()).into_iter().collect(),
-                    });
-                }
-                if let Some(done) = done {
-                    stopped = done.reasons.iter().map(|r| format!("{r:?}")).collect();
-                    break;
-                }
-                if cma.generation() - best_generation >= self.search.patience {
-                    stopped.push(format!(
-                        "patience: no better held-out score for {} generations",
-                        self.search.patience
-                    ));
-                    break;
+    /// The base build with the single parameter value that scored best in
+    /// `report` (the base itself when nothing beat it), as a roster entry.
+    pub fn best_entry(&self, report: &SweepReport) -> Result<String, String> {
+        let mut best = (report.base.fitness, None);
+        for p in &report.params {
+            for q in &p.points {
+                if q.eval.fitness > best.0 {
+                    best = (q.eval.fitness, Some((p.name.clone(), q.value)));
                 }
             }
-            let (_, best_values) = held.ok_or("cmaes found no valid point (fitness was NaN)")?;
-            let best = self.scored(&best_values)?;
-            let build = self.candidate(&best_values)?;
-            Ok(SearchReport {
-                seed: self.seed,
-                train_seeds: self.train,
-                holdout_seeds: self.holdout,
-                stopped,
-                base: self.scored(&self.base_values())?,
-                best,
-                history,
-                build: builds::roster_entry(&build)?,
-            })
-        })
+        }
+        let set: Vec<(String, f64)> = best.1.into_iter().collect();
+        builds::roster_entry(&builds::with_params(&self.base, &set)?)
     }
-}
-
-/// One parameter vector scored on both seed sets.
-#[derive(Debug, Serialize)]
-pub struct Scored {
-    pub values: BTreeMap<String, f64>,
-    pub train: Eval,
-    pub holdout: Eval,
 }
 
 #[derive(Debug, Serialize)]
@@ -460,32 +270,6 @@ pub struct ParamSweep {
 pub struct SweepReport {
     pub base: Eval,
     pub params: Vec<ParamSweep>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct Generation {
-    pub generation: usize,
-    /// Fitness evaluations asked for so far (repeated builds included).
-    pub evals: usize,
-    pub best_fitness: f64,
-    /// The same build on the held-out seeds.
-    pub holdout_fitness: f64,
-    pub best: BTreeMap<String, f64>,
-    pub mean: BTreeMap<String, f64>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct SearchReport {
-    pub seed: u64,
-    pub train_seeds: (u64, u64),
-    pub holdout_seeds: (u64, u64),
-    /// Why CMA-ES stopped.
-    pub stopped: Vec<String>,
-    pub base: Scored,
-    pub best: Scored,
-    pub history: Vec<Generation>,
-    /// The best build as a `[[build]]` entry (roster and suite vocabulary).
-    pub build: String,
 }
 
 /// A parameter value as stored: whole numbers plain, others as `f32`.
@@ -525,7 +309,7 @@ fn header(first: &str) -> String {
 
 impl SweepReport {
     pub fn markdown(&self) -> String {
-        let mut out = String::from("## Sweep (train seeds, other parameters at the base)\n\n");
+        let mut out = String::from("## Sweep (other parameters at the base)\n\n");
         out += &header("base");
         out += &format!("| base |{}\n\n", eval_cells(&self.base));
         out += "| parameter | base | fitness range | verdict |\n|---|---:|---:|---|\n";
@@ -554,46 +338,6 @@ impl SweepReport {
                 out += &format!("| {} |{}\n", param(q.value), eval_cells(&q.eval));
             }
         }
-        out
-    }
-}
-
-impl SearchReport {
-    pub fn markdown(&self) -> String {
-        let mut out = format!(
-            "## Search (seed {}, stopped: {})\n\nTrain seeds {}..+{}, held-out seeds {}..+{}.\n\n",
-            self.seed,
-            self.stopped.join(", "),
-            self.train_seeds.0,
-            self.train_seeds.1,
-            self.holdout_seeds.0,
-            self.holdout_seeds.1
-        );
-        out += "| generation | evals | best fitness (train) | same build, held-out |\n|---:|---:|---:|---:|\n";
-        for g in &self.history {
-            out += &format!(
-                "| {} | {} | {:.3} | {:.3} |\n",
-                g.generation, g.evals, g.best_fitness, g.holdout_fitness
-            );
-        }
-        out += "\n### Scores\n\n";
-        out += &header("build");
-        for (name, scored) in [("base", &self.base), ("best", &self.best)] {
-            out += &format!("| {name} train |{}\n", eval_cells(&scored.train));
-            out += &format!("| {name} held-out |{}\n", eval_cells(&scored.holdout));
-        }
-        out += "\n### Parameters\n\n| parameter | base | best |\n|---|---:|---:|\n";
-        for (name, value) in &self.best.values {
-            out += &format!(
-                "| {name} | {} | {} |\n",
-                param(self.base.values[name]),
-                param(*value)
-            );
-        }
-        out += &format!(
-            "\nBest build (a roster or suite entry):\n\n```toml\n{}```\n",
-            self.build
-        );
         out
     }
 }

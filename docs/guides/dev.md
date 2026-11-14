@@ -403,13 +403,13 @@ no wall deaths. A meander (R R L L) was tried and dropped: it jams against walls
 `tests/gates.rs` gates the pattern score and the artist's own-fault deaths.
 To look at it: `lab <scenario with an artist> --png out.png --until 1000`.
 
-### Tune (searching a build's knobs and weights)
+### Tune (sweeping a build's knobs and weights)
 
-`lab tune <tune.toml>` searches the parameters of one build for a game setup.
-The file (format in `crates/lab/src/tune.rs`, example in
+`lab tune <tune.toml>` sweeps the parameters of one build for a game setup. The
+file (format in `crates/lab/src/tune.rs`, example in
 `crates/lab/tuning/rounds4.tune.toml`) names the base build, the parameters to
-search with their ranges (any knob or weight, by bare name), the setups, the
-reference pool, two seed sets and the fitness: a weighted sum of tournament
+sweep with their ranges (any knob or weight, by bare name), the setups, the
+reference pool, the seeds and the fitness: a weighted sum of tournament
 metrics (`win_rate`, `kills_per_min`, `direct_deaths_per_round`, `forced_deaths_per_round`,
 `self_kill_share`, `own_deaths_per_round`,
 `median_life_ticks`, `idle_share`, `rubber_share`, `mean_speed`, `pattern`),
@@ -417,31 +417,22 @@ penalties being negative weights. The candidate always plays; its seat rotates
 and the other seats take a window of the pool that moves with the seed.
 
 ```
-cargo run --release -p tron-zero-lab -- tune crates/lab/tuning/rounds4.tune.toml --sweep
-cargo run --release -p tron-zero-lab -- tune crates/lab/tuning/rounds4.tune.toml --out tuned.toml --json history.json
+cargo run --release -p tron-zero-lab -- tune crates/lab/tuning/rounds4.tune.toml
+cargo run --release -p tron-zero-lab -- tune crates/lab/tuning/rounds4.tune.toml --out best.toml --json sweep.json
 ```
 
-- `--sweep` moves one parameter at a time over its range (`[sweep] steps`),
-  the others at the base, and prints every metric along it. A parameter whose
-  every metric stays identical is flagged DEAD (a knob that does nothing in
-  this setup, or whose range is too small).
-- Without `--sweep` it runs a seeded CMA-ES (the `cmaes` crate) over all
-  parameters in a unit cube (`[search]`: population, generations, `sigma`).
-  Whole-number knobs are rounded; identical builds are scored once. Each
-  generation's best build is also played on the held-out seeds; the search stops
-  when that score has not improved for `[search] patience` generations (default
-  3) and prints why it stopped. The winner is the best held-out build. It and
-  the base are scored on the train seeds and on the held-out seeds, both
-  printed: a big gap between them is overfitting. `--out` writes the best
-  build as a `[[build]]` entry with every knob and weight (paste it in a suite,
-  or in a roster file); `--json` writes the full history.
-- Fitness is deterministic for a build and a seed set. The search is
-  reproducible from `seed` and gives the same result on any `--threads`.
-- Cost is about population x generations x (train seeds x riders) matches of
-  `rounds` rounds each: the example takes 2-3 minutes in release. For real
-  work try `train_seeds = 8..16`, `holdout_seeds = 16+`, `generations = 20+`;
-  few seeds make a noisy fitness that the search will happily overfit. Rounds
-  that time out count in `idle_share` and `win_rate` like any other.
+- Each parameter moves over its range (`[sweep] steps` values), the others at
+  the base, and every metric is printed along it. A parameter whose every
+  metric stays identical is flagged DEAD (a knob that does nothing in this
+  setup, or whose range is too small).
+- `--out` writes the base build with the single parameter value that scored
+  best as a `[[build]]` entry (paste it in a suite or a roster file); `--json`
+  writes the full report.
+- Fitness is deterministic for a build and a seed set, and the report is the
+  same on any `--threads`. Cost is about parameters x steps x (seeds x riders)
+  matches of `rounds` rounds each. Few seeds make a noisy fitness: read a
+  sweep as a hint, not as a result. Rounds that time out count in `idle_share`
+  and `win_rate` like any other.
 
 ### Ladder (generated difficulty rungs)
 
