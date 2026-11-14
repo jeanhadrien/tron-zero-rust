@@ -12,8 +12,8 @@ use lightyear::prelude::*;
 use shared::spawn::{SpawnField, placed};
 use shared::{
     DeathLog, DisplayName, IsAlive, IsColliding, IsSliding, LifeGeneration, MatchFlow, MatchRules,
-    MatchStatus, MatchStep, Player, Roster, RoundEnd, Rubber, Score, ShouldHandleDeath, SpeedMult,
-    TargetSpeedMult, Trail, top_scorer,
+    MatchStatus, MatchStep, Player, Roster, Rubber, Score, ShouldHandleDeath, SpeedMult,
+    TargetSpeedMult, Trail, round_winner,
 };
 
 use crate::systems::{Human, InitialSpawn};
@@ -139,13 +139,8 @@ pub fn advance_match(world: &mut World) {
             retire(world, &riders.alive);
         }
         MatchStep::RoundOver { reason, winner } => {
-            // A one-round match that ran out of time goes to its top scorer.
-            // With several rounds the scores span the match, not this round,
-            // so a time-out has no winner.
-            let single = world.resource::<MatchState>().rules().rounds == 1;
-            let winner = winner.or_else(|| {
-                (reason == RoundEnd::TimeLimit && single).then(|| top_scorer(&scores(world)))?
-            });
+            let rules = *world.resource::<MatchState>().rules();
+            let winner = round_winner(&rules, reason, winner, || scores(world));
             let name = winner.and_then(|entity| {
                 world.get_mut::<Score>(entity)?.wins += 1;
                 Some(world.get::<DisplayName>(entity)?.0.clone())

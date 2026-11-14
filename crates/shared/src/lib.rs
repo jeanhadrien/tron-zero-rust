@@ -26,7 +26,7 @@ pub use constants::*;
 pub use elimination::*;
 pub use lightyear::prelude::input::native::ActionState;
 pub use match_rules::{
-    EndRules, MatchFlow, MatchRules, MatchStep, Respawn, Roster, RoundEnd, top_scorer,
+    EndRules, MatchFlow, MatchRules, MatchStep, Respawn, Roster, RoundEnd, round_winner, top_scorer,
 };
 pub use math::*;
 pub use physics::*;

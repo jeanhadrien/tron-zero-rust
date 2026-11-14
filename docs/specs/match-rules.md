@@ -72,6 +72,8 @@ plays five 90 s last-standing rounds.
   - Time limit. In a one-round match the winner is the top scorer: most kills,
     then fewest deaths; without a kill, or with a tie at the top, nobody wins.
     With several rounds the scores span the match, so a time-out has no winner.
+    The decision is `shared::round_winner`; the lab does not keep scores and
+    leaves a timed-out round without a winner (no lab metric reads it).
 
   The winner scores one round win. The surviving riders are stopped (dead,
   trail cleared) so nothing happens during the break and no death of the break

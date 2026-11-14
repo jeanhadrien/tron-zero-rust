@@ -376,6 +376,22 @@ impl MatchFlow {
 }
 
 /// The winner of a round that ran out of time: most kills, then fewest
+/// deaths, for a one-round match that ran out of time (with several rounds the
+/// scores span the match, not this round). Otherwise `last_alive`, the
+/// flow's winner. `scores` is called only when needed.
+pub fn round_winner(
+    rules: &MatchRules,
+    reason: RoundEnd,
+    last_alive: Option<Entity>,
+    scores: impl FnOnce() -> Vec<(Entity, Score)>,
+) -> Option<Entity> {
+    if last_alive.is_some() || reason != RoundEnd::TimeLimit || rules.rounds != 1 {
+        return last_alive;
+    }
+    top_scorer(&scores())
+}
+
+/// The top scorer: most kills, then fewest
 /// deaths. Without a kill nobody wins (a rider that never rode is not ahead of
 /// those who died), and a tie at the top has no winner.
 pub fn top_scorer(scores: &[(Entity, Score)]) -> Option<Entity> {

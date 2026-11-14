@@ -280,7 +280,9 @@ of rounds) turns a scenario into a match. It replaces the riders'
 `respawn_after`. With `respawn = "never"` and `last_standing = true`, nobody
 respawns during a round and the round ends when at most one rider is alive (or
 at `time_limit`). The winner is the last rider alive: a time-out with several
-alive, or the last riders dying on the same tick, has no winner. Then every
+alive, or the last riders dying on the same tick, has no winner. (The server names
+the top scorer of a timed-out one-round match, `shared::round_winner`; the lab
+keeps no scores.) Then every
 rider is reset and placed again with the safe-spawn search and a new seed, and
 the next round starts at once (the lab ignores `intermission`). The rounds are
 played by `shared::MatchFlow`, as on the server, and numbered from 1. The trace
