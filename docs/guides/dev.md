@@ -185,6 +185,8 @@ in `docs/specs/netcode-design.md`.
 
 ## Lab (headless scenarios)
 
+`lab --help` and `lab <tournament|tune|ladder> --help` list every flag.
+
 The sim is deterministic and tick-stepped, so situations can be scripted and
 replayed exactly instead of played at 120 Hz. A scenario places riders and
 schedules their actions per tick (format documented in
