@@ -192,8 +192,10 @@ time_limit = 3600
 #[test]
 fn rounds_end_with_a_winner_and_riders_stay_in_company() {
     let mut suite = Suite::parse(ROUNDS_SUITE).unwrap();
-    // The difficulty ladder: the artist is measured by its own test.
-    suite.builds.truncate(5);
+    // The fighters the server seats: the artist is measured by its own test.
+    suite
+        .builds
+        .retain(|b| b.personality != Personality::Artist);
     let report = tournament::run(&suite, None).unwrap();
     let setup = &report.setups[0];
     let ended = f64::from(setup.rounds_played - setup.timeouts) / f64::from(setup.rounds_played);
@@ -217,7 +219,7 @@ fn rounds_end_with_a_winner_and_riders_stay_in_company() {
 /// the fighters happen to draw) and does not die for it.
 #[test]
 fn an_artist_draws_a_pattern_and_stays_alive() {
-    let roster = Path::new(env!("CARGO_MANIFEST_DIR")).join("../bots/rosters/default.toml");
+    let roster = Path::new(env!("CARGO_MANIFEST_DIR")).join("../bots/rosters/ladder.toml");
     let text = format!(
         "seeds = 3\nroster = {:?}\n{}",
         roster.to_str().unwrap(),

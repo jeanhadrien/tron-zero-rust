@@ -114,8 +114,8 @@ binary (`crates/server/config/official.toml`, one long round with respawns).
 last-standing rounds, `docs/specs/match-rules.md`). Keys and the server's env vars (`PORT`,
 `WEB_PORT`, the lobby ones) are in `docs/guides/building.md`. `bots.roster`
 names a roster file (see § Ladder) to seat instead of the built-in one,
-`crates/bots/rosters/default.toml` (embedded at build time: five difficulty
-rungs and the artist Escher); an invalid file stops the server.
+`crates/bots/rosters/default.toml` (embedded at build time: one medium bot,
+four hard bots and the artist Escher); an invalid file stops the server.
 
 **How the simulation works.** Lightyear's link conditioner only delays what a
 peer *receives*, so a client-only conditioner would shape just the server ->
@@ -404,7 +404,7 @@ cycle asks for, rates 1; the mirrored side costs a little, which lets it turn
 away from a wall); `style` only counts for a line with room, so survival wins.
 Use it in a scenario or suite with `bot = "artist"` and `[rider.weights]` /
 `[build.weights]` `motif = 1.0`, `stride = 200.0`. The game's artist is
-`Escher (Artist)` in `crates/bots/rosters/default.toml`, outside the ladder.
+`Escher (Artist)` in `crates/bots/rosters/default.toml` (and `ladder.toml`).
 It draws about 50-60% `pattern` in a crowd against 5-25% for the fighters, with
 no wall deaths. A meander (R R L L) was tried and dropped: it jams against walls.
 `tests/gates.rs` gates the pattern score and the artist's own-fault deaths.
@@ -478,13 +478,20 @@ Every key is required and read as written. It is part of every build's rating
 id. Builds written inline in a suite, scenario, tune or ladder file run with
 the built-in roster's tuning.
 
-The server's roster is `crates/bots/rosters/default.toml`: the five rungs of the
+The ladder roster is `crates/bots/rosters/ladder.toml`: the five rungs of the
 last `duel.ladder.toml` run, weakest first (`Wisp (Novice)`, `Drifter (Easy)`,
 `Warden (Medium)`, `Raptor (Hard)`, `Apex (Expert)`; names carry a difficulty
-label and are at most 16 characters), renamed by hand. `bots::roster::builtin`
-embeds it, so the binary needs no file; `bots.roster` in the server config loads another one.
+label and are at most 16 characters), renamed by hand.
 `tests/roster.rs` checks that each rung beats the one below. After a brain
 change that moves strengths, regenerate the rungs and rename them.
+
+The server's roster is `crates/bots/rosters/default.toml`, written by hand:
+`Moth (Medium)` (adaptive, Warden's budget), then four hard bots with budgets
+around Raptor's and the presets of their personality, `Viper (Hard)`
+(trapper), `Blade (Hard)` (duelist), `Atlas (Hard)` (territorialist),
+`Ghost (Hard)` (survivalist), and Escher. In a quick 1v1 round robin with
+Raptor each hard bot wins at least as many rounds as Raptor. `bots::roster::builtin`
+embeds it, so the binary needs no file; `bots.roster` in the server config loads another one.
 The lab measures builds from roster files (`roster = "builtin"` is this one);
 `difficulty = N` (`bots::config::Difficulty`) stays only as the shorthand of
 scenarios, puzzles and suites for a budget curve, and as the weakest end

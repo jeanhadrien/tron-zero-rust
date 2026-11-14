@@ -1,11 +1,11 @@
-# The server's difficulty ladder: five rungs from one strong build, measured in
+# The difficulty ladder (`crates/bots/rosters/ladder.toml`): five rungs from one strong build, measured in
 # 1v1 rounds by round robin, then every
 # pair of rungs plays head to head. Small on purpose (a few minutes on 4
 # threads). Regenerate the committed roster with:
 #
 #   cargo run --release -p tron-zero-lab -- ladder crates/lab/tuning/duel.ladder.toml --threads 4 --out ladder.toml
 #
-# and copy the five rungs into `crates/bots/rosters/default.toml` (see there).
+# and copy the five rungs into `crates/bots/rosters/ladder.toml` (see there).
 seeds = 4               # round-robin duels: seeds 1..=4 (both seats, 4 rounds each)
 check_seeds = 6         # head-to-heads: seeds 100000..=100005
 rungs = 5

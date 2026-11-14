@@ -301,7 +301,8 @@ killed them last game? Big retention lever; big state/storage question.
 
 - [x] Named with a difficulty label. Implemented as "Name (Label)": the five
   generated rungs `Wisp (Novice)`, `Drifter (Easy)`, `Warden (Medium)`,
-  `Raptor (Hard)`, `Apex (Expert)` in `crates/bots/rosters/default.toml`.
+  `Raptor (Hard)`, `Apex (Expert)` in `crates/bots/rosters/ladder.toml`; the
+  default roster (`default.toml`) is mostly hard bots with distinct personalities.
 - [x] Stats: later / TBD.
 
 ### Open
