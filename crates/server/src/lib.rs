@@ -9,6 +9,7 @@ pub mod announce;
 pub mod bot;
 pub mod budget;
 pub mod chat;
+pub mod config;
 pub mod elimination;
 mod look;
 pub mod probe;

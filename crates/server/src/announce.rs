@@ -15,6 +15,7 @@ use std::sync::{
 use std::thread::JoinHandle;
 use std::time::Duration;
 
+use crate::config::Room;
 use crate::ranked::{RankedState, TicketKey};
 
 /// How often to POST player counts while registered.
@@ -107,13 +108,14 @@ impl RankedCredential {
 }
 
 impl AnnounceConfig {
-    /// Read config from process environment.
-    pub fn from_env() -> Self {
-        Self::from_map(&|key| std::env::var(key).ok())
+    /// Read config from process environment; the room's name and capacity
+    /// come from the server config file.
+    pub fn from_env(room: &Room) -> Self {
+        Self::from_map(&|key| std::env::var(key).ok(), room)
     }
 
     /// Test seam: read config from any key-value lookup.
-    pub fn from_map(get: &dyn Fn(&str) -> Option<String>) -> Self {
+    pub fn from_map(get: &dyn Fn(&str) -> Option<String>, room: &Room) -> Self {
         let manager_url = get("MANAGER_URL")
             .map(|v| clean_manager_url(&v))
             .filter(|v| !v.is_empty())
@@ -147,16 +149,6 @@ impl AnnounceConfig {
             },
         };
 
-        let server_name = get("SERVER_NAME")
-            .map(|v| v.trim().to_string())
-            .filter(|v| !v.is_empty())
-            .unwrap_or_else(|| "Unnamed Server".to_string());
-
-        let max_players = get("MAX_PLAYERS")
-            .filter(|v| !v.trim().is_empty())
-            .and_then(|v| v.trim().parse::<u32>().ok())
-            .unwrap_or(10);
-
         let advertised_secure = get("ADVERTISED_SECURE").as_deref() == Some("true");
 
         let allow_loopback_announce = matches!(
@@ -169,8 +161,8 @@ impl AnnounceConfig {
             advertised_host,
             port,
             advertised_port,
-            server_name,
-            max_players,
+            server_name: room.name.clone(),
+            max_players: room.max_players,
             advertised_secure,
             allow_loopback_announce,
             web_port: None,
@@ -293,7 +285,7 @@ fn is_loopback_host(host: &str) -> bool {
 
 // Wire schema mirrors `server-manager/src/room.ts` — literal camelCase fields.
 // No displayName tags of any kind: the manager carries Rust rooms only,
-// so SERVER_NAME is sent verbatim as displayName.
+// so `server.name` is sent verbatim as displayName.
 #[derive(Debug, Serialize)]
 pub struct RegisterPayload {
     pub host: String,
@@ -834,16 +826,21 @@ mod tests {
             .collect()
     }
 
+    fn room() -> Room {
+        Room {
+            name: "Rust Arena".into(),
+            max_players: 16,
+        }
+    }
+
     #[test]
     fn env_defaults_match_js() {
         let m = map(&[]);
-        let cfg = AnnounceConfig::from_map(&|k| m.get(k).cloned());
+        let cfg = AnnounceConfig::from_map(&|k| m.get(k).cloned(), &room());
         assert_eq!(cfg.manager_url, "http://localhost:3001");
         assert_eq!(cfg.advertised_host, "127.0.0.1");
         assert_eq!(cfg.port, 5000);
         assert_eq!(cfg.advertised_port, 5000);
-        assert_eq!(cfg.server_name, "Unnamed Server");
-        assert_eq!(cfg.max_players, 10);
         assert!(!cfg.advertised_secure);
         assert_eq!(cfg.register_url(), "http://localhost:3001/api/rooms");
     }
@@ -855,11 +852,9 @@ mod tests {
             ("ADVERTISED_HOST", "10.0.0.5"),
             ("PORT", "5001"),
             ("ADVERTISED_PORT", "5002"),
-            ("SERVER_NAME", "Rust Arena"),
-            ("MAX_PLAYERS", "16"),
             ("ADVERTISED_SECURE", "true"),
         ]);
-        let cfg = AnnounceConfig::from_map(&|k| m.get(k).cloned());
+        let cfg = AnnounceConfig::from_map(&|k| m.get(k).cloned(), &room());
         assert_eq!(cfg.manager_url, "http://manager:3001");
         assert_eq!(cfg.advertised_host, "10.0.0.5");
         assert_eq!(cfg.port, 5001);
@@ -878,21 +873,14 @@ mod tests {
     }
 
     #[test]
-    fn whitespace_server_name_falls_back_to_default() {
-        let m = map(&[("SERVER_NAME", "   ")]);
-        let cfg = AnnounceConfig::from_map(&|k| m.get(k).cloned());
-        assert_eq!(cfg.server_name, "Unnamed Server");
-    }
-
-    #[test]
     fn advertised_host_is_trimmed() {
         // Padding would otherwise be advertised verbatim and break client
         // resolution ("127.0.0.1 " misses the IP-literal fast path).
         let m = map(&[("ADVERTISED_HOST", "  10.0.0.5 ")]);
-        let cfg = AnnounceConfig::from_map(&|k| m.get(k).cloned());
+        let cfg = AnnounceConfig::from_map(&|k| m.get(k).cloned(), &room());
         assert_eq!(cfg.advertised_host, "10.0.0.5");
         let m = map(&[("ADVERTISED_HOST", "   ")]);
-        let cfg = AnnounceConfig::from_map(&|k| m.get(k).cloned());
+        let cfg = AnnounceConfig::from_map(&|k| m.get(k).cloned(), &room());
         assert_eq!(cfg.advertised_host, "127.0.0.1");
     }
 
@@ -901,10 +889,10 @@ mod tests {
         // Copy-paste padding and cmd's `set VAR="..."` quote embedding both
         // produce ureq's opaque "invalid uri character" without cleaning.
         let m = map(&[("MANAGER_URL", "  https://example.com:3001/ ")]);
-        let cfg = AnnounceConfig::from_map(&|k| m.get(k).cloned());
+        let cfg = AnnounceConfig::from_map(&|k| m.get(k).cloned(), &room());
         assert_eq!(cfg.register_url(), "https://example.com:3001/api/rooms");
         let m = map(&[("MANAGER_URL", "\"https://example.com:3001/\"")]);
-        let cfg = AnnounceConfig::from_map(&|k| m.get(k).cloned());
+        let cfg = AnnounceConfig::from_map(&|k| m.get(k).cloned(), &room());
         assert_eq!(cfg.register_url(), "https://example.com:3001/api/rooms");
     }
 
@@ -912,11 +900,11 @@ mod tests {
     fn advertised_port_falls_back_to_port() {
         // Unset -> PORT.
         let m = map(&[("PORT", "5007")]);
-        let cfg = AnnounceConfig::from_map(&|k| m.get(k).cloned());
+        let cfg = AnnounceConfig::from_map(&|k| m.get(k).cloned(), &room());
         assert_eq!(cfg.advertised_port, 5007);
         // Invalid -> PORT with a warning.
         let m = map(&[("PORT", "5007"), ("ADVERTISED_PORT", "bogus")]);
-        let cfg = AnnounceConfig::from_map(&|k| m.get(k).cloned());
+        let cfg = AnnounceConfig::from_map(&|k| m.get(k).cloned(), &room());
         assert_eq!(cfg.advertised_port, 5007);
     }
 
@@ -977,7 +965,7 @@ mod tests {
     fn ranked_credential_is_read_from_the_environment() {
         let from = |pairs: &[(&str, &str)]| {
             let m = map(pairs);
-            AnnounceConfig::from_map(&|k| m.get(k).cloned()).ranked
+            AnnounceConfig::from_map(&|k| m.get(k).cloned(), &room()).ranked
         };
         assert_eq!(from(&[]), None);
         assert_eq!(
@@ -1002,13 +990,13 @@ mod tests {
     #[test]
     fn register_payload_carries_only_the_chosen_credential() {
         let m = map(&[("RANKED_KEY", "k1.s")]);
-        let key_cfg = AnnounceConfig::from_map(&|k| m.get(k).cloned());
+        let key_cfg = AnnounceConfig::from_map(&|k| m.get(k).cloned(), &room());
         let value = serde_json::to_value(key_cfg.register_payload(false, None)).unwrap();
         assert_eq!(value["rankedKey"], Value::String("k1.s".into()));
         assert!(value.get("identityToken").is_none());
 
         let m = map(&[("RANKED_IDENTITY", "gcp")]);
-        let id_cfg = AnnounceConfig::from_map(&|k| m.get(k).cloned());
+        let id_cfg = AnnounceConfig::from_map(&|k| m.get(k).cloned(), &room());
         let value =
             serde_json::to_value(id_cfg.register_payload(false, Some("a.b.c".into()))).unwrap();
         assert_eq!(value["identityToken"], Value::String("a.b.c".into()));
@@ -1067,7 +1055,7 @@ mod tests {
 
     fn cfg_for(manager: &str, host: &str) -> AnnounceConfig {
         let m = map(&[("MANAGER_URL", manager), ("ADVERTISED_HOST", host)]);
-        AnnounceConfig::from_map(&|k| m.get(k).cloned())
+        AnnounceConfig::from_map(&|k| m.get(k).cloned(), &room())
     }
 
     #[test]
@@ -1109,21 +1097,21 @@ mod tests {
             ("ADVERTISED_HOST", "127.0.0.1"),
             ("ALLOW_LOOPBACK_ANNOUNCE", "1"),
         ]);
-        let cfg = AnnounceConfig::from_map(&|k| m.get(k).cloned());
+        let cfg = AnnounceConfig::from_map(&|k| m.get(k).cloned(), &room());
         assert!(cfg.allow_loopback_announce);
         assert!(cfg.announce_blocker().is_none());
         assert!(cfg.announce_warning().is_some());
         // Off by default, and anything but 1/true does not count.
         assert!(!cfg_for(remote, "127.0.0.1").allow_loopback_announce);
         let m = map(&[("ALLOW_LOOPBACK_ANNOUNCE", "0")]);
-        assert!(!AnnounceConfig::from_map(&|k| m.get(k).cloned()).allow_loopback_announce);
+        assert!(!AnnounceConfig::from_map(&|k| m.get(k).cloned(), &room()).allow_loopback_announce);
         // Nothing to warn about when the setup is fine anyway.
         let m = map(&[
             ("MANAGER_URL", remote),
             ("ADVERTISED_HOST", "play.example.com"),
             ("ALLOW_LOOPBACK_ANNOUNCE", "1"),
         ]);
-        let cfg = AnnounceConfig::from_map(&|k| m.get(k).cloned());
+        let cfg = AnnounceConfig::from_map(&|k| m.get(k).cloned(), &room());
         assert!(cfg.announce_warning().is_none());
     }
 

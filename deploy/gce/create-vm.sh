@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 # Create (or update the metadata of) a Tron Zero game server VM on GCE.
 #
-#   deploy/gce/create-vm.sh <image-tag> [server-name]
+#   deploy/gce/create-vm.sh <image-tag>
 #
 # The VM runs Container-Optimized OS; cloud-init.yaml starts the server image
-# under systemd. Stop the VM when nobody plays (it is billed while running):
+# under systemd. Room name, capacity and game mode come from the official config
+# built into the image (crates/server/config/official.toml). Stop the VM when nobody plays (it is billed while running):
 #   gcloud compute instances stop tron-zero-eu --zone europe-west1-b
 set -euo pipefail
 
-TAG="${1:?usage: create-vm.sh <image-tag> [server-name]}"
-NAME_SHOWN="${2:-Tron Zero EU}"
+TAG="${1:?usage: create-vm.sh <image-tag>}"
 PROJECT="${PROJECT:-tron-zero-js}"
 ZONE="${ZONE:-europe-west1-b}"
 VM="${VM:-tron-zero-eu}"
@@ -23,7 +23,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 SA_NAME="${SA_NAME:-tron-zero-game}"
 SA_EMAIL="${SA_NAME}@${PROJECT}.iam.gserviceaccount.com"
 
-METADATA="tron-image=${IMAGE},tron-server-name=${NAME_SHOWN},tron-max-players=10,tron-manager-url=${MANAGER_URL}"
+METADATA="tron-image=${IMAGE},tron-manager-url=${MANAGER_URL}"
 
 # Image registry (Docker, europe-west1); Cloud Build pushes the server image here.
 if ! gcloud artifacts repositories describe tron --location europe-west1 --project "$PROJECT" >/dev/null 2>&1; then

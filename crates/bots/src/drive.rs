@@ -42,7 +42,8 @@ impl Look<'_> {
 /// due (`Brain::wants_view`); the snapshot is built once, in a tick where any
 /// bot looks. A bot that does not look holds straight: turns are one-shot, and
 /// repeating one would spin the rider into its own trail. `pin` fixes the
-/// level of detail; without it, it follows the number of riders alive.
+/// level of detail; without it, it follows the number of riders alive, by
+/// each brain's tuning.
 /// `decide` runs once per looking bot and must return its decision, usually
 /// `look.act()`.
 pub fn drive(
@@ -63,7 +64,6 @@ pub fn drive(
     }
     let world = builder.build(tick);
     let alive = world.riders.iter().filter(|r| r.alive).count();
-    let tier = pin.unwrap_or_else(|| Tier::from_load(alive, scheduler));
     for ((seat, looks), action) in seats.iter_mut().zip(looking).zip(&mut actions) {
         if !looks {
             continue;
@@ -71,6 +71,7 @@ pub fn drive(
         let Some(index) = world.index_of(seat.entity.to_bits()) else {
             continue;
         };
+        let tier = pin.unwrap_or_else(|| seat.brain.build.tuning.tiers.of_load(alive));
         *action = decide(Look {
             entity: seat.entity,
             brain: &mut *seat.brain,

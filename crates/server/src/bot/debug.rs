@@ -245,7 +245,8 @@ mod tests {
     #[test]
     fn build_debug_values_are_sane() {
         let world = head_on_world();
-        let build = BotBuild::from_difficulty("t", Personality::Duelist, Difficulty(2000));
+        let tuning = bots::roster::builtin_tuning().unwrap();
+        let build = BotBuild::from_difficulty("t", Personality::Duelist, Difficulty(2000), tuning);
         let params = Params::new(&build, Tier::Full, 1);
         let outcome = plan(&world, 0, &params, &mut Scratch::default(), None, None);
         let action = outcome.maneuver.first_action();

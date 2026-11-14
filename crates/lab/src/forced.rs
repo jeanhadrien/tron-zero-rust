@@ -14,22 +14,25 @@
 //! segment is laid as a line of its own, so none frees up within the flood
 //! (the bots' flood lets a trail's tail pass; that takes longer than any pocket).
 //! The death is forced when
-//! - that room was below what a rider needs to live (`NEED_CELLS`, the same
-//!   pocket size the bots use), and
+//! - that room was below what a rider needs to live (`POCKET_CELLS`), and
 //! - the trail an opponent laid during the last `WINDOW` ticks is part of what
 //!   closed it: without those segments the room would have been at least
-//!   `NEED_CELLS` and at least twice as large.
+//!   `POCKET_CELLS` and at least twice as large.
 //!
 //! The opponent whose recent trail gives back the most room is credited. A
 //! rider that coils into itself far from everyone has no opponent trail in its
 //! pocket, so it stays a pure self-kill; a pocket whose opponent walls are
 //! older than the window was entered knowingly and stays one too.
 
-use bots::space::{NEED_CELLS, STEP, Scratch, Space};
+use bots::space::{STEP, Scratch, Space};
 use glam::Vec2;
 
 use crate::sim::{Event, EventKind, RiderView};
 
+/// Room (cells) under which a rider is in a pocket. The built-in roster's
+/// `need_cells` when this was set; fixed here so the metric does not move
+/// with the bots' tuning.
+const POCKET_CELLS: f32 = 300.0;
 /// Ticks (2 s) an opponent's trail counts as recent.
 const WINDOW: u32 = 240;
 /// The flood stops counting here.
@@ -78,14 +81,14 @@ pub fn forced_by(
         space.measure(&mut scratch, &[], head, 0, CAP).area
     };
     let closed = room(None);
-    if closed as f32 >= NEED_CELLS {
+    if closed as f32 >= POCKET_CELLS {
         return None;
     }
     let (best, gain) = (0..pre.len())
         .filter(|&k| k != victim && !trails[k].is_empty())
         .map(|k| (k, room(Some(k))))
         .max_by_key(|&(_, open)| open)?;
-    (gain as f32 >= NEED_CELLS && gain >= 2 * closed).then_some(best)
+    (gain as f32 >= POCKET_CELLS && gain >= 2 * closed).then_some(best)
 }
 
 /// A living rider's trail as segments. A leg is recent when the turn that ended

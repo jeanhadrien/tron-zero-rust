@@ -1,0 +1,14 @@
+# Official server config: what the official servers run (embedded in the
+# server at build time; SERVER_CONFIG=path loads another file instead). Game
+# settings only: ports, advertised host, manager and secrets are env vars
+# (docs/guides/building.md). Every key is required; see `src/config.rs`.
+
+[server]
+name = "Tron Zero EU"
+max_players = 10
+
+[game]
+mode = "ffa"
+
+[bots]
+roster = "builtin"

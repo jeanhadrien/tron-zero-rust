@@ -7,22 +7,10 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::tuning::Heat;
+
 /// How many terms there are; the length of both `values` arrays.
 pub const TERM_COUNT: usize = 13;
-
-/// What a full round heat adds to the fight terms and to the risk a bot takes
-/// (the same for every personality: a round has to end), and takes off room,
-/// margin and rubber's price (share of the weight).
-const HEAT_PRESSURE: f32 = 5.0;
-const HEAT_CONTROL: f32 = 0.5;
-const HEAT_ENGAGE: f32 = 3.0;
-const HEAT_RISK: f32 = 2.0;
-const HEAT_WEAR: f32 = 0.8;
-const HEAT_RUBBER: f32 = 0.8;
-/// Heat at which wear and rubber's price start to go (full one heat later):
-/// the fight comes first (kills come late in a round, once the heat is up), a
-/// round nobody wins is only forced to an end afterwards.
-const WEAR_AT: f32 = 2.0;
 
 /// What a candidate maneuver achieves, one measurement per term.
 #[derive(Clone, Copy, Debug, Default)]
@@ -156,19 +144,22 @@ impl Weights {
     /// `heat`): it cares less about
     /// room and margin, wants the fight (and the risk that goes with it) more,
     /// and spends rubber freely, so a round whose riders all play safe still
-    /// comes to an end.
-    pub fn heated(self, heat: f32) -> Self {
-        let late = (heat - WEAR_AT).clamp(0.0, 1.0);
-        let worn = 1.0 - HEAT_WEAR * late;
+    /// comes to an end. What a heat adds and takes off is the same for every
+    /// personality (`by`, the tuning): a round has to end. Wear starts late
+    /// (`by.wear_at`): the fight comes first, a round nobody wins is only
+    /// forced to an end afterwards.
+    pub fn heated(self, heat: f32, by: &Heat) -> Self {
+        let late = (heat - by.wear_at).clamp(0.0, 1.0);
+        let worn = 1.0 - by.wear * late;
         Self {
             space: self.space * worn,
             pocket: self.pocket * worn,
             clear: self.clear * worn,
-            pressure: self.pressure + HEAT_PRESSURE * heat,
-            control: self.control + HEAT_CONTROL * heat,
-            engage: self.engage + HEAT_ENGAGE * heat,
-            rubber: self.rubber * (1.0 - HEAT_RUBBER * late),
-            risk: self.risk + HEAT_RISK * heat,
+            pressure: self.pressure + by.pressure * heat,
+            control: self.control + by.control * heat,
+            engage: self.engage + by.engage * heat,
+            rubber: self.rubber * (1.0 - by.rubber * late),
+            risk: self.risk + by.risk * heat,
             ..self
         }
     }

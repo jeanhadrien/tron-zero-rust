@@ -2,7 +2,7 @@
 // implementation backs local development and tests; Firestore is the planned
 // production implementation of the same interface.
 
-/** What a rating row is for. Humans are `acct:<uuid>`, bots `bot:<personality>:<skill>`. */
+/** What a rating row is for. Humans are `acct:<uuid>`, bots `bot:<name>:<fingerprint>`. */
 export interface RatingDoc {
   id: string;
   kind: 'human' | 'bot';

@@ -22,7 +22,8 @@ seat bots, announce to the lobby. Lib + bin: logic stays in the lib so
 - `lib.rs` — `add_core` wires Lightyear and the chain `handle_respawns → apply_turn_commands → simulate_players → resolve_deaths → advance_match` (the last in rounds mode only). `main.rs` — bots, logging, announcer.
 - `admission` (hello, capacity), `session` (heartbeat, leave, lease), `turns` (sequenced commands, acks), `budget` (per-link abuse limits).
 - `systems` (connect/disconnect, arena, respawn queue), `rounds` (applies `shared::MatchFlow`: scores, placement, replicated `MatchStatus`).
-- `bot/` — seats the roster (`BOT_ROSTER` or the built-in one), drives brains through `bots::drive`, respawns a dead bot as the same entity on a safe spot, debug overlay.
+- `config` — the server config file (room, game mode, bots); `config/official.toml` is embedded, `config/local.toml` and `dev-cloud.toml` serve the scripts.
+- `bot/` — seats the roster named by the config, drives brains through `bots::drive`, respawns a dead bot as the same entity on a safe spot, debug overlay.
 - `look`, `chat`, `probe`, `web` (WebTransport, certificate rotation), `announce` (manager HTTP), `ranked` and `elimination` (results reporting).
 
 ## Rules
@@ -30,10 +31,10 @@ seat bots, announce to the lobby. Lib + bin: logic stays in the lib so
 - A new `FixedUpdate` system states its order against `simulate_players` with a comment saying why.
 - Every message a client can send freely gets a per-link budget in `budget.rs`.
 - Logging: `warn!` = denied/degraded, `info!` = lifecycle, `debug!` = per-tick noise. Install the log subscriber before reading config.
-- Config comes from env vars read at start; an invalid value stops the server (exit code 2), it never silently runs another mode. Main ones: `PORT`, `WEB_PORT`, `GAME_MODE` (`ffa` | `rounds`), `ROUNDS`, `ROUND_SECS`, `INTERMISSION_SECS`, `FINAL_INTERMISSION_SECS`, `BOT_ROSTER`. Full list: `docs/guides/dev.md`.
+- Game settings (room, mode, bots) come from the config file (`SERVER_CONFIG`, else the embedded official one), every key required; deployment settings and secrets (ports, advertised host, manager, `RANKED_*`) from env vars. Never put one in the other. Both are read at start; an invalid value stops the server (exit code 2), it never silently runs another mode. Full list: `docs/guides/building.md`.
 
 ## Test
 
 - `cargo nextest run -p tron-zero-server` for unit tests (state machines, respawn, budgets).
 - `cargo nextest run -p tron-zero-nettest` for anything a client can observe: once, alone, at the end.
-- Smoke: run the release server alone for 20 s and read its log (`GAME_MODE=rounds` with a short `ROUND_SECS` exercises a full match).
+- Smoke: run the release server alone for 20 s and read its log (`SERVER_CONFIG=crates/server/config/local.toml` with a short `round_secs` in a copy exercises a full match).

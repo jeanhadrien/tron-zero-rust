@@ -18,9 +18,6 @@ pub const N: usize = (ARENA_WIDTH / CELL) as usize;
 const CELLS: usize = N * N;
 /// Distance covered in one tick at base speed.
 pub const STEP: f32 = BASE_SPEED * TICK_SECS;
-/// Cells of room a bot wants around it: about 650 ticks of riding in a
-/// perfectly packed region. Smaller regions are pockets.
-pub const NEED_CELLS: f32 = 300.0;
 /// Ticks to cross one cell at base speed.
 const CELL_TICKS: f32 = CELL / STEP;
 /// A cell that never frees up.

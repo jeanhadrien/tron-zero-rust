@@ -107,16 +107,15 @@ Environment variables (all opt-in, read by the client; `TRON_BOT_DEBUG=1` is rea
 | `TRON_CONFIG_FILE` | Use this settings file instead of the platform one. |
 | `MANAGER_URL` | Lobby base URL for the server browser (see Settings file for precedence). |
 
-Server environment variables (read once at start; `MAX_PLAYERS`, `PORT`, `WEB_PORT` and the lobby ones are in `docs/guides/building.md`). The game mode is described in `docs/specs/rounds-mode.md`; `scripts/play-local.*` sets `GAME_MODE=rounds`:
-
-| Variable | Effect |
-|----------|--------|
-| `GAME_MODE` | `ffa` (default: free-for-all, manual respawns) or `rounds` (last rider standing per round). |
-| `ROUNDS` | Rounds per match in rounds mode (default 5). |
-| `ROUND_SECS` | Round time limit in seconds (default 90; `0` = no limit). |
-| `INTERMISSION_SECS` | Break between rounds, and before round 1 (default 3). |
-| `FINAL_INTERMISSION_SECS` | Break showing the final standings (default 8). |
-| `BOT_ROSTER` | Path of a roster file (see § Ladder) to seat instead of the built-in one, `crates/bots/rosters/default.toml` (embedded at build time: five difficulty rungs and the artist Escher). One bot per build; logged at `info!` at start; an invalid file stops the server. |
+Server game settings (room name and capacity, game mode, bot roster) come from
+a config file: `SERVER_CONFIG=path`, else the official one built into the
+binary (`crates/server/config/official.toml`, free-for-all).
+`scripts/play-local.*` uses `crates/server/config/local.toml` (rounds mode,
+`docs/specs/rounds-mode.md`). Keys and the server's env vars (`PORT`,
+`WEB_PORT`, the lobby ones) are in `docs/guides/building.md`. `bots.roster`
+names a roster file (see § Ladder) to seat instead of the built-in one,
+`crates/bots/rosters/default.toml` (embedded at build time: five difficulty
+rungs and the artist Escher); an invalid file stops the server.
 
 **How the simulation works.** Lightyear's link conditioner only delays what a
 peer *receives*, so a client-only conditioner would shape just the server ->
@@ -465,15 +464,23 @@ knobs move survival more than winning), `-name` flips a metric where lower is
 better. `duel.ladder.toml` also degrades past the presets (`[degrade]`), because
 rungs close to each other do not separate in a quick check.
 
-The output is a roster file (`bots::roster`: `[[build]]` entries with
-personality, every knob and every weight). The lab reads it with
-`roster = "ladder.toml"` in a suite or a pool.
+The output is a roster file (`bots::roster`: the planner `[tuning]` shared by
+its builds, then `[[build]]` entries with personality, every knob and every
+weight). The lab reads it with `roster = "ladder.toml"` in a suite or a pool.
+
+Roster `[tuning]` (`bots::tuning`) holds the planner's global constants: room
+and safety, search budget, engagement, targeting, bold lines and cuts, lanes,
+round heat, the artist's rating, and the load tiers (riders alive from which
+every bot plans with a shorter horizon, less variety and a smaller flood).
+Every key is required and read as written. It is part of every build's rating
+id. Builds written inline in a suite, scenario, tune or ladder file run with
+the built-in roster's tuning.
 
 The server's roster is `crates/bots/rosters/default.toml`: the five rungs of the
 last `duel.ladder.toml` run, weakest first (`Wisp (Novice)`, `Drifter (Easy)`,
 `Warden (Medium)`, `Raptor (Hard)`, `Apex (Expert)`; names carry a difficulty
 label and are at most 16 characters), renamed by hand. `bots::roster::builtin`
-embeds it, so the binary needs no file; `BOT_ROSTER=path` loads another one.
+embeds it, so the binary needs no file; `bots.roster` in the server config loads another one.
 `tests/roster.rs` checks that each rung beats the one below. After a brain
 change that moves strengths, regenerate the rungs and rename them.
 The lab measures builds from roster files (`roster = "builtin"` is this one);
@@ -509,7 +516,7 @@ the wire format or gameplay logic changes, mixed with a fingerprint of every
 constant in `constants.rs`, which updates itself; a test fails if a new constant
 is not listed in `SIM_CONSTANTS`) and the requested name. The server only spawns
 the rider (and starts replicating to the link) after accepting it: a version
-mismatch or a full server (`MAX_PLAYERS` humans; bots do not count) is answered
+mismatch or a full server (`server.max_players` humans; bots do not count) is answered
 with a reason the menu shows, and the link is closed about a second later, once
 the client has said goodbye or the rejection had time to be retransmitted. The
 server trims the name, strips control and invisible format characters (bidi

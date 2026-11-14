@@ -9,8 +9,6 @@
 
 pub(crate) mod debug;
 
-use std::path::Path;
-
 use bevy::prelude::*;
 use bots::Brain;
 use bots::config::BotBuild;
@@ -43,22 +41,6 @@ struct RespawnIn(u32);
 /// The builds the server seats, one bot each.
 #[derive(Resource)]
 pub struct BotRoster(pub Vec<BotBuild>);
-
-/// The roster from `BOT_ROSTER` (a roster file), else the embedded default.
-pub fn roster_from_env(get: &dyn Fn(&str) -> Option<String>) -> Result<BotRoster, String> {
-    match get("BOT_ROSTER").filter(|path| !path.trim().is_empty()) {
-        Some(path) => {
-            let builds = bots::roster::load(Path::new(path.trim()))?;
-            info!(path = %path, bots = builds.len(), "Bot roster loaded from BOT_ROSTER");
-            Ok(BotRoster(builds))
-        }
-        None => {
-            let builds = bots::roster::builtin()?;
-            info!(bots = builds.len(), "Bot roster: built-in default");
-            Ok(BotRoster(builds))
-        }
-    }
-}
 
 /// Spawn one bot per build of the roster, dead and due at once: `respawn_bots`
 /// places them on the first fixed tick, like any later respawn.
@@ -190,15 +172,6 @@ pub fn respawn_bots(world: &mut World) {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn the_roster_is_the_built_in_one_unless_a_file_is_named() {
-        let none = |_: &str| None;
-        let roster = roster_from_env(&none).unwrap();
-        assert!(roster.0.len() >= 5);
-        let missing = |_: &str| Some("no/such/roster.toml".to_owned());
-        assert!(roster_from_env(&missing).is_err());
-    }
 
     /// An arena and one dead bot due at once.
     fn arena_with_bot() -> (World, Entity) {

@@ -58,7 +58,7 @@ numbers are in `docs/specs/netcode-design.md`; the headless harness is
   planner changes the `bot_duel` and `rounds` goldens (bless after intent).
   Settled by JH: kills between evading bots stay rare, no rule change. The
   server now seats a generated five-rung difficulty ladder plus the artist
-  Escher (`crates/bots/rosters/default.toml`, `BOT_ROSTER` to override). Open: in 6-rider rounds the artist wins about
+  Escher (`crates/bots/rosters/default.toml`, `bots.roster` in the server config to override). Open: in 6-rider rounds the artist wins about
   25% of rounds (it survives while fighters die in the crowd), the ladder was
   measured in full-detail duels while 5+ riders use a lower level of detail.
 - [ ] Collision fairness follow-ups (`crates/shared/src/systems/player.rs`):

@@ -27,5 +27,5 @@ anonymous accounts, join tickets, Elo ratings, leaderboard and placement.
 ## Dev loop
 
 - `bun run dev` (watch mode, `:3001`), `bun run typecheck` before committing.
-- A bot's rating id comes from its build (name and fingerprint): a retuned or
-  renamed bot is a new rated identity.
+- A bot's rating id comes from its build (name and fingerprint of its values
+  and its roster's tuning): a retuned or renamed bot is a new rated identity.

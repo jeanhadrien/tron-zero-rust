@@ -21,8 +21,12 @@ gcloud builds submit --project tron-zero-js --region europe-west1 \
 ## Create or update the VM
 
 ```
-deploy/gce/create-vm.sh <image-tag> "Tron Zero EU"
+deploy/gce/create-vm.sh <image-tag>
 ```
+
+The room name, capacity, game mode and bots are the official config built into
+the image (`crates/server/config/official.toml`); change them there and ship a
+new image.
 
 Idempotent: creates the Artifact Registry repo `tron` and the `tron-zero-game`
 firewall rule (udp:5000,5001 to the `tron-zero-game` tag) if missing, then
