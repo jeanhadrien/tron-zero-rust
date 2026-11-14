@@ -20,13 +20,10 @@ use crate::objective::{Terms, Weights};
 use crate::plan::{Action, Kind, MAX_TURNS, Maneuver, Turn};
 use crate::race::{self, Cells, Laid, MAX_RACERS};
 use crate::schedule::Tier;
-use crate::space::{CELL, COARSE, STEP, Scratch, Space};
+use crate::space::{CELL, COARSE, NEED_CELLS, STEP, Scratch, Space};
 use crate::style::{Figure, Progress};
 use crate::world::{RiderSnapshot, WorldSnapshot};
 
-/// Cells of room a bot wants around it: about 650 ticks of riding in a
-/// perfectly packed region. Smaller regions are pockets.
-const NEED_CELLS: f32 = 300.0;
 /// Free ticks ahead of the end pose that count as fully clear.
 const CLEAR_TICKS: f32 = 20.0;
 /// Candidates the physics may check, best first, before giving up on finding

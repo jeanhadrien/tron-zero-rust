@@ -8,8 +8,12 @@
 //! only: the sim, the ranked rating and the trace do not use it.
 //!
 //! Definition. Take the rider's reachable room just before it died: a flood
-//! fill over a 20-unit grid from its head, blocked by walls and every living
-//! trail (its own too), counted up to a cap. The death is forced when
+//! fill from its head over the bots' room grid (`bots::space`: 20-unit cells over
+//! the default arena, so like the bots it assumes a 2000-unit arena), blocked by
+//! walls and every living trail (its own too), counted up to a cap. Every
+//! segment is laid as a line of its own, so none frees up within the flood
+//! (the bots' flood lets a trail's tail pass; that takes longer than any pocket).
+//! The death is forced when
 //! - that room was below what a rider needs to live (`NEED_CELLS`, the same
 //!   pocket size the bots use), and
 //! - the trail an opponent laid during the last `WINDOW` ticks is part of what
@@ -21,18 +25,15 @@
 //! pocket, so it stays a pure self-kill; a pocket whose opponent walls are
 //! older than the window was entered knowingly and stays one too.
 
+use bots::space::{NEED_CELLS, STEP, Scratch, Space};
 use glam::Vec2;
 
 use crate::sim::{Event, EventKind, RiderView};
 
-/// Grid cell side in world units.
-const CELL: f32 = 20.0;
 /// Ticks (2 s) an opponent's trail counts as recent.
 const WINDOW: u32 = 240;
-/// Cells of room a rider needs; fewer is a pocket.
-const NEED_CELLS: usize = 300;
 /// The flood stops counting here.
-const CAP: usize = 3000;
+const CAP: u32 = 3000;
 
 /// A trail segment, and whether it was laid during the last `WINDOW` ticks.
 struct Seg {
@@ -41,24 +42,15 @@ struct Seg {
     recent: bool,
 }
 
-/// Distance a rider at speed 1 covers in a tick.
-const STEP: f32 = shared::BASE_SPEED * shared::TICK_SECS;
-
 /// The opponent (rider index) that forced the death of `victim` at `tick`, if
 /// any. `pre` is every rider as it was just before the deadly tick.
 pub fn forced_by(
     pre: &[RiderView],
     walls: &[[f32; 4]],
-    width: f32,
     events: &[Event],
     tick: u32,
     victim: usize,
 ) -> Option<usize> {
-    let grid = Grid::new(width);
-    let wall_segs: Vec<(Vec2, Vec2)> = walls
-        .iter()
-        .map(|w| (Vec2::new(w[0], w[1]), Vec2::new(w[2], w[3])))
-        .collect();
     let trails: Vec<Vec<Seg>> = pre
         .iter()
         .map(|r| {
@@ -70,30 +62,30 @@ pub fn forced_by(
         })
         .collect();
     let head = pre[victim].position;
-    let room = |skip: Option<usize>| {
-        let mut blocked = vec![false; grid.n * grid.n];
-        for &(a, b) in &wall_segs {
-            grid.mark(&mut blocked, a, b);
-        }
-        for (owner, trail) in trails.iter().enumerate() {
-            for seg in trail {
-                if skip == Some(owner) && seg.recent {
-                    continue;
-                }
-                grid.mark(&mut blocked, seg.a, seg.b);
-            }
-        }
-        grid.flood(&mut blocked, head)
+    let mut scratch = Scratch::default();
+    let mut room = |skip: Option<usize>| {
+        let lines: Vec<Vec<Vec2>> = trails
+            .iter()
+            .enumerate()
+            .flat_map(|(owner, trail)| {
+                trail
+                    .iter()
+                    .filter(move |seg| !(skip == Some(owner) && seg.recent))
+                    .map(|seg| vec![seg.a, seg.b])
+            })
+            .collect();
+        let space = Space::build(walls, &lines);
+        space.measure(&mut scratch, &[], head, 0, CAP).area
     };
     let closed = room(None);
-    if closed >= NEED_CELLS {
+    if closed as f32 >= NEED_CELLS {
         return None;
     }
     let (best, gain) = (0..pre.len())
         .filter(|&k| k != victim && !trails[k].is_empty())
         .map(|k| (k, room(Some(k))))
         .max_by_key(|&(_, open)| open)?;
-    (gain >= NEED_CELLS && gain >= 2 * closed).then_some(best)
+    (gain as f32 >= NEED_CELLS && gain >= 2 * closed).then_some(best)
 }
 
 /// A living rider's trail as segments. A leg is recent when the turn that ended
@@ -148,64 +140,6 @@ fn segments(rider: &RiderView, events: &[Event], tick: u32) -> Vec<Seg> {
         });
     }
     segs
-}
-
-/// A square occupancy grid over the arena.
-struct Grid {
-    n: usize,
-    half: f32,
-}
-
-impl Grid {
-    fn new(width: f32) -> Self {
-        Self {
-            n: (width / CELL).ceil() as usize,
-            half: width * 0.5,
-        }
-    }
-
-    fn cell(&self, p: Vec2) -> (usize, usize) {
-        let local = (p + Vec2::splat(self.half)) / CELL;
-        let clamp = |v: f32| (v.max(0.0) as usize).min(self.n - 1);
-        (clamp(local.x), clamp(local.y))
-    }
-
-    /// Block every cell the segment passes through, sampled twice per cell.
-    fn mark(&self, blocked: &mut [bool], a: Vec2, b: Vec2) {
-        let samples = ((a.distance(b) / (CELL * 0.5)).ceil() as usize).max(1);
-        for i in 0..=samples {
-            let (x, y) = self.cell(a.lerp(b, i as f32 / samples as f32));
-            blocked[y * self.n + x] = true;
-        }
-    }
-
-    /// Free cells reachable from the cell of `from` (which counts even when
-    /// its own trail marked it), up to `CAP`.
-    fn flood(&self, blocked: &mut [bool], from: Vec2) -> usize {
-        let (x, y) = self.cell(from);
-        let mut stack = vec![(x, y)];
-        blocked[y * self.n + x] = true;
-        let mut count = 0;
-        while let Some((x, y)) = stack.pop() {
-            count += 1;
-            if count >= CAP {
-                break;
-            }
-            let near = [
-                (x.wrapping_sub(1), y),
-                (x + 1, y),
-                (x, y.wrapping_sub(1)),
-                (x, y + 1),
-            ];
-            for (nx, ny) in near {
-                if nx < self.n && ny < self.n && !blocked[ny * self.n + nx] {
-                    blocked[ny * self.n + nx] = true;
-                    stack.push((nx, ny));
-                }
-            }
-        }
-        count
-    }
 }
 
 #[cfg(test)]
@@ -272,7 +206,7 @@ mod tests {
     #[test]
     fn a_pocket_closed_by_a_fresh_foe_trail_is_forced() {
         let (pre, events) = pocket(30);
-        assert_eq!(forced_by(&pre, &WALLS, 600.0, &events, 2000, 0), Some(1));
+        assert_eq!(forced_by(&pre, &WALLS, &events, 2000, 0), Some(1));
     }
 
     #[test]
@@ -280,9 +214,9 @@ mod tests {
         let (pre, events) = pocket(30);
         // The same pocket, but the foe's line has stood for ten seconds.
         let (_, old) = pocket(1200);
-        assert_eq!(forced_by(&pre, &WALLS, 600.0, &old, 2000, 0), None);
+        assert_eq!(forced_by(&pre, &WALLS, &old, 2000, 0), None);
         // Nobody else about: the victim coiled into itself.
         let alone = vec![pre[0].clone()];
-        assert_eq!(forced_by(&alone, &WALLS, 600.0, &events, 2000, 0), None);
+        assert_eq!(forced_by(&alone, &WALLS, &events, 2000, 0), None);
     }
 }

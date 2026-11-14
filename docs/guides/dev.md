@@ -336,7 +336,7 @@ score:
 
 Forced kills (`crates/lab/src/forced.rs`, lab only: the sim and the ranked rating
 still credit the obstacle faced). A wall or own-trail death is forced when, just
-before it, the rider's reachable room (20-unit flood fill) was below a pocket
+before it, the rider's reachable room (the bots' 20-unit room grid, `bots::space`) was below a pocket
 (300 cells) and the trail an opponent laid in the last 240 ticks closed it: without
 it the room is at least 300 cells and twice as large. The opponent giving back
 the most room gets the kill. A rider coiling alone has no opponent trail in its

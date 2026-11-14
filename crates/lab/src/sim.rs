@@ -509,14 +509,7 @@ impl Lab {
                     .find(|d| d.victim == entity)
                     .map_or_else(|| "unknown".into(), |d| self.cause_label(d.cause));
                 if cause == "wall" || cause == "own_trail" {
-                    let by = forced::forced_by(
-                        &pre,
-                        &self.walls,
-                        self.size.width,
-                        &self.events,
-                        tick,
-                        index,
-                    );
+                    let by = forced::forced_by(&pre, &self.walls, &self.events, tick, index);
                     self.forced.push(ForcedDeath {
                         tick,
                         victim: index,
