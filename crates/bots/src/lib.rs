@@ -1,98 +1,104 @@
-//! Bot brain: sense → decide over a read-only `WorldSnapshot`.
+//! Bot brain: look at a read-only `WorldSnapshot`, plan a maneuver, follow it.
 //!
 //! Pure and deterministic (no networking, wall clock or `rand`), so the server
 //! drives it from its ECS loop and the lab replays it headless. Bots act only
 //! through ordinary `PlayerInput`s; physics is never touched.
+//!
+//! Difficulty is a budget (`config::BotKnobs`: reaction, horizon, variety,
+//! noise); personality is the weight vector of the objective
+//! (`objective::Weights`). One planner serves every build.
 
 pub mod config;
 pub mod forecast;
-pub mod memory;
-pub mod perceive;
+pub mod noise;
+pub mod objective;
+pub mod plan;
+pub mod planner;
 pub mod schedule;
-pub mod strategy;
-pub mod territory;
+pub mod space;
 pub mod world;
 
-use config::{BotBuild, BotKnobs};
-use forecast::PhysicsForecaster;
-use memory::BotMemory;
-use perceive::{Perception, RaySensor, Sensor};
-use schedule::Tier;
-use strategy::{Action, decide, strategy_for};
+use config::BotBuild;
+use plan::{Action, Plan};
+use planner::{Params, Report, plan as plan_maneuver, survives};
+use schedule::{SchedulerConfig, Tier, should_redecide};
+use space::Scratch;
 use world::WorldSnapshot;
 
-/// One bot's decision state across epochs. A fresh life gets a fresh brain.
+/// One bot's decision state across a life. A fresh life gets a fresh brain.
 #[derive(Clone, Debug)]
 pub struct Brain {
     pub build: BotBuild,
-    pub memory: BotMemory,
-    /// Last decision, kept for observability; never re-emitted as a turn.
-    pub cached: Action,
-    pub epoch: u32,
-    pub degradation: Tier,
-    /// Seeds the mistake roll, so two brains with the same build and the
-    /// same view still err on different ticks. The caller picks it.
-    pub seed: u64,
+    /// The turns still to emit.
+    plan: Plan,
+    /// Seeds the bot's misjudgments, so two brains with the same build and the
+    /// same view still err differently. The caller picks it.
+    seed: u64,
+    /// Phase of this bot's planning ticks, so bots do not all plan at once.
+    slot: usize,
+    scratch: Scratch,
 }
 
-/// What one epoch decided, with the exact inputs `decide` saw so callers can
-/// re-score them for debugging.
+/// What one tick decided.
 pub struct Decision {
+    /// The steering input for this tick.
     pub action: Action,
-    pub perception: Perception,
-    /// Build knobs after the LOD tier clamp.
-    pub knobs: BotKnobs,
+    /// Set when this tick planned anew.
+    pub report: Option<Report>,
 }
 
 impl Brain {
-    pub fn new(build: BotBuild, seed: u64) -> Self {
+    pub fn new(build: BotBuild, seed: u64, slot: usize) -> Self {
         Self {
             build,
-            memory: BotMemory::default(),
-            cached: Action::Hold,
-            epoch: 0,
-            degradation: Tier::Full,
+            plan: Plan::default(),
             seed,
+            slot,
+            scratch: Scratch::default(),
         }
     }
 
-    /// Run one decision epoch for the rider at `index` in `world`: observe
-    /// opponents, sense, update memory, then let the build's strategy decide
-    /// under the `tier` level of detail.
-    pub fn think(&mut self, world: &WorldSnapshot, index: usize, tier: Tier) -> Decision {
-        self.degradation = tier;
-        let self_id = world.riders[index].id;
-        for rider in &world.riders {
-            if rider.id != self_id && rider.alive {
-                self.memory.opponent.observe(rider.id, rider.dir);
-            }
-        }
-        let sensor = RaySensor {
-            rider: index,
-            bfs_budget: self.build.knobs.bfs_budget.min(tier.max_bfs()),
-        };
-        let mut perception = sensor.sense(world);
-        self.memory.observe(perception.freedom, perception.exits);
-        perception.memory_trend = self.memory.trend();
-        perception.opponent_turn_prob = self.memory.opponent.turn_prob();
-        let strategy = strategy_for(self.build.personality);
-        // Clamp the look-ahead horizon by the LOD tier before strategies see it.
-        let mut knobs = self.build.knobs.clone();
-        knobs.lookahead_ticks = knobs.lookahead_ticks.min(tier.max_lookahead());
-        let action = decide(
-            strategy,
-            &perception,
-            world,
-            &PhysicsForecaster,
-            &knobs,
-            self.seed,
-        );
-        self.cached = action;
-        self.epoch = self.epoch.wrapping_add(1);
+    /// The same bot for a new life: no plan, a new seed.
+    pub fn reborn(&self, seed: u64) -> Self {
+        Self::new(self.build.clone(), seed, self.slot)
+    }
+
+    /// Whether this tick needs a look at the world: time to plan again, or a
+    /// planned turn is due (and is checked before it is made). Other ticks
+    /// are `Action::Hold` without a snapshot.
+    pub fn wants_view(&self, tick: u32, scheduler: &SchedulerConfig) -> bool {
+        should_redecide(scheduler, tick, self.slot, self.build.knobs.reaction_ticks)
+            || self.plan.due(tick)
+    }
+
+    /// The input for tick `world.tick` for the rider at `index`, under the
+    /// level of detail `tier`. Plans anew on the reaction cadence, or at once
+    /// when a due turn no longer survives the physics; otherwise follows the
+    /// plan.
+    pub fn act(
+        &mut self,
+        world: &WorldSnapshot,
+        index: usize,
+        tier: Tier,
+        scheduler: &SchedulerConfig,
+    ) -> Decision {
+        let tick = world.tick;
+        let params = Params::new(&self.build, tier, self.seed);
+        self.plan.drop_before(tick);
+        let cadence = should_redecide(scheduler, tick, self.slot, self.build.knobs.reaction_ticks);
+        let rest = self.plan.remaining(tick);
+        let replan = cadence
+            || rest
+                .as_ref()
+                .is_some_and(|rest| self.plan.due(tick) && !survives(world, index, rest, &params));
+        let report = replan.then(|| {
+            let outcome = plan_maneuver(world, index, &params, &mut self.scratch, rest);
+            self.plan = Plan::start(tick, &outcome.maneuver);
+            outcome.report
+        });
         Decision {
-            action,
-            perception,
-            knobs,
+            action: self.plan.take(tick),
+            report,
         }
     }
 }

@@ -74,7 +74,7 @@ If a build mysteriously rebuilds from scratch, you probably touched the repo fro
 ## Targets
 
 - `tron-zero-shared` — lib, the simulation core (no transport, no rendering).
-- `tron-zero-bots` — lib, the bot brain (sense → decide over a world snapshot; no ECS systems, no networking).
+- `tron-zero-bots` — lib, the bot brain (plan maneuvers over a world snapshot, check them with the real physics; no ECS systems, no networking).
 - `tron-zero-server` — lib + bin, headless server: netcode wiring in the lib (`add_core`), bot roster/scheduling and manager HTTP in the bin.
 - `tron-zero-client` — lib + bin, rendering + UI (egui); the lib holds connection, input and prediction so tests can drive them without a window.
 - `tron-zero-lab` — lib + bin, headless deterministic scenario runner (see below).
@@ -206,19 +206,26 @@ also counts kills and groups deaths by cause.
 A rider with `bot = "<personality>"` (and `difficulty`, plus optional per-knob overrides in `[rider.knobs]`) is driven by the same brain
 and decision schedule as the server's bots; leave out `at`/`heading` and it
 gets a seeded safe spawn. `respawn_after = 240` mirrors the server's bot
-respawn delay. `scenarios/bot_arena.toml` is the default five-bot roster:
+respawn delay. `scenarios/bot_duel.toml` is a weak bot against a strong one (the weak one dies and respawns):
 
 ```
-cargo run -p tron-zero-lab -- crates/lab/scenarios/bot_arena.toml --seed 7
-cargo run -p tron-zero-lab -- crates/lab/scenarios/bot_arena.toml --seed 7 --until 900 --png arena.png
+cargo run -p tron-zero-lab -- crates/lab/scenarios/bot_duel.toml --seed 7
+cargo run -p tron-zero-lab -- crates/lab/scenarios/bot_duel.toml --seed 7 --until 900 --png arena.png
 ```
 
-Each brain rolls its mistakes (`mistake_prob`) from its own seed: the lab
+Each brain seeds its misjudgments (`noise`: it reads a wall as farther or a pocket
+as larger than it is, it never acts at random) from its own seed: the lab
 derives it from the scenario seed, the rider and the life, the server draws a
-random one per bot. So different seeds also err on different ticks. Same seed,
-same game, so a bad bot death can be replayed, zoomed with
-`--view` and re-run after a tweak. Bot tuning changes the `bot_arena` golden
-trace: bless it once the change is intended.
+random one per bot. Same seed, same game, so a bad bot death can be replayed,
+zoomed with `--view` and re-run after a tweak. Bot tuning changes the
+`bot_duel` and `rounds` golden traces: bless them once the change is intended.
+
+The brain plans one or two turns at a time, scores each candidate by a weighted
+sum (personality = weights, `bots::objective`; difficulty = reaction, horizon,
+variety, noise, `bots::config`), and checks the best ones with the real physics
+before riding them. `crates/lab/puzzles/` holds hard spots (closed room, dead
+end, narrow gap) with one bot each; `tests/gates.rs` requires strong builds to
+solve them and a small tournament to stay under a self-kill rate.
 
 `tier = "full"` (or `t1`, `t2`) at the top of a scenario pins the bots' level
 of detail; without it the tier follows the number of living riders, as on the
@@ -257,11 +264,11 @@ count.
 ```
 cargo run --release -p tron-zero-lab -- tournament crates/lab/suites/ffa4.toml
 cargo run --release -p tron-zero-lab -- tournament crates/lab/suites/rounds4.toml --json rounds4.json
-cargo run --release -p tron-zero-lab -- tournament crates/lab/suites/ffa4.toml --no-mistakes --threads 4
+cargo run --release -p tron-zero-lab -- tournament crates/lab/suites/ffa4.toml --no-noise --threads 4
 ```
 
-`--no-mistakes` sets `mistake_prob = 0` on every build (how much of the play is
-the random mistake roll, how much the strategy itself); `--json PATH` also
+`--no-noise` sets `noise = 0` on every build (how much of the play is
+misjudgment, how much the planner itself); `--json PATH` also
 writes the report as JSON. Columns are measured separately, with no combined
 score:
 

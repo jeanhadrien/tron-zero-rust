@@ -184,7 +184,7 @@ fn goldens_are_stamped_with_a_protocol_version() {
 
 #[test]
 fn runs_are_deterministic() {
-    for name in ["head_on", "respawn", "grind"] {
+    for name in ["head_on", "respawn", "grind", "bot_duel"] {
         let scenario = load(name);
         assert_eq!(trace(&scenario, SAMPLE), trace(&scenario, SAMPLE), "{name}");
     }
@@ -267,7 +267,7 @@ fn respawn_lands_on_a_safe_spawn_and_rides_on() {
 
 #[test]
 fn bot_arenas_replay_per_seed_and_vary_across_seeds() {
-    let scenario = load("bot_arena");
+    let scenario = load("bot_duel");
     let run = |seed| {
         let mut lab = Lab::with_seed(&scenario, seed);
         lab.run(600, SAMPLE);
@@ -279,12 +279,10 @@ fn bot_arenas_replay_per_seed_and_vary_across_seeds() {
 
 #[test]
 fn bots_drive_and_respawn_like_the_server() {
-    let lab = run("bot_arena");
-    let until = load("bot_arena").until;
+    let lab = run("bot_duel");
+    let until = load("bot_duel").until;
     for rider in lab.riders() {
         assert!(rider.is_bot);
-        let turns = ticks(&lab, &rider.name, |k| matches!(k, EventKind::Turn { .. }));
-        assert!(!turns.is_empty(), "{} never turned", rider.name);
         // Every death respawns 240 ticks later, as the server's bot spawner.
         let deaths = ticks(&lab, &rider.name, |k| matches!(k, EventKind::Death { .. }));
         let respawns = ticks(&lab, &rider.name, |k| {
@@ -297,6 +295,11 @@ fn bots_drive_and_respawn_like_the_server() {
             .collect();
         assert_eq!(respawns, expected, "{}", rider.name);
     }
+    // The weak bot dies and comes back; the strong one is the one that turns.
+    let deaths = ticks(&lab, "weak", |k| matches!(k, EventKind::Death { .. }));
+    assert!(!deaths.is_empty());
+    let turns = ticks(&lab, "strong", |k| matches!(k, EventKind::Turn { .. }));
+    assert!(!turns.is_empty());
 }
 
 #[test]
@@ -428,7 +431,7 @@ fn rounds_end_on_the_last_rider_and_name_the_winner() {
 fn a_pinned_tier_overrides_the_riders_alive_count() {
     // Default behaviour (no pin) is covered by the goldens.
     let pinned = |tier| {
-        let mut scenario = load("bot_arena");
+        let mut scenario = load("bot_duel");
         scenario.tier = Some(tier);
         trace(&scenario, 0)
     };

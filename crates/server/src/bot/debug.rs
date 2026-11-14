@@ -5,12 +5,13 @@
 //! and emits no per-decision logs.
 
 use bevy::prelude::*;
-use shared::{BotDebug, FLAG_CONVERGING, FLAG_HEAD_ON};
+use shared::physics::nearest;
+use shared::{BotDebug, FLAG_CONVERGING, FLAG_HEAD_ON, rotate_left, rotate_right};
 
 use bots::config::BotKnobs;
-use bots::perceive::Perception;
-use bots::strategy::{Action, Strategy, converging, head_on, nearest_enemy};
-use bots::world::WorldSnapshot;
+use bots::plan::Action;
+use bots::planner::Report;
+use bots::world::{RiderSnapshot, WorldSnapshot};
 
 /// Env var gating the bot debug overlay, server writer included.
 pub const BOT_DEBUG_ENV: &str = "TRON_BOT_DEBUG";
@@ -51,51 +52,119 @@ pub fn enabled_from_env() -> bool {
         .unwrap_or(false)
 }
 
-/// Build the replicated snapshot from a finished decision.
-///
-/// `scores` is the same array `decide` argmaxed over — the caller computes it
-/// via `strategy.score(...)` so `decide` itself stays untouched.
+/// Distance at which an enemy stops counting as a threat.
+const THREAT_RANGE: f32 = 600.0;
+/// Range of the "converging" flag.
+const DUEL_RANGE: f32 = 480.0;
+
+/// Build the replicated snapshot from a finished planning round: the report
+/// the planner returned for rider `index` in `world`, and the action it
+/// emitted on this tick.
 pub fn build_debug(
-    strategy: &dyn Strategy,
-    perception: &Perception,
-    scores: [f32; 3],
+    report: &Report,
     world: &WorldSnapshot,
+    index: usize,
     action: Action,
     knobs: &BotKnobs,
 ) -> BotDebug {
-    let me = world.riders.get(perception.rider);
-    let foe = nearest_enemy(world, perception.rider).map(|(_, rider)| rider);
+    let me = &world.riders[index];
+    let foe = nearest_foe(world, index);
     let (target, foe_dir) = foe.map_or((Vec2::ZERO, Vec2::ZERO), |f| (f.pos, f.dir));
     let mut flags = 0u8;
-    if let (Some(me), Some(foe)) = (me, foe)
-        && foe.pos != Vec2::ZERO
-        && head_on(me.pos, me.dir, foe.pos, foe.dir)
-    {
-        flags |= FLAG_HEAD_ON;
-    }
-    if let (Some(me), Some(foe)) = (me, foe)
-        && converging(me.pos, me.dir, foe.pos, foe.dir, knobs)
-    {
-        flags |= FLAG_CONVERGING;
+    if let Some(foe) = foe {
+        if head_on(me.pos, me.dir, foe.pos, foe.dir) {
+            flags |= FLAG_HEAD_ON;
+        }
+        if converging(me.pos, me.dir, foe.pos, foe.dir) {
+            flags |= FLAG_CONVERGING;
+        }
     }
     BotDebug {
-        mode: strategy.mode(perception).to_u8(),
+        mode: report.mode.to_u8(),
         action: action.index() as u8,
-        scores,
-        threat: perception.threat,
-        freedom: perception.freedom,
-        exits: perception.exits,
-        turn_prob: perception.opponent_turn_prob,
-        aggression: knobs.aggression,
-        caution: knobs.caution,
-        greed: knobs.greed,
-        lookahead: knobs.lookahead_ticks,
+        scores: report.scores,
+        threat: foe.map_or(0.0, |f| {
+            (1.0 - me.pos.distance(f.pos) / THREAT_RANGE).clamp(0.0, 1.0)
+        }),
+        area: report.area,
+        open: report.open.min(u32::from(u8::MAX)) as u8,
+        noise: knobs.noise,
+        space: report.terms.space,
+        reach: report.terms.reach,
+        clear: report.terms.clear,
+        horizon: report.horizon,
         reaction: knobs.reaction_ticks,
         target,
         foe_dir,
-        rays: perception.rays,
+        rays: rays(world, index),
         flags,
     }
+}
+
+/// Distance to the nearest obstacle along eight directions around the rider:
+/// ahead, left, right, behind, then the four diagonals. Infinite = none.
+fn rays(world: &WorldSnapshot, index: usize) -> [f32; 8] {
+    let me = &world.riders[index];
+    let (left, right) = (rotate_left(me.dir), rotate_right(me.dir));
+    let directions = [
+        me.dir,
+        left,
+        right,
+        -me.dir,
+        (me.dir + left).normalize_or_zero(),
+        (me.dir + right).normalize_or_zero(),
+        (left - me.dir).normalize_or_zero(),
+        (right - me.dir).normalize_or_zero(),
+    ];
+    let mut out = [f32::INFINITY; 8];
+    for (i, direction) in directions.iter().enumerate() {
+        // As in the sim: only the front sensor uses forward semantics.
+        let side = i != 0;
+        out[i] = nearest(
+            world.obstacles(),
+            Some(index as u64),
+            me.pos,
+            *direction,
+            side,
+        );
+    }
+    out
+}
+
+fn nearest_foe(world: &WorldSnapshot, index: usize) -> Option<&RiderSnapshot> {
+    let me = world.riders.get(index)?;
+    world
+        .riders
+        .iter()
+        .enumerate()
+        .filter(|(i, other)| *i != index && other.alive)
+        .map(|(_, other)| other)
+        .min_by(|a, b| me.pos.distance(a.pos).total_cmp(&me.pos.distance(b.pos)))
+}
+
+/// In range, and at least one of the two faces the other.
+fn converging(me_pos: Vec2, me_dir: Vec2, foe_pos: Vec2, foe_dir: Vec2) -> bool {
+    let to_foe = foe_pos - me_pos;
+    let dist = to_foe.length();
+    if dist < 1.0 {
+        return true;
+    }
+    if dist > DUEL_RANGE {
+        return false;
+    }
+    let axis = to_foe / dist;
+    me_dir.dot(axis) > 0.0 || foe_dir.dot(-axis) > 0.0
+}
+
+/// Both riders committed at each other's noses.
+fn head_on(me_pos: Vec2, me_dir: Vec2, foe_pos: Vec2, foe_dir: Vec2) -> bool {
+    let to_foe = foe_pos - me_pos;
+    let dist = to_foe.length();
+    if dist < 1.0 {
+        return true;
+    }
+    let axis = to_foe / dist;
+    me_dir.dot(foe_dir) < -0.5 && me_dir.dot(axis) > 0.5 && foe_dir.dot(-axis) > 0.5
 }
 
 /// Insert the snapshot when the gate is on; a no-op otherwise (keeps the
@@ -114,14 +183,12 @@ pub fn insert_if_enabled(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bots::config::{Difficulty, Personality};
-    use bots::forecast::PhysicsForecaster;
-    use bots::perceive::RAY_COUNT;
-    use bots::strategy::strategy_for;
+    use bots::config::{BotBuild, Difficulty, Personality};
+    use bots::planner::{Params, plan};
+    use bots::schedule::Tier;
+    use bots::space::Scratch;
     use std::collections::HashMap;
     use std::sync::Arc;
-
-    use bots::world::RiderSnapshot;
 
     fn map(pairs: &[(&str, &str)]) -> HashMap<String, String> {
         pairs
@@ -178,33 +245,20 @@ mod tests {
     #[test]
     fn build_debug_values_are_sane() {
         let world = head_on_world();
-        let knobs = Difficulty(2000).knobs(Personality::Duelist);
-        let perception = Perception {
-            rays: [120.0; RAY_COUNT],
-            freedom: 400,
-            exits: 3,
-            threat: 0.5,
-            memory_trend: 0.0,
-            opponent_turn_prob: 0.25,
-            tick: 9,
-            rider: 0,
-        };
-        let strategy = strategy_for(Personality::Duelist);
-        let forecaster = PhysicsForecaster;
-        let scores = strategy.score(&perception, &world, &forecaster, &knobs);
-        let dbg = build_debug(strategy, &perception, scores, &world, Action::Hold, &knobs);
-        assert_eq!(dbg.scores, scores);
-        assert_eq!(dbg.action, Action::Hold.index() as u8);
-        assert_eq!(dbg.threat, 0.5);
-        assert_eq!(dbg.freedom, 400);
-        assert_eq!(dbg.exits, 3);
-        assert_eq!(dbg.turn_prob, 0.25);
+        let build = BotBuild::from_difficulty("t", Personality::Duelist, Difficulty(2000));
+        let params = Params::new(&build, Tier::Full, 1);
+        let outcome = plan(&world, 0, &params, &mut Scratch::default(), None);
+        let action = outcome.maneuver.first_action();
+        let dbg = build_debug(&outcome.report, &world, 0, action, &build.knobs);
+        assert_eq!(dbg.scores, outcome.report.scores);
+        assert_eq!(dbg.action, action.index() as u8);
+        assert_eq!(dbg.area, outcome.report.area);
+        assert!((dbg.threat - 0.666).abs() < 0.01, "{}", dbg.threat);
         assert_eq!(dbg.target, Vec2::new(100.0, 0.0));
         assert_eq!(dbg.foe_dir, Vec2::NEG_X);
-        assert_eq!(dbg.rays, [120.0; RAY_COUNT]);
-        assert_eq!(dbg.aggression, knobs.aggression);
-        assert_eq!(dbg.lookahead, knobs.lookahead_ticks);
-        assert_eq!(dbg.reaction, knobs.reaction_ticks);
+        assert!(dbg.rays[0].is_finite());
+        assert_eq!(dbg.horizon, outcome.report.horizon);
+        assert_eq!(dbg.reaction, build.knobs.reaction_ticks);
         assert_ne!(dbg.flags & FLAG_HEAD_ON, 0);
         assert_ne!(dbg.flags & FLAG_CONVERGING, 0);
         assert!(dbg.scores.iter().all(|s| s.is_finite()));
@@ -243,7 +297,7 @@ mod tests {
         let mut world = World::new();
         let entity = world.spawn_empty().id();
         let dbg = BotDebug {
-            freedom: 777,
+            area: 777,
             ..Default::default()
         };
         world.insert_resource(Fixture {
@@ -252,6 +306,6 @@ mod tests {
             dbg,
         });
         world.run_system_once(fixture_system).unwrap();
-        assert_eq!(world.get::<BotDebug>(entity).unwrap().freedom, 777);
+        assert_eq!(world.get::<BotDebug>(entity).unwrap().area, 777);
     }
 }

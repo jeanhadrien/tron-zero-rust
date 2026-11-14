@@ -1,62 +1,118 @@
-//! Rollout forecasting. `PhysicsForecaster` reuses the exact shared physics
-//! step so a projected world cannot diverge from the authoritative sim.
+//! Rollout forecasting. A [`Rollout`] steps one bot and the riders near it
+//! through the exact shared physics (`step_riders`, the sim's own tick), so a
+//! projected line cannot disagree with what the sim would do. The bot steers;
+//! the others ride straight on.
 
-use shared::physics::{RiderState, RiderStep, step_riders};
+use glam::Vec2;
+use shared::physics::{RiderState, RiderStep, Segment, step_riders};
 
-use crate::strategy::Action;
+use crate::plan::Action;
 use crate::world::WorldSnapshot;
 
-pub trait Forecaster {
-    fn project(&self, world: &WorldSnapshot, actions: &[Action]) -> WorldSnapshot;
+/// A bot and its neighbours, stepped tick by tick.
+pub struct Rollout {
+    /// The bot first, then the riders close enough to matter.
+    steps: Vec<RiderStep>,
+    /// Snapshot index of each step; the owner tag of its trail segments.
+    ids: Vec<usize>,
+    /// Walls and the trails of riders that are not stepped. Obstacles are
+    /// rebuilt every tick as these plus the stepped riders' growing trails,
+    /// so the start-of-tick snapshot matches `simulate_players`.
+    statics: Vec<Segment>,
+    obstacles: Vec<Segment>,
+    points: Vec<Vec2>,
 }
 
-pub struct PhysicsForecaster;
-
-impl Forecaster for PhysicsForecaster {
-    fn project(&self, world: &WorldSnapshot, actions: &[Action]) -> WorldSnapshot {
-        // Obstacles are the start-of-tick snapshot, matching `simulate_players`,
-        // and the tick is the same `step_riders` transaction, crossings included.
-        let obstacles = world.obstacles();
-        let mut riders = world.riders.clone();
-        let live: Vec<usize> = (0..riders.len()).filter(|&i| riders[i].alive).collect();
-        let mut steps: Vec<RiderStep> = live
+impl Rollout {
+    /// Start from `world` with bot `me` and every living rider within `radius`
+    /// of it. `None` when `me` is dead.
+    pub fn new(world: &WorldSnapshot, me: usize, radius: f32) -> Option<Self> {
+        let bot = world.riders.get(me).filter(|r| r.alive)?;
+        let mut ids = vec![me];
+        ids.extend(
+            world
+                .riders
+                .iter()
+                .enumerate()
+                .filter(|&(i, r)| i != me && r.alive && r.pos.distance(bot.pos) <= radius)
+                .map(|(i, _)| i),
+        );
+        let steps = ids
             .iter()
-            .map(|&index| {
-                let rider = &mut riders[index];
+            .map(|&i| {
+                let rider = &world.riders[i];
                 RiderStep {
-                    owner: Some(index as u64),
+                    owner: Some(i as u64),
                     state: RiderState {
                         position: rider.pos,
                         direction: rider.dir,
                         target_speed: rider.target_speed_mult,
                         rubber: rider.rubber,
                     },
-                    turn: actions
-                        .get(index)
-                        .copied()
-                        .unwrap_or(Action::Hold)
-                        .to_input(),
-                    trail: std::mem::take(&mut rider.trail),
+                    turn: Action::Hold.to_input(),
+                    trail: rider.trail.clone(),
                 }
             })
             .collect();
-        let outcomes = step_riders(&mut steps, obstacles);
-        for ((index, step), outcome) in live.into_iter().zip(steps).zip(outcomes) {
-            let rider = &mut riders[index];
-            rider.trail = step.trail;
-            rider.pos = outcome.position;
-            rider.dir = outcome.direction;
-            rider.rubber = outcome.rubber;
-            rider.speed_mult = outcome.speed;
-            rider.target_speed_mult = outcome.target_speed;
-            if outcome.died {
-                rider.alive = false;
-                rider.trail.0.clear();
-                rider.speed_mult = 0.0;
-                rider.target_speed_mult = 0.0;
-            }
+        let statics: Vec<Segment> = world
+            .obstacles()
+            .iter()
+            .filter(|s| s.owner.is_none_or(|owner| !ids.contains(&(owner as usize))))
+            .copied()
+            .collect();
+        Some(Self {
+            steps,
+            obstacles: statics.clone(),
+            statics,
+            ids,
+            points: Vec::new(),
+        })
+    }
+
+    /// One tick: the bot does `turn`, the others hold. `false` when the bot
+    /// died. A neighbour that dies leaves no trail, as in the sim.
+    pub fn step(&mut self, turn: Action) -> bool {
+        self.obstacles.truncate(self.statics.len());
+        for (step, &id) in self.steps.iter().zip(&self.ids) {
+            step.trail
+                .points_into(step.state.position, &mut self.points);
+            self.obstacles
+                .extend(Segment::trail_legs(&self.points, id as u64));
         }
-        WorldSnapshot::projected(world.walls.clone(), riders, world.tick.wrapping_add(1))
+        self.steps[0].turn = turn.to_input();
+        let outcomes = step_riders(&mut self.steps, &self.obstacles);
+        let mut dead = Vec::new();
+        for (index, (step, outcome)) in self.steps.iter_mut().zip(&outcomes).enumerate() {
+            if outcome.died {
+                if index == 0 {
+                    return false;
+                }
+                dead.push(index);
+                continue;
+            }
+            step.state = RiderState {
+                position: outcome.position,
+                direction: outcome.direction,
+                target_speed: outcome.target_speed,
+                rubber: outcome.rubber,
+            };
+        }
+        for index in dead.into_iter().rev() {
+            self.steps.remove(index);
+            self.ids.remove(index);
+        }
+        true
+    }
+
+    /// The bot's state.
+    pub fn me(&self) -> &RiderState {
+        &self.steps[0].state
+    }
+
+    /// State of the rider at snapshot index `id`, if it is stepped and alive.
+    pub fn state_of(&self, id: usize) -> Option<&RiderState> {
+        let at = self.ids.iter().position(|&i| i == id)?;
+        Some(&self.steps[at].state)
     }
 }
 
@@ -118,17 +174,12 @@ mod tests {
         )
     }
 
-    fn forecast_state(snapshot: &WorldSnapshot, entity: Entity) -> (Vec2, Vec2, f32) {
-        let rider = snapshot
-            .riders
-            .iter()
-            .find(|r| r.id == entity.to_bits())
-            .unwrap();
-        (rider.pos, rider.dir, rider.rubber)
+    fn rollout_state(state: &RiderState) -> (Vec2, Vec2, f32) {
+        (state.position, state.direction, state.rubber)
     }
 
     #[test]
-    fn forecaster_matches_simulation_trace() {
+    fn rollout_matches_simulation_trace() {
         let mut world = World::new();
         world.insert_resource(SimulationRole::Server);
         world.spawn((Arena, WallSegments(arena_walls(ARENA_WIDTH, ARENA_HEIGHT))));
@@ -142,61 +193,50 @@ mod tests {
         schedule.add_systems(simulate_players);
 
         let inputs = [
-            [Action::Hold, Action::Hold],
-            [Action::Hold, Action::Left],
-            [Action::Left, Action::Hold],
-            [Action::Hold, Action::Right],
-            [Action::Right, Action::Hold],
-            [Action::Left, Action::Left],
-            [Action::Hold, Action::Hold],
+            Action::Hold,
+            Action::Hold,
+            Action::Left,
+            Action::Hold,
+            Action::Right,
+            Action::Left,
+            Action::Left,
+            Action::Hold,
         ];
 
-        let mut snapshot = rider_snapshot(&world, &[a, b]);
+        let snapshot = rider_snapshot(&world, &[a, b]);
+        let mut rollout = Rollout::new(&snapshot, 0, 5000.0).unwrap();
 
-        for step in &inputs {
+        for action in inputs {
             world
                 .get_mut::<ActionState<shared::PlayerInput>>(a)
                 .unwrap()
-                .0 = step[0].to_input();
-            world
-                .get_mut::<ActionState<shared::PlayerInput>>(b)
-                .unwrap()
-                .0 = step[1].to_input();
+                .0 = action.to_input();
             schedule.run(&mut world);
-            snapshot = PhysicsForecaster.project(&snapshot, step);
+            assert!(rollout.step(action));
 
-            for entity in [a, b] {
-                let sim = sim_state(&world, entity);
-                let forecast = forecast_state(&snapshot, entity);
-                assert!(
-                    (sim.0 - forecast.0).length() < 1e-3,
-                    "position diverged: {:?} vs {:?}",
-                    sim.0,
-                    forecast.0
-                );
-                assert!(
-                    (sim.1 - forecast.1).length() < 1e-6,
-                    "direction diverged: {:?} vs {:?}",
-                    sim.1,
-                    forecast.1
-                );
-                assert!(
-                    (sim.2 - forecast.2).abs() < 1e-3,
-                    "rubber diverged: {} vs {}",
-                    sim.2,
-                    forecast.2
-                );
-            }
+            let sim = sim_state(&world, a);
+            let forecast = rollout_state(rollout.me());
+            assert!(
+                (sim.0 - forecast.0).length() < 1e-3,
+                "position diverged: {:?} vs {:?}",
+                sim.0,
+                forecast.0
+            );
+            assert_eq!(sim.1, forecast.1, "direction diverged");
+            assert!((sim.2 - forecast.2).abs() < 1e-3, "rubber diverged");
+            let sim_b = sim_state(&world, b);
+            let forecast_b = rollout_state(rollout.state_of(1).unwrap());
+            assert!((sim_b.0 - forecast_b.0).length() < 1e-3, "foe diverged");
         }
     }
 
     #[test]
-    fn forecaster_resolves_same_tick_crossings_like_the_simulation() {
+    fn rollout_resolves_same_tick_crossings_like_the_simulation() {
         let mut world = World::new();
         world.insert_resource(SimulationRole::Server);
         world.spawn((Arena, WallSegments(arena_walls(ARENA_WIDTH, ARENA_HEIGHT))));
         // A reaches (0,0) a third into the first tick, B two thirds in: the
-        // sim stops B, and the forecast must too.
+        // sim stops B, and the rollout must too.
         let a = cycle(&mut world, Vec2::new(-1.0, 0.0), Vec2::X);
         let b = cycle(&mut world, Vec2::new(0.0, -2.0), Vec2::Y);
         *world.get_mut::<Trail>(a).unwrap() = Trail(vec![Vec2::new(-50.0, 0.0)]);
@@ -204,20 +244,34 @@ mod tests {
         let mut schedule = Schedule::default();
         schedule.add_systems(simulate_players);
 
-        let mut snapshot = rider_snapshot(&world, &[a, b]);
-        let hold = [Action::Hold, Action::Hold];
+        let snapshot = rider_snapshot(&world, &[a, b]);
+        let mut rollout = Rollout::new(&snapshot, 0, 5000.0).unwrap();
         for _ in 0..5 {
             schedule.run(&mut world);
-            snapshot = PhysicsForecaster.project(&snapshot, &hold);
-            for entity in [a, b] {
-                let sim = sim_state(&world, entity);
-                let forecast = forecast_state(&snapshot, entity);
-                assert_eq!(sim, forecast, "forecast diverged from the sim");
-            }
+            assert!(rollout.step(Action::Hold));
+            assert_eq!(
+                sim_state(&world, a),
+                rollout_state(rollout.me()),
+                "rollout diverged from the sim"
+            );
+            assert_eq!(
+                sim_state(&world, b),
+                rollout_state(rollout.state_of(1).unwrap()),
+                "rollout diverged from the sim"
+            );
         }
-        assert!(
-            forecast_state(&snapshot, b).0.y < 0.0,
-            "B crossed A's trail"
-        );
+        assert!(rollout.state_of(1).unwrap().position.y < 0.0, "B crossed A");
+    }
+
+    #[test]
+    fn a_rider_driving_into_a_wall_dies() {
+        let mut world = World::new();
+        world.spawn((Arena, WallSegments(arena_walls(ARENA_WIDTH, ARENA_HEIGHT))));
+        let a = cycle(&mut world, Vec2::new(900.0, 0.0), Vec2::X);
+        let snapshot = rider_snapshot(&world, &[a]);
+        let mut rollout = Rollout::new(&snapshot, 0, 5000.0).unwrap();
+        let alive_for = (0..200).take_while(|_| rollout.step(Action::Hold)).count();
+        // 100 units at 3 per tick, then the rubber runs out.
+        assert!((40..80).contains(&alive_for), "{alive_for}");
     }
 }

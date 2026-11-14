@@ -22,7 +22,7 @@ impl Default for SchedulerConfig {
     }
 }
 
-/// Level-of-detail tier. Degradation may shrink sensing work but never physics.
+/// Level-of-detail tier. Degradation may shrink planning work (flood size, horizon, variety) but never physics.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Tier {
     Full,
@@ -41,19 +41,29 @@ impl Tier {
         }
     }
 
-    pub fn max_bfs(self) -> u32 {
+    /// Cells a room measurement may flood.
+    pub fn flood_cap(self) -> u32 {
         match self {
-            Tier::Full => 800,
+            Tier::Full => 500,
             Tier::T1 => 400,
-            Tier::T2 => 200,
+            Tier::T2 => 300,
         }
     }
 
-    pub fn max_lookahead(self) -> u32 {
+    /// Longest horizon, in ticks.
+    pub fn max_horizon(self) -> u32 {
         match self {
-            Tier::Full => 16,
-            Tier::T1 => 8,
-            Tier::T2 => 4,
+            Tier::Full => 64,
+            Tier::T1 => 48,
+            Tier::T2 => 36,
+        }
+    }
+
+    /// Richest maneuver variety (see `BotKnobs::variety`).
+    pub fn max_variety(self) -> u32 {
+        match self {
+            Tier::Full | Tier::T1 => 3,
+            Tier::T2 => 2,
         }
     }
 }

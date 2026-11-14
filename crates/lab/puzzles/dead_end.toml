@@ -1,0 +1,18 @@
+# A corridor 90 wide and 700 long, closed at its east end, with its mouth open
+# to the arena in the west. The bot starts inside, riding at the dead end with
+# 500 units to go: it must turn around in the corridor. Pass: still alive at
+# the end.
+until = 1800
+seed = 1
+walls = [
+  [-400, 45, 300, 45],
+  [-400, -45, 300, -45],
+  [300, -45, 300, 45],
+]
+
+[[rider]]
+name = "bot"
+bot = "adaptive"
+difficulty = 4000
+at = [-200, 0]
+heading = "+x"

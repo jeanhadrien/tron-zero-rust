@@ -1,18 +1,17 @@
-//! Server-only bot management and the sense → decide → emit AI loop.
+//! Server-only bot management and the look → plan → emit AI loop.
 //!
 //! The brain itself lives in the `bots` crate; this module owns the ECS side:
 //! the roster, scheduling, spawning and the `BotDebug` writer.
 //! `bot_brain_input` stays in the FixedUpdate chain before `simulate_players`
-//! and always writes every alive bot's `ActionState`, caching between epochs.
+//! and writes every alive bot's `ActionState` each tick.
 
 pub(crate) mod debug;
 
 use bevy::prelude::*;
 use bots::Brain;
 use bots::config::{BotBuild, default_builds};
-use bots::forecast::PhysicsForecaster;
-use bots::schedule::{Tier, should_redecide};
-use bots::strategy::{Action, strategy_for};
+use bots::plan::Action;
+use bots::schedule::Tier;
 use bots::world::WorldSnapshotBuilder;
 use lightyear::prelude::*;
 use shared::{
@@ -36,8 +35,6 @@ const BOT_COLORS: [u32; 8] = [
 #[derive(Component)]
 pub struct BotBrain {
     pub brain: Brain,
-    /// Roster slot; phase-shifts this bot's decision epochs.
-    pub slot_index: usize,
 }
 
 #[derive(Resource)]
@@ -86,11 +83,13 @@ pub fn setup_bots(mut commands: Commands) {
     commands.insert_resource(manager);
 }
 
-/// Sense → decide → emit for every alive bot. Decisions are scheduled per bot
-/// (one `should_redecide` predicate). Turns are one-shot: the decided action
-/// is emitted only on its redecide tick; between epochs bots hold straight
-/// (`PlayerInput::None`). Re-emitting a cached turn every tick would spin the
-/// rider (Left, Left = 180° into its own trail).
+/// Look → plan → emit for every alive bot. A bot looks on its reaction
+/// cadence (one `wants_view` predicate) and whenever a planned turn is due;
+/// the snapshot is built once per tick in which any bot looks. Turns are
+/// one-shot: the brain emits each planned turn on its own tick, and every
+/// other tick the bot holds straight (`PlayerInput::None`). Re-emitting a
+/// cached turn every tick would spin the rider (Left, Left = 180° into its own
+/// trail).
 pub fn bot_brain_input(
     mut commands: Commands,
     debug_cfg: Res<BotDebugConfig>,
@@ -98,97 +97,62 @@ pub fn bot_brain_input(
     mut manager: ResMut<BotManager>,
     builder: WorldSnapshotBuilder,
     mut bots: Query<
-        (Entity, &mut BotBrain, &mut ActionState<PlayerInput>),
-        (With<Player>, With<IsAlive>),
+        (
+            Entity,
+            &mut BotBrain,
+            &IsAlive,
+            &mut ActionState<PlayerInput>,
+        ),
+        With<Player>,
     >,
 ) {
     let tick = manager.tick;
     manager.tick = manager.tick.wrapping_add(1);
 
-    let decisions: Vec<(Entity, bool)> = bots
+    let looking: Vec<Entity> = bots
         .iter()
-        .map(|(entity, brain, _)| {
-            (
-                entity,
-                should_redecide(
-                    &scheduler,
-                    tick,
-                    brain.slot_index,
-                    brain.brain.build.knobs.reaction_ticks,
-                ),
-            )
-        })
+        .filter(|(_, brain, alive, _)| alive.0 && brain.brain.wants_view(tick, &scheduler))
+        .map(|(entity, ..)| entity)
         .collect();
-
-    // One snapshot per tick in which any bot redecides.
-    let snapshot = decisions
-        .iter()
-        .any(|(_, redecide)| *redecide)
-        .then(|| builder.build(tick));
+    let snapshot = (!looking.is_empty()).then(|| builder.build(tick));
     let alive_riders = snapshot
         .as_ref()
         .map(|world| world.riders.iter().filter(|r| r.alive).count())
         .unwrap_or(0);
 
-    for (entity, mut brain, mut input) in bots.iter_mut() {
-        let redecide = decisions
-            .iter()
-            .find(|(candidate, _)| *candidate == entity)
-            .is_some_and(|(_, redecide)| *redecide);
-        // One-shot: only a fresh decision turns. `brain.cached` stays as the
-        // last decision for observability but is never re-emitted.
-        let mut fresh: Option<Action> = None;
-        if redecide && let Some(world) = snapshot.as_ref() {
+    for (entity, mut brain, _, mut input) in bots.iter_mut() {
+        let mut action = Action::Hold;
+        if looking.contains(&entity)
+            && let Some(world) = snapshot.as_ref()
+            && let Some(index) = world.index_of(entity.to_bits())
+        {
             let tier = Tier::from_load(alive_riders, &scheduler);
-            if let Some(index) = world.index_of(entity.to_bits()) {
-                let bots::Decision {
-                    action,
-                    perception,
-                    knobs,
-                } = brain.brain.think(world, index, tier);
-                let strategy = strategy_for(brain.brain.build.personality);
-                // Re-score for the debug snapshot (same inputs `decide`
-                // argmaxed over); skipped entirely when the gate is off.
+            let decision = brain.brain.act(world, index, tier, &scheduler);
+            if let Some(report) = &decision.report {
+                debug!(
+                    bot = %brain.brain.build.name,
+                    kind = ?report.kind,
+                    mode = ?report.mode,
+                    action = ?decision.action,
+                    area = report.area,
+                    open = report.open,
+                    scores = ?report.scores,
+                    "bot plan"
+                );
                 if debug_cfg.enabled {
-                    let scores = strategy.score(&perception, world, &PhysicsForecaster, &knobs);
-                    let foe = world.riders.iter().enumerate().find_map(|(i, r)| {
-                        (i != perception.rider && r.alive).then_some((r.pos, r.dir))
-                    });
-                    let (tx, ty) = foe.map_or((0.0, 0.0), |(p, _)| (p.x, p.y));
-                    debug!(
-                        bot = %strategy.name(),
-                        mode = ?strategy.mode(&perception),
-                        ?action,
-                        freedom = perception.freedom,
-                        threat = perception.threat,
-                        scores = ?scores,
-                        aggression = knobs.aggression,
-                        caution = knobs.caution,
-                        greed = knobs.greed,
-                        lookahead = knobs.lookahead_ticks,
-                        reaction = knobs.reaction_ticks,
-                        foe_x = tx,
-                        foe_y = ty,
-                        turn_prob = perception.opponent_turn_prob,
-                        "bot decision"
+                    let snapshot = debug::build_debug(
+                        report,
+                        world,
+                        index,
+                        decision.action,
+                        &brain.brain.build.knobs,
                     );
-                    let snapshot =
-                        debug::build_debug(strategy, &perception, scores, world, action, &knobs);
                     debug::insert_if_enabled(&mut commands, &debug_cfg, entity, snapshot);
-                } else {
-                    debug!(
-                        bot = %strategy.name(),
-                        mode = ?strategy.mode(&perception),
-                        ?action,
-                        freedom = perception.freedom,
-                        threat = perception.threat,
-                        "bot decision"
-                    );
                 }
-                fresh = Some(action);
             }
+            action = decision.action;
         }
-        input.0 = fresh.map_or(PlayerInput::None, Action::to_input);
+        input.0 = action.to_input();
     }
 }
 
@@ -257,7 +221,7 @@ pub fn bot_spawner(
 /// Spawn a bot `Player` entity at a random position with the given number.
 ///
 /// Inserts a default [`shared::BotDebug`] only when `TRON_BOT_DEBUG` is truthy;
-/// the writer overwrites it on the next decision epoch.
+/// the writer overwrites it on the next planning round.
 fn spawn_bot_entity(
     commands: &mut Commands,
     bot_number: u32,
@@ -271,8 +235,7 @@ fn spawn_bot_entity(
         .spawn((
             Player,
             BotBrain {
-                brain: Brain::new(build.clone(), rand::random()),
-                slot_index,
+                brain: Brain::new(build.clone(), rand::random(), slot_index),
             },
             shared::PlayerId(format!("bot-{}", bot_number)),
             DisplayName(build.name.clone()),

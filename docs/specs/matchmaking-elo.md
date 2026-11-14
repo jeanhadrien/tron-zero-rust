@@ -82,8 +82,8 @@ question). The rules above do not change if it is added.
 
 ### Bots
 
-- A bot is a hardcoded build: a name, a personality and a set of named policy
-  knobs (reaction, look-ahead, mistake rate, aggression, caution, ...). The name
+- A bot is a hardcoded build: a name, a personality (objective weights) and a
+  set of named budget knobs (reaction, horizon, variety, noise). The name
   is its display name in game and on the leaderboard.
 - Its rating identity is `bot:<name>:<fingerprint of personality and knobs>`:
   **one shared rating per identity**, however many instances run. Renaming or

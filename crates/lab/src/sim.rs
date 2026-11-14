@@ -7,7 +7,7 @@ use std::time::Instant;
 use bevy_ecs::prelude::*;
 use bevy_ecs::system::SystemState;
 use bots::Brain;
-use bots::schedule::{SchedulerConfig, Tier, should_redecide};
+use bots::schedule::{SchedulerConfig, Tier};
 use bots::world::WorldSnapshotBuilder;
 use glam::Vec2;
 use serde::Serialize;
@@ -133,7 +133,7 @@ struct LabRider {
     deaths: Vec<Vec2>,
     was_colliding: bool,
     was_sliding: bool,
-    bot: Option<LabBot>,
+    bot: Option<Brain>,
     /// Identity in the rating pool: the bot build id, or the rider's name.
     rated_id: String,
     respawn_after: Option<u32>,
@@ -143,15 +143,10 @@ struct LabRider {
     /// Distance to the nearest living enemy at the end of the last tick.
     prev_nearest: Option<f32>,
     stats: RiderStats,
-    /// Wall-clock cost of each `Brain::think`, in nanoseconds. Not part of
+    /// Wall-clock cost of each `Brain::act` that looked at the world, in
+    /// nanoseconds. Not part of
     /// any deterministic output.
     think_nanos: Vec<u32>,
-}
-
-/// A bot rider: the server's brain plus its scheduler phase.
-struct LabBot {
-    brain: Brain,
-    slot: usize,
 }
 
 pub struct Lab {
@@ -233,7 +228,7 @@ impl Lab {
                     Rubber(spec.rubber),
                     IsAlive(true),
                     ShouldHandleDeath(true),
-                    Trail::new(position),
+                    initial_trail(&spec.trail, position),
                 ))
                 .id();
             let bot = spec
@@ -241,10 +236,7 @@ impl Lab {
                 .expect("validated by Scenario::parse")
                 .map(|build| {
                     slots += 1;
-                    LabBot {
-                        brain: Brain::new(build, brain_seed(rider_seed, lives)),
-                        slot: slots - 1,
-                    }
+                    Brain::new(build, brain_seed(rider_seed, lives), slots - 1)
                 });
             riders.push(LabRider {
                 name: spec.name.clone(),
@@ -257,7 +249,7 @@ impl Lab {
                 was_sliding: false,
                 rated_id: bot
                     .as_ref()
-                    .map_or_else(|| spec.name.clone(), |b| b.brain.build.rating_id()),
+                    .map_or_else(|| spec.name.clone(), |b| b.build.rating_id()),
                 bot,
                 respawn_after: scenario
                     .rules
@@ -602,9 +594,8 @@ impl Lab {
             let spawn = find_safe_spawn(self.size, &segments, &placed, seed)
                 .unwrap_or_else(|| panic!("{}: no safe spawn", rider.name));
             placed.push(spawn.position);
-            if let Some(bot) = &mut rider.bot {
-                bot.brain =
-                    Brain::new(bot.brain.build.clone(), brain_seed(rider.seed, rider.lives));
+            if let Some(brain) = &mut rider.bot {
+                *brain = brain.reborn(brain_seed(rider.seed, rider.lives));
             }
             rider.respawn_at = None;
             rider.was_colliding = false;
@@ -617,8 +608,9 @@ impl Lab {
     }
 
     /// Mirror of the server's `bot_brain_input`: one snapshot per tick in
-    /// which any bot redecides, and a turn only on a fresh decision. Returns
-    /// each rider's input, `None` for scripted riders.
+    /// which any bot wants a look (planning time, or a planned turn due), and
+    /// each bot turns on the tick its plan says. Returns each rider's input,
+    /// `None` for scripted riders.
     fn decide_bots(&mut self) -> Vec<Option<PlayerInput>> {
         let tick = self.tick;
         let mut inputs: Vec<Option<PlayerInput>> = self
@@ -626,21 +618,16 @@ impl Lab {
             .iter()
             .map(|r| r.bot.as_ref().map(|_| PlayerInput::None))
             .collect();
-        let redecide: Vec<usize> = (0..self.riders.len())
+        let looking: Vec<usize> = (0..self.riders.len())
             .filter(|&i| {
                 let rider = &self.riders[i];
-                rider.bot.as_ref().is_some_and(|bot| {
+                rider.bot.as_ref().is_some_and(|brain| {
                     self.world.get::<IsAlive>(rider.entity).unwrap().0
-                        && should_redecide(
-                            &self.scheduler,
-                            tick,
-                            bot.slot,
-                            bot.brain.build.knobs.reaction_ticks,
-                        )
+                        && brain.wants_view(tick, &self.scheduler)
                 })
             })
             .collect();
-        if redecide.is_empty() {
+        if looking.is_empty() {
             return inputs;
         }
         let world = self
@@ -652,14 +639,14 @@ impl Lab {
         let tier = self
             .tier
             .unwrap_or_else(|| Tier::from_load(alive, &self.scheduler));
-        for i in redecide {
+        for i in looking {
             let rider = &mut self.riders[i];
             let Some(index) = world.index_of(rider.entity.to_bits()) else {
                 continue;
             };
-            let bot = rider.bot.as_mut().expect("filtered to bots");
+            let brain = rider.bot.as_mut().expect("filtered to bots");
             let started = Instant::now();
-            let action = bot.brain.think(&world, index, tier).action;
+            let action = brain.act(&world, index, tier, &self.scheduler).action;
             let nanos = started.elapsed().as_nanos();
             rider
                 .think_nanos
@@ -752,8 +739,8 @@ impl Lab {
         let seed = rider.seed.wrapping_add(rider.lives);
         rider.lives += 1;
         // The server respawns a bot as a fresh entity with a fresh brain.
-        if let Some(bot) = &mut rider.bot {
-            bot.brain = Brain::new(bot.brain.build.clone(), brain_seed(rider.seed, rider.lives));
+        if let Some(brain) = &mut rider.bot {
+            *brain = brain.reborn(brain_seed(rider.seed, rider.lives));
         }
         let Some(spawn) = find_safe_spawn(self.size, &segments, &riders, seed) else {
             self.push(
@@ -793,7 +780,7 @@ fn reset(spawn: &SafeSpawn) -> impl Bundle {
     )
 }
 
-/// Seed of a brain's mistake rolls: the rider's seed, then its life counter.
+/// Seed of a brain's misjudgments: the rider's seed, then its life counter.
 fn brain_seed(rider_seed: u64, lives: u64) -> u64 {
     rider_seed ^ lives.wrapping_mul(LIFE_SEED_STEP)
 }
@@ -820,4 +807,12 @@ fn fnv1a(text: &str) -> u64 {
     text.bytes().fold(0xcbf29ce484222325, |hash, byte| {
         (hash ^ byte as u64).wrapping_mul(0x100000001b3)
     })
+}
+
+/// A rider's trail at tick 0: the scenario's corners, or just the head.
+fn initial_trail(corners: &[[f32; 2]], head: Vec2) -> Trail {
+    if corners.is_empty() {
+        return Trail::new(head);
+    }
+    Trail(corners.iter().map(|&c| Vec2::from(c)).collect())
 }

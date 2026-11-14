@@ -47,23 +47,15 @@ numbers are in `docs/specs/netcode-design.md`; the headless harness is
 
 ## Open: gameplay and fairness
 
-- [ ] **Bot self-trapping.** Bots die almost only on their own trail: 98-100%
-  of deaths in every baseline setup (`crates/lab/suites/`, 50-100 seeds, default
-  roster, release). Measured with `lab tournament`: in `ffa4` (3600-tick
-  matches, respawn after 240) a bot dies about 1.5 times per match, 98.8-99.9%
-  `own_trail`, median life 1000-1400 ticks; kills are rare (0.00-0.02 per
-  minute alive). With `--no-mistakes` (`mistake_prob = 0`) deaths drop about
-  5x in `ffa4` (0.3 per match) and about 25-55x in 1v1 (median life = the full
-  3600 ticks): most suicides come from the random mistake roll, but a residual
-  of real self-trapping stays (0.3 deaths per 4-rider match, ~1 per 8-rider
-  match with the lowered level of detail) and the brain should fix it. In
-  `rounds4` (last rider standing) a 3600-tick round times out about 22% of the
-  time (97% without mistakes) and win rates run 13% (Bastion) to 27%
-  (Sentinelle), rising with difficulty. Full tables:
-  rerun the suites. The mistake roll itself was broken until the per-brain
-  seed (see `bots::strategy::BotRng`): it depended on the rider index
-  only, so two riders erred at every decision and three never did. Tuning the
-  strategies changes the `bot_arena` goldens (bless after intent).
+- [x] **Bot self-trapping** (phase 1, step B). The old brain died almost only on
+  its own trail (98-100% of deaths; 0.8-2.3 deaths per rider-match). The brain is
+  now a planner (candidate maneuvers, flood-fill room, physics check) and the
+  default roster dies 0.00-0.01 times per 1v1 match, 0.01 in ffa4, 0.15-0.29 in
+  ffa8 (8 riders, lowered level of detail) and 0.005-0.02 per rider-round in
+  rounds4 (`crates/lab/suites/`, release). Open: in `rounds4` no round ends
+  by last standing any more (bots do not fight yet: phase 2), and a weak
+  build (difficulty 500) still dies on its own trail by design. Tuning the
+  planner changes the `bot_duel` and `rounds` goldens (bless after intent).
 - [ ] Collision fairness follow-ups (`crates/shared/src/systems/player.rs`):
   same-tick crossings, head-on meetings and endpoint tolerances are resolved.
   Left: client prediction reads an opponent's newest confirmed trail, about

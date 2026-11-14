@@ -21,15 +21,15 @@ use super::smooth::Rendered;
 
 /// Env var gating the overlay (mirrors the server writer).
 pub const BOT_DEBUG_ENV: &str = "TRON_BOT_DEBUG";
-/// Sensor ray draw cap (matches the server `SENSE_HORIZON`).
+/// Sensor ray draw cap.
 pub const RAY_CAP: f32 = 240.0;
-/// Duel-range ring radius (matches the server `DUEL_RANGE`).
+/// Duel-range ring radius (matches the server's `DUEL_RANGE`).
 pub const DUEL_RANGE: f32 = 480.0;
 /// Foe heading extension length.
 pub const FOE_HEADING_LEN: f32 = 120.0;
 /// Threat ring radius.
 pub const THREAT_RADIUS: f32 = 60.0;
-/// Debug grid resolution per axis (matches the server snapshot grid).
+/// Debug grid resolution per axis (the overlay's own coarse grid, not the planner's).
 pub const DEBUG_GRID_N: usize = 32;
 
 /// Overlay gate, read once at startup.
@@ -380,13 +380,15 @@ pub fn debug_panel_ui(
                         }
                     }
                     ui.label(format!("threat {:.2}", dbg.threat));
-                    ui.label(format!("freedom {} exits {}", dbg.freedom, dbg.exits));
-                    ui.label(format!("turn_prob {:.2}", dbg.turn_prob));
+                    ui.label(format!("room {} cells, {} open", dbg.area, dbg.open));
                     ui.label(format!(
-                        "agg {:.2} cau {:.2} grd {:.2}",
-                        dbg.aggression, dbg.caution, dbg.greed
+                        "space {:.2} reach {:.2} clear {:.2}",
+                        dbg.space, dbg.reach, dbg.clear
                     ));
-                    ui.label(format!("la {} rx {}", dbg.lookahead, dbg.reaction));
+                    ui.label(format!(
+                        "horizon {} reaction {} noise {:.2}",
+                        dbg.horizon, dbg.reaction, dbg.noise
+                    ));
                     ui.label(format!(
                         "head-on {} converging {}",
                         dbg.head_on(),

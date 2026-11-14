@@ -33,8 +33,8 @@
 //! respawn_after = 240              # optional: respawn N ticks after a death
 //!
 //! [rider.knobs]                    # optional: override single knobs of the preset
-//! reaction_ticks = 4               # (also lookahead_ticks, mistake_prob, greed,
-//! ```                              #  aggression, caution, bfs_budget, strategy_mix)
+//! reaction_ticks = 4               # (also horizon_ticks, variety, noise)
+//! ```
 //!
 //! Matches: a `[match]` block (`shared::MatchRules`) plays rounds. The match
 //! rules replace the riders' `respawn_after`; the run stops when the match
@@ -117,6 +117,11 @@ pub struct RiderSpec {
     pub speed: f32,
     #[serde(default = "default_rubber")]
     pub rubber: f32,
+    /// Corners of a trail the rider already has, oldest first; the last leg
+    /// runs from the last corner to `at`. For puzzles: a trail to be closed in
+    /// by, without scripting the ride that lays it.
+    #[serde(default)]
+    pub trail: Vec<[f32; 2]>,
     #[serde(default)]
     pub script: Vec<String>,
     /// Bot personality; the rider is then driven by the bot brain.
@@ -253,7 +258,7 @@ pub fn bot_build(
         "roamer" => Personality::Roamer,
         other => return Err(format!("{name}: unknown bot {other:?}")),
     };
-    let mut set = Difficulty(difficulty).knobs(personality);
+    let mut set = Difficulty(difficulty).knobs();
     knobs.apply(&mut set);
     Ok(BotBuild::new(name, personality, set))
 }

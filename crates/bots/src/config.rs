@@ -1,76 +1,74 @@
-//! Per-bot policy configuration.
+//! Per-bot configuration: a name, a personality and a budget.
 //!
-//! A bot is a name, a personality and a set of named policy knobs (reaction,
-//! horizon, mistake rate, weighting). Physics is never touched. The knobs are
-//! the bot's whole definition; how good it *is* is measured by the matchmaking
-//! rating, never declared here. [`Difficulty`] is only a convenience for
-//! authoring a coherent set of knobs.
+//! Difficulty is the budget ([`BotKnobs`]: how fast the bot reacts, how far it
+//! looks, how many options it weighs, how wrongly it judges). Personality is
+//! the direction ([`Weights`]: what the bot wants). Physics is never touched.
+//! How good a build *is* is measured by the matchmaking rating, never declared
+//! here. [`Difficulty`] is only a convenience for authoring a coherent budget.
 
 use serde::{Deserialize, Serialize};
+
+use crate::objective::Weights;
 
 /// Anchors of the authoring curve. `Difficulty::knobs` interpolates between them.
 const DIFFICULTY_ANCHORS: [u32; 5] = [500, 1000, 1500, 2500, 4000];
 
-/// Policy curve sampled at `DIFFICULTY_ANCHORS`; smoothstep-eased between anchors.
-const REACTION_TICKS: [f32; 5] = [24.0, 16.0, 10.0, 5.0, 2.0];
-const LOOKAHEAD_TICKS: [f32; 5] = [2.0, 4.0, 6.0, 10.0, 16.0];
-const MISTAKE_PROB: [f32; 5] = [0.30, 0.15, 0.07, 0.02, 0.003];
-const GREED: [f32; 5] = [0.10, 0.30, 0.50, 0.75, 0.95];
-const AGGRESSION: [f32; 5] = [0.05, 0.20, 0.40, 0.70, 0.95];
-const CAUTION: [f32; 5] = [0.95, 0.80, 0.60, 0.35, 0.15];
-const BFS_BUDGET: [f32; 5] = [64.0, 128.0, 256.0, 512.0, 800.0];
-const STRATEGY_MIX: [f32; 5] = [0.0, 0.25, 0.5, 0.8, 1.0];
+/// Budget curve sampled at `DIFFICULTY_ANCHORS`; smoothstep-eased between anchors.
+const REACTION_TICKS: [f32; 5] = [20.0, 10.0, 7.0, 4.0, 2.0];
+const HORIZON_TICKS: [f32; 5] = [14.0, 32.0, 40.0, 52.0, 64.0];
+const VARIETY: [f32; 5] = [1.0, 1.6, 2.0, 2.7, 3.0];
+const NOISE: [f32; 5] = [0.70, 0.40, 0.28, 0.10, 0.0];
 
 /// Authoring preset: a point on the difficulty curve that expands into a
-/// coherent set of knobs. Not stored on a bot, not rated, never shown; once
+/// coherent budget. Not stored on a bot, not rated, never shown; once
 /// expanded, the knobs are the bot.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Difficulty(pub u32);
 
+/// What a bot wants; picks its [`Weights`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Personality {
     Survivalist,
     Trapper,
     Adaptive,
     Territorialist,
-    /// Close-combat nose-cutter; seeks head-on duels and cuts across bows.
     Duelist,
-    /// Named placeholder; not implemented yet.
+    /// Plain base weights.
     Roamer,
 }
 
-/// Policy-only knobs. Never physics values: bots drive ordinary inputs.
-/// Sensing is always the full 8-ray fan, so there is no ray-count knob.
+/// The budget. Never physics values: bots drive ordinary inputs.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct BotKnobs {
+    /// Ticks between two plannings: reaction time.
     pub reaction_ticks: u32,
-    pub lookahead_ticks: u32,
-    pub mistake_prob: f32,
-    pub greed: f32,
-    pub aggression: f32,
-    pub caution: f32,
-    pub bfs_budget: u32,
-    pub strategy_mix: f32,
+    /// Ticks ahead every candidate is ridden, judged and verified.
+    pub horizon_ticks: u32,
+    /// How many kinds of maneuver are weighed: 1 turn now, 2 adds delayed
+    /// turns and U-turns, 3 adds dodges and tight U-turns.
+    pub variety: u32,
+    /// Misjudgment of distances and room, `0` = none. A bot with noise reads a
+    /// wall as farther, or a pocket as larger, than it is; it never acts at
+    /// random.
+    pub noise: f32,
 }
 
 impl BotKnobs {
-    /// Stable 32-bit FNV-1a hash of the personality and every knob. Two builds
-    /// with the same personality and knobs are the same bot, wherever they run.
+    /// Stable 32-bit FNV-1a hash of the personality, its weights and every
+    /// knob. Two builds with the same hash are the same bot, wherever they run.
     fn fingerprint(&self, personality: Personality) -> u32 {
-        let words = [
+        let knobs = [
             self.reaction_ticks,
-            self.lookahead_ticks,
-            self.mistake_prob.to_bits(),
-            self.greed.to_bits(),
-            self.aggression.to_bits(),
-            self.caution.to_bits(),
-            self.bfs_budget,
-            self.strategy_mix.to_bits(),
+            self.horizon_ticks,
+            self.variety,
+            self.noise.to_bits(),
         ];
+        let weights = personality.weights().values().map(f32::to_bits);
         personality
             .label()
             .bytes()
-            .chain(words.iter().flat_map(|word| word.to_le_bytes()))
+            .chain(knobs.iter().flat_map(|word| word.to_le_bytes()))
+            .chain(weights.iter().flat_map(|word| word.to_le_bytes()))
             .fold(0x811c_9dc5_u32, |hash, byte| {
                 (hash ^ u32::from(byte)).wrapping_mul(0x0100_0193)
             })
@@ -78,17 +76,13 @@ impl BotKnobs {
 
     fn clamp(&mut self) {
         self.reaction_ticks = self.reaction_ticks.max(1);
-        self.lookahead_ticks = self.lookahead_ticks.max(1);
-        self.bfs_budget = self.bfs_budget.max(1);
-        self.mistake_prob = self.mistake_prob.clamp(0.0, 1.0);
-        self.greed = self.greed.clamp(0.0, 1.0);
-        self.aggression = self.aggression.clamp(0.0, 1.0);
-        self.caution = self.caution.clamp(0.0, 1.0);
-        self.strategy_mix = self.strategy_mix.clamp(0.0, 1.0);
+        self.horizon_ticks = self.horizon_ticks.max(1);
+        self.variety = self.variety.clamp(1, 3);
+        self.noise = self.noise.clamp(0.0, 1.0);
     }
 }
 
-/// What defines a bot: a name, a personality and its knobs. The name is both
+/// What defines a bot: a name, a personality and its budget. The name is both
 /// its display name in game and its label on the leaderboard.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct BotBuild {
@@ -106,19 +100,25 @@ impl BotBuild {
         }
     }
 
-    /// A build whose knobs come from a point on the authoring curve.
+    /// A build whose budget comes from a point on the authoring curve.
     pub fn from_difficulty(
         name: impl Into<String>,
         personality: Personality,
         difficulty: Difficulty,
     ) -> Self {
-        Self::new(name, personality, difficulty.knobs(personality))
+        Self::new(name, personality, difficulty.knobs())
+    }
+
+    /// The objective weights of this build.
+    pub fn weights(&self) -> Weights {
+        self.personality.weights()
     }
 
     /// Stable identity of this build in the rating pool:
-    /// `bot:<name>:<fingerprint of personality and knobs>`. Every instance of
-    /// the build shares one rating, which starts like any newcomer's and is
-    /// measured. Renaming or retuning a build makes it a new rated bot.
+    /// `bot:<name>:<fingerprint of personality, weights and knobs>`. Every
+    /// instance of the build shares one rating, which starts like any
+    /// newcomer's and is measured. Renaming or retuning a build makes it a new
+    /// rated bot.
     pub fn rating_id(&self) -> String {
         format!(
             "bot:{}:{:08x}",
@@ -133,13 +133,9 @@ impl BotBuild {
 #[serde(deny_unknown_fields)]
 pub struct KnobOverrides {
     pub reaction_ticks: Option<u32>,
-    pub lookahead_ticks: Option<u32>,
-    pub mistake_prob: Option<f32>,
-    pub greed: Option<f32>,
-    pub aggression: Option<f32>,
-    pub caution: Option<f32>,
-    pub bfs_budget: Option<u32>,
-    pub strategy_mix: Option<f32>,
+    pub horizon_ticks: Option<u32>,
+    pub variety: Option<u32>,
+    pub noise: Option<f32>,
 }
 
 impl KnobOverrides {
@@ -148,26 +144,14 @@ impl KnobOverrides {
         if let Some(v) = self.reaction_ticks {
             knobs.reaction_ticks = v;
         }
-        if let Some(v) = self.lookahead_ticks {
-            knobs.lookahead_ticks = v;
+        if let Some(v) = self.horizon_ticks {
+            knobs.horizon_ticks = v;
         }
-        if let Some(v) = self.mistake_prob {
-            knobs.mistake_prob = v;
+        if let Some(v) = self.variety {
+            knobs.variety = v;
         }
-        if let Some(v) = self.greed {
-            knobs.greed = v;
-        }
-        if let Some(v) = self.aggression {
-            knobs.aggression = v;
-        }
-        if let Some(v) = self.caution {
-            knobs.caution = v;
-        }
-        if let Some(v) = self.bfs_budget {
-            knobs.bfs_budget = v;
-        }
-        if let Some(v) = self.strategy_mix {
-            knobs.strategy_mix = v;
+        if let Some(v) = self.noise {
+            knobs.noise = v;
         }
         knobs.clamp();
     }
@@ -185,58 +169,52 @@ impl Personality {
             Personality::Roamer => "roamer",
         }
     }
-}
 
-impl Difficulty {
-    /// Interpolate the policy curve at this point, then apply personality
-    /// biases. Static per bot: no adaptive difficulty drift.
-    pub fn knobs(self, personality: Personality) -> BotKnobs {
-        let level = self.0;
-        let mut knobs = BotKnobs {
-            reaction_ticks: interp(&REACTION_TICKS, level).round() as u32,
-            lookahead_ticks: interp(&LOOKAHEAD_TICKS, level).round() as u32,
-            mistake_prob: interp(&MISTAKE_PROB, level),
-            greed: interp(&GREED, level),
-            aggression: interp(&AGGRESSION, level),
-            caution: interp(&CAUTION, level),
-            bfs_budget: interp(&BFS_BUDGET, level).round() as u32,
-            strategy_mix: interp(&STRATEGY_MIX, level),
-        };
-        personality.apply(&mut knobs);
-        knobs.clamp();
-        knobs
+    /// The objective of this personality. Presets stay close to
+    /// [`Weights::BASE`] until bots fight; they differ in how much room and
+    /// margin they want and how freely they turn.
+    pub fn weights(self) -> Weights {
+        let base = Weights::BASE;
+        match self {
+            Personality::Survivalist => Weights {
+                space: 1.3,
+                clear: 1.1,
+                turn: 0.2,
+                ..base
+            },
+            Personality::Territorialist => Weights {
+                space: 1.2,
+                fill: 0.7,
+                ..base
+            },
+            Personality::Duelist => Weights {
+                clear: 0.5,
+                turn: 0.08,
+                ..base
+            },
+            Personality::Trapper => Weights {
+                turn: 0.12,
+                commit: 0.3,
+                ..base
+            },
+            Personality::Adaptive | Personality::Roamer => base,
+        }
     }
 }
 
-impl Personality {
-    fn apply(self, knobs: &mut BotKnobs) {
-        match self {
-            Personality::Survivalist => {
-                knobs.caution += 0.1;
-                knobs.aggression -= 0.15;
-                knobs.greed -= 0.1;
-            }
-            Personality::Trapper => {
-                knobs.aggression += 0.2;
-                knobs.greed += 0.1;
-                knobs.caution -= 0.1;
-            }
-            // Control-leaning: wants map share and chambers, accepts risk.
-            Personality::Territorialist => {
-                knobs.greed += 0.15;
-                knobs.aggression += 0.1;
-                knobs.caution -= 0.05;
-            }
-            // Close-combat lean: seeks contact, tolerates rubber burns.
-            Personality::Duelist => {
-                knobs.aggression += 0.25;
-                knobs.caution -= 0.15;
-                knobs.greed += 0.05;
-            }
-            // Adaptive deliberately keeps the curve's `strategy_mix`, and
-            // remaining placeholders share the base curve until implemented.
-            Personality::Adaptive | Personality::Roamer => {}
-        }
+impl Difficulty {
+    /// Interpolate the budget curve at this point. Static per bot: no
+    /// adaptive difficulty drift.
+    pub fn knobs(self) -> BotKnobs {
+        let level = self.0;
+        let mut knobs = BotKnobs {
+            reaction_ticks: interp(&REACTION_TICKS, level).round() as u32,
+            horizon_ticks: interp(&HORIZON_TICKS, level).round() as u32,
+            variety: interp(&VARIETY, level).round() as u32,
+            noise: interp(&NOISE, level),
+        };
+        knobs.clamp();
+        knobs
     }
 }
 
@@ -309,7 +287,7 @@ mod tests {
 
     #[test]
     fn overrides_replace_only_the_set_knobs() {
-        let mut knobs = Difficulty(1500).knobs(Personality::Adaptive);
+        let mut knobs = Difficulty(1500).knobs();
         let before = knobs.clone();
         KnobOverrides {
             reaction_ticks: Some(3),
@@ -317,6 +295,22 @@ mod tests {
         }
         .apply(&mut knobs);
         assert_eq!(knobs.reaction_ticks, 3);
-        assert_eq!(knobs.lookahead_ticks, before.lookahead_ticks);
+        assert_eq!(knobs.horizon_ticks, before.horizon_ticks);
+    }
+
+    /// Every budget knob improves (never worsens) with difficulty, so a
+    /// higher difficulty is never a worse bot by construction.
+    #[test]
+    fn the_budget_curve_is_monotonic() {
+        let levels: Vec<BotKnobs> = (500..=4000)
+            .step_by(100)
+            .map(|level| Difficulty(level).knobs())
+            .collect();
+        for pair in levels.windows(2) {
+            assert!(pair[1].reaction_ticks <= pair[0].reaction_ticks);
+            assert!(pair[1].horizon_ticks >= pair[0].horizon_ticks);
+            assert!(pair[1].variety >= pair[0].variety);
+            assert!(pair[1].noise <= pair[0].noise);
+        }
     }
 }

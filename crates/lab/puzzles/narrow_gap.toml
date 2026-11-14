@@ -1,0 +1,19 @@
+# A strip 100 wide and 300 tall, too small to live in for long, with a 70-wide
+# gap in its east wall that leads to the open arena. The bot starts inside,
+# riding at the gap's wall. Pass: alive at the end and out through the gap.
+until = 1200
+seed = 1
+walls = [
+  [-200, -150, -100, -150],
+  [-200, 150, -100, 150],
+  [-200, -150, -200, 150],
+  [-100, -150, -100, -35],
+  [-100, 35, -100, 150],
+]
+
+[[rider]]
+name = "bot"
+bot = "adaptive"
+difficulty = 4000
+at = [-180, 100]
+heading = "+x"

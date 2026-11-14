@@ -1,7 +1,7 @@
 //! Replicated bot introspection snapshot for the debug overlay.
 //!
-//! Written by the server's `bot_brain_input` (one update per bot decision
-//! epoch) and drawn by the client's `draw_bot_debug`. Gated end to end by
+//! Written by the server's `bot_brain_input` (one update per bot planning
+//! round) and drawn by the client's `draw_bot_debug`. Gated end to end by
 //! `TRON_BOT_DEBUG=1`: when the env var is off no entity ever carries this
 //! component, so replication bandwidth and client cost are both zero.
 
@@ -15,7 +15,7 @@ pub const FLAG_HEAD_ON: u8 = 0b01;
 /// Bit in [`BotDebug::flags`] when either rider faces the other in range.
 pub const FLAG_CONVERGING: u8 = 0b10;
 
-/// Decision mode ids (mirror `server::bot::strategy::Mode`).
+/// Decision mode ids (mirror `bots::planner::Mode`).
 pub const MODE_ESCAPE: u8 = 0;
 pub const MODE_SURVIVAL: u8 = 1;
 pub const MODE_ATTACK: u8 = 2;
@@ -31,23 +31,25 @@ pub const ACTION_RIGHT: u8 = 2;
 pub struct BotDebug {
     /// Decision mode (`MODE_*`).
     pub mode: u8,
-    /// Decided action (`ACTION_*`).
+    /// Action decided for this tick (`ACTION_*`).
     pub action: u8,
-    /// Raw strategy scores for `[Hold, Left, Right]`.
+    /// Best objective value among the candidate maneuvers that start with
+    /// Hold, Left, Right (a delayed turn counts as Hold).
     pub scores: [f32; 3],
     /// Proximity threat in `[0, 1]`.
     pub threat: f32,
-    /// Reachable cells within the BFS budget.
-    pub freedom: u32,
-    /// Open exits (0-4) from the rider's cell.
-    pub exits: u8,
-    /// Enemy turn-rate estimate in `[0, 1]`.
-    pub turn_prob: f32,
-    /// Policy knobs active for this decision.
-    pub aggression: f32,
-    pub caution: f32,
-    pub greed: f32,
-    pub lookahead: u32,
+    /// Room (grid cells) left from where the chosen maneuver ends.
+    pub area: u32,
+    /// Candidates whose line runs the whole horizon unobstructed.
+    pub open: u8,
+    /// Misjudgment of distances and room, `0` = none.
+    pub noise: f32,
+    /// The chosen maneuver's space, reach and clearance terms, each `0..=1`.
+    pub space: f32,
+    pub reach: f32,
+    pub clear: f32,
+    /// Planning horizon and reaction cadence, in ticks.
+    pub horizon: u32,
     pub reaction: u32,
     /// Nearest foe position (zero when no foe is alive).
     pub target: Vec2,
@@ -66,13 +68,13 @@ impl Default for BotDebug {
             action: ACTION_HOLD,
             scores: [0.0; 3],
             threat: 0.0,
-            freedom: 1,
-            exits: 0,
-            turn_prob: 0.0,
-            aggression: 0.0,
-            caution: 0.0,
-            greed: 0.0,
-            lookahead: 1,
+            area: 1,
+            open: 0,
+            noise: 0.0,
+            space: 0.0,
+            reach: 0.0,
+            clear: 0.0,
+            horizon: 1,
             reaction: 1,
             target: Vec2::ZERO,
             foe_dir: Vec2::ZERO,
@@ -93,7 +95,7 @@ impl BotDebug {
         self.flags & FLAG_CONVERGING != 0
     }
 
-    /// Index of the winning fork (argmax over `scores`).
+    /// Index of the best first move (argmax over `scores`).
     pub fn winner(self) -> usize {
         let mut best = 0;
         for i in 1..3 {

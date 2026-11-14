@@ -15,7 +15,7 @@
 //! bot = "trapper"
 //! difficulty = 2500
 //! [build.knobs]
-//! mistake_prob = 0.0
+//! noise = 0.0
 //!
 //! [[setup]]
 //! name = "ffa4"
@@ -138,10 +138,10 @@ impl Suite {
         Ok(suite)
     }
 
-    /// Play every build without mistakes (`mistake_prob = 0`).
-    pub fn without_mistakes(&mut self) {
+    /// Play every build without evaluation noise (`noise = 0`).
+    pub fn without_noise(&mut self) {
         for build in &mut self.builds {
-            build.knobs.mistake_prob = 0.0;
+            build.knobs.noise = 0.0;
         }
     }
 }
@@ -239,6 +239,7 @@ fn play(suite: &Suite, game: &Game) -> GameResult {
             heading: None,
             speed: 1.0,
             rubber: shared::BASE_RUBBER,
+            trail: Vec::new(),
             script: Vec::new(),
             bot: Some("tournament".into()),
             difficulty: 0,

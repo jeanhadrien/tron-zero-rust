@@ -1,0 +1,20 @@
+# A weak bot (blind to its surroundings) against a strong one, with the
+# server's respawn delay: the weak one dies and comes back, the strong one rides on.
+until = 1200
+seed = 1
+
+[[rider]]
+name = "weak"
+bot = "adaptive"
+difficulty = 500
+respawn_after = 240
+[rider.knobs]
+noise = 1.0
+horizon_ticks = 1
+reaction_ticks = 400
+
+[[rider]]
+name = "strong"
+bot = "duelist"
+difficulty = 4000
+respawn_after = 240

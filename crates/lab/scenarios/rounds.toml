@@ -1,6 +1,6 @@
-# Last rider standing: four bots, three rounds, nobody respawns. Each round
-# ends when at most one rider is alive or after 3600 ticks; then everyone is
-# reset and placed again with a new seed.
+# Last rider standing: four bots (three nearly blind, so rounds end), three
+# rounds, nobody respawns. Each round ends when at most one rider is alive or
+# after 3600 ticks; then everyone is reset and placed again with a new seed.
 until = 10800
 seed = 3
 
@@ -16,16 +16,25 @@ time_limit = 3600
 name = "survivalist"
 bot = "survivalist"
 difficulty = 1000
+[rider.knobs]
+horizon_ticks = 1
+reaction_ticks = 400
 
 [[rider]]
 name = "adaptive"
 bot = "adaptive"
 difficulty = 1500
+[rider.knobs]
+horizon_ticks = 1
+reaction_ticks = 400
 
 [[rider]]
 name = "duelist"
 bot = "duelist"
 difficulty = 2250
+[rider.knobs]
+horizon_ticks = 1
+reaction_ticks = 400
 
 [[rider]]
 name = "trapper"

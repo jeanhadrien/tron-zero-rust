@@ -1,0 +1,19 @@
+# A closed 360 x 360 room and one bot. The bot rides at 3 units per tick and
+# its trail (2400 long) is longer than the room's width: it only lives on by
+# filling the room in lanes, and by the tail freeing space behind it.
+# Pass: still alive at the end.
+until = 1500
+seed = 1
+walls = [
+  [-180, -180, 180, -180],
+  [180, -180, 180, 180],
+  [180, 180, -180, 180],
+  [-180, 180, -180, -180],
+]
+
+[[rider]]
+name = "bot"
+bot = "adaptive"
+difficulty = 4000
+at = [-120, 0]
+heading = "+x"
