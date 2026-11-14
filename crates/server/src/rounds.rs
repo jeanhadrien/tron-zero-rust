@@ -336,7 +336,7 @@ fn begin_round(world: &mut World, roster: &[(Entity, bool)], new_match: bool) {
                 // A bot starts the round with a fresh brain: no plan, no
                 // target, and its engagement clock back at zero.
                 if let Some(mut bot) = rider.get_mut::<crate::bot::BotBrain>() {
-                    bot.brain = bot.brain.reborn(rand::random());
+                    bot.brain = bot.brain.reborn_for_round(rand::random());
                 }
             }
             None => warn!(

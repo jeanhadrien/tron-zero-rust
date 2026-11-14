@@ -6,7 +6,17 @@
 //! that measures it. Every term is "higher is better": losses are negative.
 
 /// How many terms there are; the length of both `values` arrays.
-pub const TERM_COUNT: usize = 10;
+pub const TERM_COUNT: usize = 12;
+
+/// What a full round heat adds to the fight terms and to the risk a bot takes
+/// (the same for every personality: a round has to end), and takes off room,
+/// margin and rubber's price (share of the weight).
+const HEAT_PRESSURE: f32 = 5.0;
+const HEAT_CONTROL: f32 = 0.5;
+const HEAT_ENGAGE: f32 = 3.0;
+const HEAT_RISK: f32 = 2.0;
+const HEAT_WEAR: f32 = 0.8;
+const HEAT_RUBBER: f32 = 0.8;
 
 /// What a candidate maneuver achieves, one measurement per term.
 #[derive(Clone, Copy, Debug, Default)]
@@ -36,6 +46,12 @@ pub struct Terms {
     /// Engagement: how far the bot's heading keeps it from every opponent,
     /// `-1..=0`, scaled up as the round goes on.
     pub engage: f32,
+    /// Speed earned by grinding: the line's average cruise speed against the
+    /// bot's now, in multiples of the speed range, `-1..=1`.
+    pub grind: f32,
+    /// Rubber the line burns against obstacles ahead, as a share of what the
+    /// bot has left, `-1..=0`: the more it is spent, the less is left for later.
+    pub rubber: f32,
 }
 
 impl Terms {
@@ -51,6 +67,8 @@ impl Terms {
             self.pressure,
             self.control,
             self.engage,
+            self.grind,
+            self.rubber,
         ]
     }
 }
@@ -68,6 +86,10 @@ pub struct Weights {
     pub pressure: f32,
     pub control: f32,
     pub engage: f32,
+    pub grind: f32,
+    /// How dear rubber is: low means the bot spends it freely (late turns,
+    /// tight lines), high means it keeps it for emergencies.
+    pub rubber: f32,
     /// Not a term: how much of the survival score a bot gives up to fight.
     /// The fight terms only choose among lines at most this far below the
     /// best by the survival terms, so they never pay for a death.
@@ -87,27 +109,38 @@ impl Weights {
         pressure: 1.5,
         control: 0.3,
         engage: 0.5,
+        grind: 4.0,
+        rubber: 0.5,
         risk: 0.25,
     };
 
-    /// The same bot without will to fight: no pressure, control or engagement.
+    /// The same bot without will to fight: no pressure, control, engagement
+    /// or speed hunt.
     pub fn passive(self) -> Self {
         Self {
             pressure: 0.0,
             control: 0.0,
             engage: 0.0,
+            grind: 0.0,
             ..self
         }
     }
 
-    /// The same bot a while into the round: it cares less about room and
-    /// margin (`k` in `0..=1`, `1` = not at all worn), so a round whose riders
-    /// all play safe still comes to an end.
-    pub fn worn(self, k: f32) -> Self {
+    /// The same bot with a round `heat` (`0..=1`) old: it cares less about
+    /// room and margin, wants the fight (and the risk that goes with it) more,
+    /// and spends rubber freely, so a round whose riders all play safe still
+    /// comes to an end.
+    pub fn heated(self, heat: f32) -> Self {
+        let worn = 1.0 - HEAT_WEAR * heat.min(1.0);
         Self {
-            space: self.space * k,
-            pocket: self.pocket * k,
-            clear: self.clear * k,
+            space: self.space * worn,
+            pocket: self.pocket * worn,
+            clear: self.clear * worn,
+            pressure: self.pressure + HEAT_PRESSURE * heat,
+            control: self.control + HEAT_CONTROL * heat,
+            engage: self.engage + HEAT_ENGAGE * heat,
+            rubber: self.rubber * (1.0 - HEAT_RUBBER * heat.min(1.0)),
+            risk: self.risk + HEAT_RISK * heat,
             ..self
         }
     }
@@ -134,6 +167,8 @@ impl Weights {
             self.pressure,
             self.control,
             self.engage,
+            self.grind,
+            self.rubber,
         ]
     }
 

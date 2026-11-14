@@ -195,6 +195,8 @@ impl Personality {
                 pressure: 0.5,
                 control: 0.2,
                 engage: 0.25,
+                grind: 2.0,
+                rubber: 0.9,
                 risk: 0.08,
                 ..base
             },
@@ -204,6 +206,8 @@ impl Personality {
                 pressure: 1.0,
                 control: 0.8,
                 engage: 0.5,
+                grind: 3.0,
+                rubber: 0.6,
                 risk: 0.2,
                 ..base
             },
@@ -213,6 +217,8 @@ impl Personality {
                 pressure: 2.5,
                 control: 0.3,
                 engage: 0.8,
+                grind: 6.0,
+                rubber: 0.15,
                 risk: 0.4,
                 ..base
             },
@@ -222,6 +228,8 @@ impl Personality {
                 pressure: 2.0,
                 control: 0.5,
                 engage: 0.4,
+                grind: 4.5,
+                rubber: 0.4,
                 risk: 0.25,
                 ..base
             },

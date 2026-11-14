@@ -174,6 +174,7 @@ Rubber drains facing an obstacle, regens in the open, and enables slide boost.
 If the planner's rollouts or heuristic ignore rubber drain / wall proximity, the
 bot is either too timid to use the mechanic or misjudges recovery and dies
 stupidly. **Rubber must be a first-class term in the value function.**
+(Implemented: `Terms::rubber`, the burn of a line as a share of the rubber left, with a per-personality price; a target low on rubber is preferred as prey.)
 
 ### Settled
 
@@ -183,8 +184,8 @@ stupidly. **Rubber must be a first-class term in the value function.**
 
 ### Open
 
-- [ ] Forced-engagement pressure (decaying `w_survival`, shrinking, boredom) vs.
-      accepting some bots that just vibe.
+- [x] Forced-engagement pressure: a round heat (fight terms and risk up, room and
+      margin down as the round ages), only for bots in a round.
 - [ ] Spawn behavior: hunt on respawn / grace window / leave spawn. (Must not
       insta-kill fresh spawns.)
 - [ ] FFA target selection: nearest / most dangerous / random / coalition-aware.

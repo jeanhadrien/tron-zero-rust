@@ -53,7 +53,7 @@ numbers are in `docs/specs/netcode-design.md`; the headless harness is
   default roster dies 0.00-0.01 times per 1v1 match, 0.01 in ffa4, 0.15-0.29 in
   ffa8 (8 riders, lowered level of detail) and 0.005-0.02 per rider-round in
   rounds4 (`crates/lab/suites/`, release). Open: in `rounds4` no round ends
-  by last standing any more (phase 2 added fighting terms and an opponent model, but evading bots are rarely caught without a speed advantage; see `docs/guides/dev.md` Lab), and a weak
+  by last standing any more (phases 2 and 4 added fighting terms, grinding, rubber and a round heat so rounds end, but evading bots are still almost never killed; see `docs/guides/dev.md` Lab), and a weak
   build (difficulty 500) still dies on its own trail by design. Tuning the
   planner changes the `bot_duel` and `rounds` goldens (bless after intent).
 - [ ] Collision fairness follow-ups (`crates/shared/src/systems/player.rs`):

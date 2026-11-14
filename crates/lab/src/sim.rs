@@ -595,7 +595,7 @@ impl Lab {
                 .unwrap_or_else(|| panic!("{}: no safe spawn", rider.name));
             placed.push(spawn.position);
             if let Some(brain) = &mut rider.bot {
-                *brain = brain.reborn(brain_seed(rider.seed, rider.lives));
+                *brain = brain.reborn_for_round(brain_seed(rider.seed, rider.lives));
             }
             rider.respawn_at = None;
             rider.was_colliding = false;

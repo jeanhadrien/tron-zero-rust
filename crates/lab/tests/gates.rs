@@ -59,10 +59,12 @@ fn the_same_seed_plays_the_same_game() {
     assert_eq!(trace(&scenario, 60), trace(&scenario, 60));
 }
 
-/// The intercept puzzle: the rider is `prey`, the bot is `bot`. `personality`
+/// A hunting puzzle: the rider is `prey`, the bot is `bot`. `personality`
 /// replaces the bot's own. Returns how the prey died and whether the bot lives.
-fn intercept(personality: &str, difficulty: u32, seed: u64) -> (Option<String>, bool) {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("puzzles/intercept.toml");
+fn hunt(name: &str, personality: &str, difficulty: u32, seed: u64) -> (Option<String>, bool) {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("puzzles")
+        .join(format!("{name}.toml"));
     let mut scenario = Scenario::load(&path).unwrap();
     let bot = scenario
         .riders
@@ -86,11 +88,27 @@ fn intercept(personality: &str, difficulty: u32, seed: u64) -> (Option<String>, 
 #[test]
 fn fighters_cut_off_a_rider_and_passive_bots_do_not() {
     for difficulty in [2500, 4000] {
-        let (cause, alive) = intercept("duelist", difficulty, 1);
+        let (cause, alive) = hunt("intercept", "duelist", difficulty, 1);
         assert_eq!(cause.as_deref(), Some("trail:bot"), "D{difficulty}");
         assert!(alive, "D{difficulty}: the bot died");
     }
-    let (cause, _) = intercept("passive", 4000, 1);
+    let (cause, _) = hunt("intercept", "passive", 4000, 1);
+    assert_ne!(cause.as_deref(), Some("trail:bot"));
+}
+
+/// Without a speed advantage the bot cannot catch the rider: it has to grind the
+/// rider's trail first, then pass it and cut it off. A passive bot never builds
+/// the speed.
+#[test]
+fn a_bot_builds_speed_to_run_a_rider_down() {
+    // Only the duelist at its best does it; the other personalities and levels
+    // do not hunt down a rider that fast (see the fight suite).
+    for seed in 1..=3 {
+        let (cause, alive) = hunt("hunt", "duelist", 4000, seed);
+        assert_eq!(cause.as_deref(), Some("trail:bot"), "seed {seed}");
+        assert!(alive, "seed {seed}: the bot died");
+    }
+    let (cause, _) = hunt("hunt", "passive", 4000, 1);
     assert_ne!(cause.as_deref(), Some("trail:bot"));
 }
 
@@ -142,5 +160,47 @@ fn bots_rarely_kill_themselves_and_better_bots_less() {
         "{} vs {}",
         rate("strong"),
         rate("weak")
+    );
+    // The bots grind: a strong build rides clearly above base speed.
+    let strong = rows.iter().find(|r| r.build == "strong").unwrap();
+    assert!(strong.mean_speed.unwrap() >= 1.1, "{:?}", strong.mean_speed);
+}
+
+const ROUNDS_SUITE: &str = r#"
+seeds = 4
+default_roster = true
+
+[[setup]]
+name = "rounds4"
+riders = 4
+[setup.match]
+respawn = "never"
+rounds = 3
+[setup.match.end]
+last_standing = true
+time_limit = 3600
+"#;
+
+/// Rounds of last rider standing come to an end (the roster measures about 80%
+/// ending with a winner), and the riders stay in company and above base speed.
+#[test]
+fn rounds_end_with_a_winner_and_riders_stay_in_company() {
+    let suite = Suite::parse(ROUNDS_SUITE).unwrap();
+    let report = tournament::run(&suite, None).unwrap();
+    let setup = &report.setups[0];
+    let ended = f64::from(setup.rounds_played - setup.timeouts) / f64::from(setup.rounds_played);
+    assert!(ended >= 0.55, "only {ended} of the rounds ended");
+    let mean = |pick: fn(&tournament::BuildRow) -> Option<f64>| {
+        setup.rows.iter().filter_map(pick).sum::<f64>() / setup.rows.len() as f64
+    };
+    assert!(
+        mean(|r| r.idle_share) <= 0.2,
+        "idle {}",
+        mean(|r| r.idle_share)
+    );
+    assert!(
+        mean(|r| r.mean_speed) >= 1.05,
+        "speed {}",
+        mean(|r| r.mean_speed)
     );
 }

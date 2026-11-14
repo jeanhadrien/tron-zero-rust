@@ -10,6 +10,7 @@
 
 pub mod config;
 pub mod forecast;
+pub mod grind;
 pub mod noise;
 pub mod objective;
 pub mod plan;
@@ -46,6 +47,8 @@ pub struct Brain {
     target: Option<u64>,
     /// The last plan was to ride straight on.
     steady: bool,
+    /// Plays a round of last rider standing: the round heats up.
+    round: bool,
 }
 
 /// What one tick decided.
@@ -67,12 +70,22 @@ impl Brain {
             born: None,
             target: None,
             steady: false,
+            round: false,
         }
     }
 
     /// The same bot for a new life: no plan, a new seed.
     pub fn reborn(&self, seed: u64) -> Self {
         Self::new(self.build.clone(), seed, self.slot)
+    }
+
+    /// The same bot for a new round of last rider standing: it grows bolder
+    /// as the round ages, so rounds come to an end.
+    pub fn reborn_for_round(&self, seed: u64) -> Self {
+        Self {
+            round: true,
+            ..self.reborn(seed)
+        }
     }
 
     /// Whether this tick needs a look at the world: time to plan again, or a
@@ -97,6 +110,7 @@ impl Brain {
         let tick = world.tick;
         let mut params = Params::new(&self.build, tier, self.seed);
         params.steady = self.steady;
+        params.rounds = self.round;
         params.age = tick.saturating_sub(*self.born.get_or_insert(tick));
         self.plan.drop_before(tick);
         let cadence = should_redecide(scheduler, tick, self.slot, self.build.knobs.reaction_ticks);

@@ -1,0 +1,18 @@
+# A rider that never turns rides east; the bot starts a hundred units behind it
+# in the lane beside its trail. The bot cannot catch it at base speed: it has to
+# grind the rider's trail to speed up, pass it, and cut across in front of it.
+# Pass: the rider's death is `trail:bot`, and the bot is alive.
+until = 700
+seed = 1
+
+[[rider]]
+name = "prey"
+at = [-800, 0]
+heading = "+x"
+
+[[rider]]
+name = "bot"
+bot = "duelist"
+difficulty = 4000
+at = [-900, -14]
+heading = "+x"

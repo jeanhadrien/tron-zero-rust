@@ -243,9 +243,23 @@ riding straight) and `engage` (head toward the nearest opponent), all gated by
 a safety factor and by contact distance. `Personality::Passive` ("passive" in a
 scenario's `bot_build`) zeroes them: use it as the reference opponent.
 `puzzles/intercept.toml` has a scripted straight rider the duelist must cut
-off. `suites/fight.toml` runs each preset and Passive in 1v1 rounds. Chasing
-an evader that is as fast gives shadowing, not kills: speed (grinding) is the
-next phase.
+off. `puzzles/hunt.toml` starts the bot beside a straight rider's trail: it must
+grind to speed, pass the rider and cut it off (only the duelist at D4000 does).
+`suites/fight.toml` runs each preset and Passive in 1v1 rounds.
+
+Speed, rubber and heat (phase 4): `grind` is the speed a line earns riding
+beside trails and walls (`bots::grind`, the sim's own constants; the bot's own
+trail is left out on purpose, bots that coil along it box themselves in), and
+capped at 1.5x so the bot hunts once it is fast. `lanes` adds candidates aimed
+beside the obstacle ahead and to each side. `rubber` prices the burn a line
+causes against what it faces (late turns inside the rubber zone) as a share of
+the rubber left; personalities differ in how dear it is. A target that burned
+its rubber is prey. A bot told it plays a round (`Brain::reborn_for_round`)
+heats up with the round's age (`Weights::heated`): fight terms and risk rise,
+room and margin fall, so rounds end. The price is more own-trail deaths in
+rounds; nothing in ffa (respawn) heats up. Measured limit: a competent evader
+always has an open side, so kills need it boxed in; the roster gets almost none.
+The grids assume the default 2000-unit arena (`bots::space`).
 
 `tier = "full"` (or `t1`, `t2`) at the top of a scenario pins the bots' level
 of detail; without it the tier follows the number of living riders, as on the
