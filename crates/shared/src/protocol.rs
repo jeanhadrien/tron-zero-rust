@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize};
 /// fine and then silently mispredict. The lab's golden traces back this up:
 /// blessing changed goldens fails unless this was bumped (see
 /// `golden_traces_match` and `scenarios/goldens.protocol`).
-pub const PROTOCOL_VERSION: u32 = 10;
+pub const PROTOCOL_VERSION: u32 = 11;
 
 /// Bits of one sim constant, checked against its declared type: a constant
 /// listed under the wrong type does not compile.
@@ -308,6 +308,8 @@ pub enum RespawnOutcome {
     Accepted,
     NotEligible,
     NoSafeSpace,
+    /// Rounds mode: riders come back only when the next round starts.
+    WaitForNextRound,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
@@ -552,6 +554,10 @@ pub fn register_protocol(app: &mut App) {
     // purely cosmetic, never read by the sim).
     app.component::<PlayerColor>().replicate();
     app.component::<RiderShape>().replicate();
+
+    // Rounds mode scoreboard: server-decided display data, changes about once a
+    // second (clock) at most, never read by the sim, so no prediction.
+    app.component::<MatchStatus>().replicate();
 
     app.component::<Arena>().replicate_once();
     app.component::<ArenaSize>().replicate_once();

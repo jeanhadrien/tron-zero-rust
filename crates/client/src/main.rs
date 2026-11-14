@@ -99,6 +99,7 @@ fn main() {
                 render::hud_ui,
                 render::status_badge_ui,
                 render::death_ui,
+                render::round_ui,
                 render::debug_panel_ui,
                 chat::chat_ui,
                 menu::menu_ui,

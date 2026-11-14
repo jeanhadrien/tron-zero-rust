@@ -162,7 +162,11 @@ pub fn bot_spawner(
     mut commands: Commands,
     mut manager: ResMut<BotManager>,
     bots: Query<(Entity, &IsAlive), (With<BotBrain>, With<Player>)>,
+    rounds: Option<Res<crate::rounds::MatchState>>,
 ) {
+    // Rounds mode: the round controller places the bots. No respawns, and no
+    // cycle that would replace a bot (and its score) in the middle of a match.
+    let rounds_run = rounds.is_some_and(|state| state.is_running());
     let BotManager {
         slots,
         builds,
@@ -173,6 +177,10 @@ pub fn bot_spawner(
 
     for (index, slot) in slots.iter_mut().enumerate() {
         slot.ticks_alive += 1;
+        if rounds_run {
+            slot.respawn_ticks = None;
+            continue;
+        }
 
         // Full cycle: despawn old entity, replace with a fresh bot number.
         if slot.ticks_alive >= CYCLE_DURATION_TICKS {

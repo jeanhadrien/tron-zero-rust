@@ -14,6 +14,7 @@ Server (`tron-zero-server`, all optional):
 |----------|---------|--------|
 | `PORT` | `5000` | UDP port to bind (also the default advertised port). |
 | `MAX_PLAYERS` | `10` | Human capacity; the 11th player is rejected `ServerFull`. Bots do not count. |
+| `GAME_MODE` | `ffa` | `rounds` for last rider standing per round (`ROUNDS` 5, `ROUND_SECS` 90, `INTERMISSION_SECS` 3, `FINAL_INTERMISSION_SECS` 8); see `docs/specs/rounds-mode.md`. |
 | `SERVER_NAME` | `Unnamed Server` | Name shown in the server browser. |
 | `MANAGER_URL` | `http://localhost:3001` | Lobby to register with. |
 | `RANKED_KEY` | none | `<keyId>.<secret>` from the manager's `add-key.ts`: registers the room as ranked (join tickets required, results move ratings). For community servers. |

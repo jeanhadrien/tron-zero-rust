@@ -13,6 +13,7 @@ pub mod elimination;
 mod look;
 pub mod probe;
 pub mod ranked;
+pub mod rounds;
 pub mod session;
 pub mod systems;
 pub mod turns;
@@ -98,6 +99,9 @@ pub fn add_core(app: &mut App, port: u16) {
             shared::simulate_players,
             // Reads the end-of-tick state before anything is despawned.
             elimination::resolve_deaths,
+            // Rounds mode: ends the round on this tick's deaths, then places
+            // the next one. Absent in free-for-all.
+            rounds::advance_match.run_if(resource_exists::<rounds::MatchState>),
             // Only ranked servers report results (see `ranked`).
             ranked::forward_eliminations.run_if(resource_exists::<ranked::RankedMode>),
         )

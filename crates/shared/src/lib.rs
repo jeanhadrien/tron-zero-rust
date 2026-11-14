@@ -20,6 +20,7 @@ pub mod systems;
 pub use components::arena::*;
 pub use components::debug::*;
 pub use components::player::*;
+pub use components::round::*;
 pub use components::trail::*;
 pub use constants::*;
 pub use elimination::*;
