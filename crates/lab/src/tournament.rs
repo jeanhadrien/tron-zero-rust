@@ -42,7 +42,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use bots::config::{BotBuild, KnobOverrides};
+use bots::config::BotBuild;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use shared::{MatchRules, RoundEnd, TICK_HZ};
@@ -258,7 +258,7 @@ fn play(suite: &Suite, game: &Game) -> GameResult {
             script: Vec::new(),
             bot: Some("tournament".into()),
             difficulty: 0,
-            knobs: KnobOverrides::default(),
+            knobs: toml::Table::new(),
             weights: toml::Table::new(),
             respawn_after: None,
             prebuilt: Some(suite.builds[build].clone()),

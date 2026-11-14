@@ -214,7 +214,7 @@ also counts kills and groups deaths by cause.
 
 ### Bot arenas
 
-A rider with `bot = "<personality>"` (and `difficulty`, plus optional per-knob overrides in `[rider.knobs]`) is driven by the same brain
+A rider with `bot = "<personality>"` (and `difficulty`, plus optional `[rider.knobs]` and `[rider.weights]`, the vocabulary of a suite build) is driven by the same brain
 and decision schedule as the server's bots; leave out `at`/`heading` and it
 gets a seeded safe spawn. `respawn_after = 240` mirrors the server's bot
 respawn delay. `scenarios/bot_duel.toml` is a weak bot against a strong one (the weak one dies and respawns):
@@ -242,7 +242,7 @@ Fighting: the planner adds three terms, `pressure` (squeeze or seal the
 target's territory, or cut it off), `control` (own share of the race over
 riding straight) and `engage` (head toward the nearest opponent), all gated by
 a safety factor and by contact distance. `Personality::Passive` ("passive" in a
-scenario's `bot_build`) zeroes them: use it as the reference opponent.
+scenario or suite) zeroes them: use it as the reference opponent.
 `puzzles/intercept.toml` has a scripted straight rider the duelist must cut
 off. `puzzles/hunt.toml` starts the bot beside a straight rider's trail: it must
 grind to speed, pass the rider and cut it off (only the duelist at D4000 does).

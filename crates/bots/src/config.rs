@@ -137,35 +137,6 @@ impl BotBuild {
     }
 }
 
-/// Optional per-knob overrides on top of a preset (scenario files).
-#[derive(Clone, Debug, Default, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct KnobOverrides {
-    pub reaction_ticks: Option<u32>,
-    pub horizon_ticks: Option<u32>,
-    pub variety: Option<u32>,
-    pub noise: Option<f32>,
-}
-
-impl KnobOverrides {
-    /// Apply the set overrides to `knobs`, then re-clamp.
-    pub fn apply(&self, knobs: &mut BotKnobs) {
-        if let Some(v) = self.reaction_ticks {
-            knobs.reaction_ticks = v;
-        }
-        if let Some(v) = self.horizon_ticks {
-            knobs.horizon_ticks = v;
-        }
-        if let Some(v) = self.variety {
-            knobs.variety = v;
-        }
-        if let Some(v) = self.noise {
-            knobs.noise = v;
-        }
-        knobs.clamp();
-    }
-}
-
 impl Personality {
     /// Lowercase name used in rating ids and logs.
     pub fn label(self) -> &'static str {
@@ -316,19 +287,6 @@ mod tests {
         let names: std::collections::HashSet<_> = builds.iter().map(|b| &b.name).collect();
         assert_eq!(ids.len(), builds.len());
         assert_eq!(names.len(), builds.len());
-    }
-
-    #[test]
-    fn overrides_replace_only_the_set_knobs() {
-        let mut knobs = Difficulty(1500).knobs();
-        let before = knobs.clone();
-        KnobOverrides {
-            reaction_ticks: Some(3),
-            ..KnobOverrides::default()
-        }
-        .apply(&mut knobs);
-        assert_eq!(knobs.reaction_ticks, 3);
-        assert_eq!(knobs.horizon_ticks, before.horizon_ticks);
     }
 
     /// Every budget knob improves (never worsens) with difficulty, so a

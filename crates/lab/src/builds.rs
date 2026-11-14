@@ -65,7 +65,7 @@ pub fn personality(name: &str) -> Result<Personality, String> {
 
 /// `base` with the entries of `over` replacing same-named fields. Unknown
 /// names and wrongly typed values are errors.
-pub(crate) fn merged<T: Serialize + DeserializeOwned>(
+fn merged<T: Serialize + DeserializeOwned>(
     base: &T,
     over: &Table,
     what: &str,

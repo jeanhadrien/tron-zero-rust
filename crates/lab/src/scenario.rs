@@ -56,11 +56,13 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use bots::config::{BotBuild, Difficulty, KnobOverrides};
+use bots::config::BotBuild;
 use bots::schedule::Tier;
 use glam::Vec2;
 use serde::Deserialize;
 use shared::MatchRules;
+
+use crate::builds::BuildSpec;
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -130,9 +132,9 @@ pub struct RiderSpec {
     /// Authoring preset the bot's knobs start from (see `bots::config::Difficulty`).
     #[serde(default = "default_difficulty")]
     pub difficulty: u32,
-    /// Per-knob overrides applied on top of the preset.
+    /// Knob overrides (any knob of `bots::config::BotKnobs`) on top of the preset.
     #[serde(default)]
-    pub knobs: KnobOverrides,
+    pub knobs: toml::Table,
     /// Weight overrides (any weight of `bots::objective::Weights`) on top of
     /// the personality's.
     #[serde(default)]
@@ -245,20 +247,6 @@ impl Scenario {
     }
 }
 
-/// A bot build in scenario vocabulary: personality name, authoring difficulty
-/// and knob overrides. Suite files describe their builds the same way.
-pub fn bot_build(
-    name: &str,
-    bot: &str,
-    difficulty: u32,
-    knobs: &KnobOverrides,
-) -> Result<BotBuild, String> {
-    let personality = crate::builds::personality(bot).map_err(|e| format!("{name}: {e}"))?;
-    let mut set = Difficulty(difficulty).knobs();
-    knobs.apply(&mut set);
-    Ok(BotBuild::new(name, personality, set))
-}
-
 impl RiderSpec {
     /// The bot build for a `bot` rider, `None` for a scripted one.
     pub fn build(&self) -> Result<Option<BotBuild>, String> {
@@ -268,10 +256,14 @@ impl RiderSpec {
         let Some(bot) = &self.bot else {
             return Ok(None);
         };
-        let mut build = bot_build(&self.name, bot, self.difficulty, &self.knobs)?;
-        build.weights = crate::builds::merged(&build.weights, &self.weights, "weight")
-            .map_err(|e| format!("{}: {e}", self.name))?;
-        Ok(Some(build))
+        let spec = BuildSpec {
+            name: self.name.clone(),
+            bot: bot.clone(),
+            difficulty: self.difficulty,
+            knobs: self.knobs.clone(),
+            weights: self.weights.clone(),
+        };
+        Ok(Some(spec.build()?))
     }
 
     /// Parse `"<tick> <action>"` entries into one action per tick. The sim
