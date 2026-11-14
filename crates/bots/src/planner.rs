@@ -57,6 +57,11 @@ const TARGET_STICK: f32 = 0.6;
 /// Ticks ahead the race looks: every rider is taken to ride straight on after
 /// its maneuver until then (or an obstacle), laying trail as it goes.
 const RACE_TICKS: f32 = 160.0;
+/// Pressure a line below the calm risk window needs to be worth the risk: it
+/// has to seal the target, cut it off or squeeze it hard.
+const BOLD_PRESSURE: f32 = 1.0;
+/// Heat at which a bold line needs no kill chance at all.
+const BOLD_FADE: f32 = 6.0;
 /// A round's heat: none until `HEAT_START` ticks after it began, full
 /// `HEAT_SPAN` ticks later. Only bots told they play a round feel it.
 const HEAT_START: f32 = 0.0;
@@ -250,6 +255,9 @@ struct Scored {
     /// Within the bot's risk of the best survival score: the fight terms may
     /// choose it. Ranked above every line that is not.
     eligible: bool,
+    /// Eligible only thanks to the round's heat: below the calm risk window, so
+    /// it must buy a real kill chance (`BOLD_PRESSURE`) to stay eligible.
+    bold: bool,
 }
 
 /// Everything one decision shares between its candidates.
@@ -448,19 +456,31 @@ fn fight(
     scratch: &mut Scratch,
     focus: Option<u64>,
 ) -> Option<u64> {
-    let floor = scored[0].score - cx.weights.risk;
+    let best = scored[0].score;
+    let (floor, calm) = (best - cx.weights.risk, best - cx.params.weights.risk);
     for line in scored.iter_mut() {
         line.eligible = line.score >= floor;
+        line.bold = line.score < calm;
         if line.eligible {
             line.score = cx.weights.value(&line.terms);
         }
     }
     sort(scored);
-    if cx.weights.races() {
+    let target = if cx.weights.races() {
         race_top(cx, scored, scratch, focus)
     } else {
         None
+    };
+    // Risk beyond the calm window is only taken for a kill chance, and the
+    // later the round the smaller the chance asked for.
+    let need = BOLD_PRESSURE * (1.0 - heat(cx.params) / BOLD_FADE).max(0.0);
+    for line in scored.iter_mut() {
+        if line.bold && line.terms.pressure < need {
+            line.eligible = false;
+        }
     }
+    sort(scored);
+    target
 }
 
 /// Run the territory race for the best candidates (and riding straight),
@@ -1027,6 +1047,7 @@ fn evaluate(cx: &Context, index: usize, maneuver: &Maneuver, scratch: &mut Scrat
         safe,
         speed,
         eligible: true,
+        bold: false,
     }
 }
 
@@ -1186,9 +1207,12 @@ mod tests {
     fn a_hot_round_trades_margin_for_the_fight() {
         let cold = Weights::BASE;
         assert_eq!(cold.heated(0.0), cold);
-        let hot = cold.heated(1.0);
+        // The fight comes first; margin and rubber's price go later.
+        let warm = cold.heated(1.0);
+        assert!(warm.pressure > cold.pressure && warm.risk > cold.risk);
+        assert_eq!(warm.pocket, cold.pocket);
+        let hot = cold.heated(3.0);
         assert!(hot.clear < cold.clear && hot.pocket < cold.pocket);
-        assert!(hot.pressure > cold.pressure && hot.risk > cold.risk);
         assert!(hot.rubber < cold.rubber);
         // Only a bot told it plays a round heats up, and not at the start.
         let mut p = params(2000, 0.0);

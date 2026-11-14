@@ -255,10 +255,15 @@ beside the obstacle ahead and to each side. `rubber` prices the burn a line
 causes against what it faces (late turns inside the rubber zone) as a share of
 the rubber left; personalities differ in how dear it is. A target that burned
 its rubber is prey. A bot told it plays a round (`Brain::reborn_for_round`)
-heats up with the round's age (`Weights::heated`): fight terms and risk rise,
-room and margin fall, so rounds end. The price is more own-trail deaths in
-rounds; nothing in ffa (respawn) heats up. Measured limit: a competent evader
-always has an open side, so kills need it boxed in; the roster gets almost none.
+heats up with the round's age (`Weights::heated`): fight terms rise at once,
+room, margin and rubber's price fall later (`WEAR_AT`), so rounds end. Risk
+below the calm window (`Weights::risk`) is only taken for a kill chance: a
+`bold` line must reach `BOLD_PRESSURE` (fading with the heat) or it is dropped
+from the fight. Without that gate the fighters died of their own risk window and
+lost to Passive; with it they win more rounds than Passive, but fewer rounds end
+(wear is what ends them, and it hits every rider alike). Nothing in ffa (respawn)
+heats up. Measured limit: a competent evader always has an open side, so kills
+need it boxed in; most deaths in rounds stay self-kills.
 The grids assume the default 2000-unit arena (`bots::space`).
 
 `tier = "full"` (or `t1`, `t2`) at the top of a scenario pins the bots' level
@@ -308,14 +313,25 @@ score:
 
 - rounds (matches for a one-round setup) played; win rate (last-standing setups
   only; most rounds time out, see the line above the table);
-- kills per minute of alive time; deaths by cause (wall, own trail, other
-  trail); suicide share = (wall + own trail) / all deaths;
+- kills per minute of alive time, direct and forced kills (see below); deaths by
+  cause (wall, own trail, other trail); self-kill share = unforced wall and
+  own-trail deaths / all deaths;
 - median life in ticks (a survivor's life counts up to the round or match end,
   so a median at the time limit means most riders never died);
 - idle share: alive ticks with no living enemy within `IDLE_RANGE`
   (`crates/lab/src/stats.rs`) and the nearest enemy not getting closer;
 - rubber share: alive ticks in the rubber zone; mean speed multiplier;
-- a kill matrix (row killed column); a mutual head-on counts a kill for both.
+- a kill matrix (row killed column) of direct and forced kills; a mutual head-on
+  counts a kill for both.
+
+Forced kills (`crates/lab/src/forced.rs`, lab only: the sim and the ranked rating
+still credit the obstacle faced). A wall or own-trail death is forced when, just
+before it, the rider's reachable room (20-unit flood fill) was below a pocket
+(300 cells) and the trail an opponent laid in the last 240 ticks closed it: without
+it the room is at least 300 cells and twice as large. The opponent giving back
+the most room gets the kill. A rider coiling alone has no opponent trail in its
+pocket and stays a self-kill; `lab <scenario>` prints each such death and who
+forced it, to check against `--frames`.
 
 The last section, decision cost (mean and p99 microseconds per `Brain::think`),
 is wall-clock and depends on the machine and the thread count: never compare

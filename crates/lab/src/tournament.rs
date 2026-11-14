@@ -204,6 +204,8 @@ struct SeatResult {
     wall: u32,
     own_trail: u32,
     trail: u32,
+    /// Wall and own-trail deaths an opponent forced (see `forced`).
+    forced: u32,
     alive_ticks: u64,
     idle_ticks: u64,
     rubber_ticks: u64,
@@ -278,6 +280,7 @@ fn play(suite: &Suite, game: &Game) -> GameResult {
             wall: 0,
             own_trail: 0,
             trail: 0,
+            forced: 0,
             alive_ticks: stats.alive_ticks,
             idle_ticks: stats.idle_ticks,
             rubber_ticks: stats.rubber_ticks,
@@ -300,6 +303,14 @@ fn play(suite: &Suite, game: &Game) -> GameResult {
                 let victim_build = seats[victim].build;
                 *seats[killer].kills_on.entry(victim_build).or_default() += 1;
             }
+        }
+    }
+    // A forced death counts for the opponent as a kill, like a direct one.
+    for death in lab.forced() {
+        if let Some(killer) = death.by {
+            seats[death.victim].forced += 1;
+            let victim_build = seats[death.victim].build;
+            *seats[killer].kills_on.entry(victim_build).or_default() += 1;
         }
     }
     GameResult {
@@ -326,6 +337,7 @@ struct Totals {
     wall: u32,
     own_trail: u32,
     trail: u32,
+    forced: u32,
     alive_ticks: u64,
     idle_ticks: u64,
     rubber_ticks: u64,
@@ -344,9 +356,13 @@ pub struct BuildRow {
     pub kills_per_min: Option<f64>,
     pub deaths_wall: u32,
     pub deaths_own_trail: u32,
+    /// Deaths on an opponent's trail ("direct").
     pub deaths_trail: u32,
-    /// (wall + own trail deaths) / all deaths.
-    pub suicide_share: Option<f64>,
+    /// Wall and own-trail deaths an opponent forced; they are among
+    /// `deaths_wall` and `deaths_own_trail`.
+    pub deaths_forced: u32,
+    /// Unforced wall and own-trail deaths / all deaths: the pure self-kills.
+    pub self_kill_share: Option<f64>,
     pub median_life_ticks: Option<f64>,
     pub idle_share: Option<f64>,
     pub rubber_share: Option<f64>,
@@ -447,6 +463,7 @@ pub fn run(suite: &Suite, threads: Option<usize>) -> Result<Report, String> {
             t.wall += seat.wall;
             t.own_trail += seat.own_trail;
             t.trail += seat.trail;
+            t.forced += seat.forced;
             t.alive_ticks += seat.alive_ticks;
             t.idle_ticks += seat.idle_ticks;
             t.rubber_ticks += seat.rubber_ticks;
@@ -484,7 +501,8 @@ pub fn run(suite: &Suite, threads: Option<usize>) -> Result<Report, String> {
                         deaths_wall: t.wall,
                         deaths_own_trail: t.own_trail,
                         deaths_trail: t.trail,
-                        suicide_share: ratio(f64::from(t.wall + t.own_trail), deaths),
+                        deaths_forced: t.forced,
+                        self_kill_share: ratio(f64::from(t.wall + t.own_trail - t.forced), deaths),
                         median_life_ticks: median(&t.lifetimes),
                         idle_share: ratio(t.idle_ticks as f64, alive),
                         rubber_share: ratio(t.rubber_ticks as f64, alive),
@@ -566,12 +584,12 @@ impl Report {
                 );
             }
             out += &format!(
-                "| build | {rounds} | win | kills/min | wall | own trail | other trail | suicide | median life | idle | rubber | speed |\n"
+                "| build | {rounds} | win | kills/min | wall | own trail | direct | forced | self-kill | median life | idle | rubber | speed |\n"
             );
-            out += "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n";
+            out += "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n";
             for r in &setup.rows {
                 out += &format!(
-                    "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
+                    "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
                     r.build,
                     r.rounds,
                     pct(r.win_rate),
@@ -579,14 +597,15 @@ impl Report {
                     r.deaths_wall,
                     r.deaths_own_trail,
                     r.deaths_trail,
-                    pct(r.suicide_share),
+                    r.deaths_forced,
+                    pct(r.self_kill_share),
                     num(r.median_life_ticks, 0),
                     pct(r.idle_share),
                     pct(r.rubber_share),
                     num(r.mean_speed, 3),
                 );
             }
-            out += "\nKills (row killed column):\n\n| |";
+            out += "\nKills, direct and forced (row killed column):\n\n| |";
             for name in &setup.builds {
                 out += &format!(" {name} |");
             }

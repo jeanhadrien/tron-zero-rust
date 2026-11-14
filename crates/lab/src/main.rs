@@ -206,6 +206,19 @@ fn run(args: Args) -> Result<(), String> {
                 .collect();
             writeln!(out, "#   died on {}", causes.join(", ")).map_err(io_err)?;
         }
+        let names: Vec<String> = lab.riders().into_iter().map(|r| r.name).collect();
+        let forced: Vec<String> = lab
+            .forced()
+            .iter()
+            .filter(|d| d.victim == rider.index)
+            .map(|d| {
+                let by = d.by.map_or("nobody", |k| names[k].as_str());
+                format!("tick {} forced by {by}", d.tick)
+            })
+            .collect();
+        if !forced.is_empty() {
+            writeln!(out, "#   own-trail/wall deaths: {}", forced.join(", ")).map_err(io_err)?;
+        }
     }
     Ok(())
 }

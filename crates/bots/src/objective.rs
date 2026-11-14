@@ -17,6 +17,10 @@ const HEAT_ENGAGE: f32 = 3.0;
 const HEAT_RISK: f32 = 2.0;
 const HEAT_WEAR: f32 = 0.8;
 const HEAT_RUBBER: f32 = 0.8;
+/// Heat at which wear and rubber's price start to go (full one heat later):
+/// the fight comes first (kills come late in a round, once the heat is up), a
+/// round nobody wins is only forced to an end afterwards.
+const WEAR_AT: f32 = 2.0;
 
 /// What a candidate maneuver achieves, one measurement per term.
 #[derive(Clone, Copy, Debug, Default)]
@@ -131,7 +135,8 @@ impl Weights {
     /// and spends rubber freely, so a round whose riders all play safe still
     /// comes to an end.
     pub fn heated(self, heat: f32) -> Self {
-        let worn = 1.0 - HEAT_WEAR * heat.min(1.0);
+        let late = (heat - WEAR_AT).clamp(0.0, 1.0);
+        let worn = 1.0 - HEAT_WEAR * late;
         Self {
             space: self.space * worn,
             pocket: self.pocket * worn,
@@ -139,7 +144,7 @@ impl Weights {
             pressure: self.pressure + HEAT_PRESSURE * heat,
             control: self.control + HEAT_CONTROL * heat,
             engage: self.engage + HEAT_ENGAGE * heat,
-            rubber: self.rubber * (1.0 - HEAT_RUBBER * heat.min(1.0)),
+            rubber: self.rubber * (1.0 - HEAT_RUBBER * late),
             risk: self.risk + HEAT_RISK * heat,
             ..self
         }

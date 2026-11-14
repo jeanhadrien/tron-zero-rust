@@ -181,7 +181,7 @@ last_standing = true
 time_limit = 3600
 "#;
 
-/// Rounds of last rider standing come to an end (the roster measures about 80%
+/// Rounds of last rider standing come to an end (the roster measures about 50%
 /// ending with a winner), and the riders stay in company and above base speed.
 #[test]
 fn rounds_end_with_a_winner_and_riders_stay_in_company() {
@@ -189,7 +189,7 @@ fn rounds_end_with_a_winner_and_riders_stay_in_company() {
     let report = tournament::run(&suite, None).unwrap();
     let setup = &report.setups[0];
     let ended = f64::from(setup.rounds_played - setup.timeouts) / f64::from(setup.rounds_played);
-    assert!(ended >= 0.55, "only {ended} of the rounds ended");
+    assert!(ended >= 0.4, "only {ended} of the rounds ended");
     let mean = |pick: fn(&tournament::BuildRow) -> Option<f64>| {
         setup.rows.iter().filter_map(pick).sum::<f64>() / setup.rows.len() as f64
     };

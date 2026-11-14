@@ -14,6 +14,7 @@ use serde::Serialize;
 use shared::spawn::{SafeSpawn, find_safe_spawn};
 use shared::*;
 
+use crate::forced;
 use crate::scenario::{Action, Heading, Scenario, TierPin};
 use crate::stats::{IDLE_RANGE, RiderStats, RoundResult};
 
@@ -123,6 +124,15 @@ pub struct Score {
     pub kills: u32,
 }
 
+/// A death on a wall or the rider's own trail, with the opponent that forced
+/// it, if any (see `forced`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ForcedDeath {
+    pub tick: u32,
+    pub victim: usize,
+    pub by: Option<usize>,
+}
+
 struct LabRider {
     name: String,
     entity: Entity,
@@ -159,6 +169,7 @@ pub struct Lab {
     walls: Vec<[f32; 4]>,
     tick: u32,
     events: Vec<Event>,
+    forced: Vec<ForcedDeath>,
     eliminations: Vec<Elimination<String>>,
     rules: Option<MatchRules>,
     tier: Option<Tier>,
@@ -273,6 +284,7 @@ impl Lab {
             walls,
             tick: 0,
             events: Vec::new(),
+            forced: Vec::new(),
             eliminations: Vec::new(),
             rules: scenario.rules,
             tier: scenario.tier.map(TierPin::tier),
@@ -327,6 +339,11 @@ impl Lab {
 
     pub fn size(&self) -> ArenaSize {
         self.size
+    }
+
+    /// Every death on a wall or a rider's own trail, with who forced it.
+    pub fn forced(&self) -> &[ForcedDeath] {
+        &self.forced
     }
 
     /// Arena boundary followed by scenario walls, as `[x1, y1, x2, y2]`.
@@ -440,7 +457,7 @@ impl Lab {
         }
 
         let decided = self.decide_bots();
-        let before = self.riders();
+        let pre = self.riders();
         for (rider, decided) in self.riders.iter().zip(decided) {
             // Inputs are one-shot: a tick without a command must hold, or a
             // lingering turn would spin the rider.
@@ -462,7 +479,7 @@ impl Lab {
         self.resolve_eliminations(&deaths);
 
         let heads: Vec<Option<Vec2>> = (0..self.riders.len()).map(|i| self.head(i)).collect();
-        for (index, before) in before.into_iter().enumerate() {
+        for (index, before) in pre.iter().enumerate() {
             let after = self.view(index);
             if !before.alive {
                 continue;
@@ -491,6 +508,21 @@ impl Lab {
                     .iter()
                     .find(|d| d.victim == entity)
                     .map_or_else(|| "unknown".into(), |d| self.cause_label(d.cause));
+                if cause == "wall" || cause == "own_trail" {
+                    let by = forced::forced_by(
+                        &pre,
+                        &self.walls,
+                        self.size.width,
+                        &self.events,
+                        tick,
+                        index,
+                    );
+                    self.forced.push(ForcedDeath {
+                        tick,
+                        victim: index,
+                        by,
+                    });
+                }
                 self.push(
                     index,
                     EventKind::Death {
