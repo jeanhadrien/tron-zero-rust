@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.0.0](https://github.com/jeanhadrien/tron-zero-rust/compare/client-v0.16.0...client-v1.0.0) (2026-11-14)
+
+
+### Features
+
+* **client:** scoreboard on Tab and HUD for match rules ([2054740](https://github.com/jeanhadrien/tron-zero-rust/commit/205474022d7b271200fb3f6fe7a55d8963bb664a))
+
+
+### Bug Fixes
+
+* review findings on match rules ([656db75](https://github.com/jeanhadrien/tron-zero-rust/commit/656db75d8ed66c778f4dc81212319d8cffb464d7))
+
 ## [0.16.0](https://github.com/jeanhadrien/tron-zero-rust/compare/client-v0.15.0...client-v0.16.0) (2026-11-14)
 
 
