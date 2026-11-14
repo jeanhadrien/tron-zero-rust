@@ -66,8 +66,10 @@ impl BotKnobs {
     /// and the planner tuning. Two builds with the same hash are the same bot,
     /// wherever they run.
     fn fingerprint(&self, personality: Personality, weights: &Weights, tuning: &Tuning) -> u32 {
-        // The tuning in its file form: every value with its key.
-        let tuning = toml::to_string(tuning).unwrap_or_default();
+        let mut tuning_bytes = Vec::new();
+        if let Ok(table) = toml::Table::try_from(tuning) {
+            tuning_words(&toml::Value::Table(table), &mut tuning_bytes);
+        }
         let knobs = [
             self.reaction_ticks,
             self.horizon_ticks,
@@ -86,7 +88,7 @@ impl BotKnobs {
             .bytes()
             .chain(knobs.iter().flat_map(|word| word.to_le_bytes()))
             .chain(weights.iter().flat_map(|word| word.to_le_bytes()))
-            .chain(tuning.bytes())
+            .chain(tuning_bytes)
             .fold(0x811c_9dc5_u32, |hash, byte| {
                 (hash ^ u32::from(byte)).wrapping_mul(0x0100_0193)
             })
@@ -97,6 +99,26 @@ impl BotKnobs {
         self.horizon_ticks = self.horizon_ticks.max(1);
         self.variety = self.variety.clamp(1, 3);
         self.noise = self.noise.clamp(0.0, 1.0);
+    }
+}
+
+/// The tuning as bytes to hash: every key, sorted, then its value's raw bits
+/// (`f32` bits for floats, as stored), so the hash never depends on how a
+/// serializer writes text.
+fn tuning_words(value: &toml::Value, out: &mut Vec<u8>) {
+    match value {
+        toml::Value::Table(table) => {
+            let mut keys: Vec<&String> = table.keys().collect();
+            keys.sort();
+            for key in keys {
+                out.extend(key.bytes());
+                tuning_words(&table[key], out);
+            }
+        }
+        toml::Value::Array(items) => items.iter().for_each(|item| tuning_words(item, out)),
+        toml::Value::Float(v) => out.extend((*v as f32).to_bits().to_le_bytes()),
+        toml::Value::Integer(v) => out.extend(v.to_le_bytes()),
+        other => out.extend(other.to_string().bytes()),
     }
 }
 
