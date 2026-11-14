@@ -27,7 +27,8 @@ serves every bot. Used by the server (real games) and the lab (measurement).
   are TOML files: one `[tuning]` (`tuning::Tuning`, the planner's global
   constants, every key required) shared by their `[[build]]`s;
   `rosters/default.toml` is the game's roster, embedded by `roster::builtin`
-  (five difficulty rungs and the artist Escher).
+  (one medium bot, four hard bots of different personalities, the artist
+  Escher). `rosters/ladder.toml` is the generated five-rung difficulty ladder.
 - A tuned number of the planner lives in `Tuning`, never as a `const`. Consts
   stay for structure only: grid and buffer sizes, `MAX_TURNS`, the reply set,
   the artist's cycles, and the lab's authoring curve and personality presets.

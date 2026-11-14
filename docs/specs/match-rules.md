@@ -23,6 +23,7 @@ The `[match]` and `[round]` tables of the server config file
 | `round.respawn` | `anytime` (a dead rider comes back during the round) or `next_round`. |
 | `round.last_standing` | End the round when at most one rider is alive. Needs `next_round`. |
 | `round.end_without_humans` | Optional, `true` by default. End the round when no human is left in it. |
+| `round.end_without_humans_secs` | Optional, `4` by default. Seconds the bots keep riding after the last human is out, before the round ends; `0` ends it at once. |
 
 A round may have no end condition (it lasts until the match is dropped), but
 only with `anytime` respawns: with `next_round` and no end condition the dead
@@ -66,9 +67,11 @@ plays five 90 s last-standing rounds.
   condition met:
   - `last_standing`: at most one rider alive. The survivor wins; nobody wins
     when the last riders die on the same tick.
-  - `end_without_humans`: every human is dead with `next_round` respawns (with
-    `anytime` a dead human can come back, so it never fires). With one rider
-    alive, last standing names it the winner first; with more, nobody wins.
+  - `end_without_humans`: every human has been dead for
+    `end_without_humans_secs` with `next_round` respawns (with `anytime` a
+    dead human can come back, so it never fires). Meanwhile the bots ride on
+    and may still win by last standing; at the end, with one rider alive, last
+    standing names it the winner first; with more, nobody wins.
   - Time limit. In a one-round match the winner is the top scorer: most kills,
     then fewest deaths; without a kill, or with a tie at the top, nobody wins.
     With several rounds the scores span the match, so a time-out has no winner.

@@ -1,0 +1,224 @@
+# The generated difficulty ladder, the server's default roster until
+# `default.toml` replaced it with mostly hard bots. Seat it with
+# `bots.roster` in a server config (path relative to that file);
+# `crates/lab/tests/roster.rs` keeps it monotonic. Five difficulty rungs, weakest
+# first, each named with its label. Generated with
+#   cargo run --release -p tron-zero-lab -- ladder crates/lab/tuning/duel.ladder.toml --threads 4 --out ladder.toml
+# (a round robin of 1v1 rounds, then a head-to-head check of every pair on
+# held-out seeds), renamed by hand. After the ladder, outside it: Escher, an
+# artist that draws a square wave (motif = 1, legs of `stride` units) and never
+# hunts.
+#
+# [tuning] is the planner's global tuning, shared by every build below and
+# part of each build's rating id (`bots::tuning`). Every key is required.
+
+[tuning.room]
+need_cells = 300.0
+clear_ticks = 20.0
+min_cruise = 0.8
+rubber_slack = 10.0
+rollout_reach = 6.0
+rollout_margin = 150.0
+
+[tuning.search]
+verify_top = 6
+race_top = 7
+race_ticks = 160.0
+reply_top = 3
+reply_range = 700.0
+
+[tuning.engage]
+range = 250.0
+span = 1200.0
+steps = 3.0
+ramp = 600.0
+max = 4.0
+pace_min = 0.5
+pace_max = 2.0
+contact_near = 900.0
+contact_span = 1200.0
+
+[tuning.target]
+distance = 1.2
+rubber = 1.0
+stick = 0.6
+attack_pressure = 0.6
+
+[tuning.bold]
+pressure = 1.0
+fade = 6.0
+
+[tuning.cut]
+min_margin = 3.0
+best_margin = 30.0
+fade = 150.0
+ticks = 450.0
+
+[tuning.lanes]
+grind_cap = 1.5
+grind_gap = 10.0
+lane_reach = 420.0
+late_gaps = [14.0, 36.0]
+
+[tuning.heat]
+span = 500.0
+max = 3.0
+pressure = 5.0
+control = 0.5
+engage = 3.0
+risk = 2.0
+wear = 0.8
+rubber = 0.8
+wear_at = 2.0
+
+[tuning.artist]
+mirror_cost = 0.25
+slack = 6.0
+
+[tuning.tiers]
+t1_riders = 5
+t2_riders = 8
+full = { flood_cap = 500, max_horizon = 64, max_variety = 3 }
+t1 = { flood_cap = 400, max_horizon = 48, max_variety = 3 }
+t2 = { flood_cap = 300, max_horizon = 36, max_variety = 2 }
+
+[[build]]
+name = "Wisp (Novice)"
+personality = "trapper"
+[build.knobs]
+horizon_ticks = 8
+noise = 0.95
+reaction_ticks = 36
+variety = 1
+[build.weights]
+clear = 0.8
+commit = 0.3
+control = 0.5
+engage = 0.4
+fill = 0.5
+grind = 4.5
+pocket = 2.0
+pressure = 2.0
+reach = 3.0
+risk = 0.25
+rubber = 0.4
+space = 1.0
+turn = 0.12
+
+[[build]]
+name = "Drifter (Easy)"
+personality = "trapper"
+[build.knobs]
+horizon_ticks = 14
+noise = 0.855
+reaction_ticks = 33
+variety = 1
+[build.weights]
+clear = 0.8
+commit = 0.3
+control = 0.5
+engage = 0.4
+fill = 0.5
+grind = 4.5
+pocket = 2.0
+pressure = 2.0
+reach = 3.0
+risk = 0.25
+rubber = 0.4
+space = 1.0
+turn = 0.12
+
+[[build]]
+name = "Warden (Medium)"
+personality = "trapper"
+[build.knobs]
+horizon_ticks = 30
+noise = 0.57
+reaction_ticks = 22
+variety = 2
+[build.weights]
+clear = 0.8
+commit = 0.3
+control = 0.5
+engage = 0.4
+fill = 0.5
+grind = 4.5
+pocket = 2.0
+pressure = 2.0
+reach = 3.0
+risk = 0.25
+rubber = 0.4
+space = 1.0
+turn = 0.12
+
+[[build]]
+name = "Raptor (Hard)"
+personality = "trapper"
+[build.knobs]
+horizon_ticks = 47
+noise = 0.285
+reaction_ticks = 12
+variety = 2
+[build.weights]
+clear = 0.8
+commit = 0.3
+control = 0.5
+engage = 0.4
+fill = 0.5
+grind = 4.5
+pocket = 2.0
+pressure = 2.0
+reach = 3.0
+risk = 0.25
+rubber = 0.4
+space = 1.0
+turn = 0.12
+
+[[build]]
+name = "Apex (Expert)"
+personality = "trapper"
+[build.knobs]
+horizon_ticks = 64
+noise = 0.0
+reaction_ticks = 2
+variety = 3
+[build.weights]
+clear = 0.8
+commit = 0.3
+control = 0.5
+engage = 0.4
+fill = 0.5
+grind = 4.5
+pocket = 2.0
+pressure = 2.0
+reach = 3.0
+risk = 0.25
+rubber = 0.4
+space = 1.0
+turn = 0.12
+
+[[build]]
+name = "Escher (Artist)"
+personality = "artist"
+[build.knobs]
+horizon_ticks = 55
+noise = 0.07
+reaction_ticks = 3
+variety = 3
+[build.weights]
+clear = 1.1
+commit = 0.2
+control = 0.0
+engage = 0.0
+fill = 0.5
+grind = 0.0
+motif = 1.0
+pocket = 2.0
+pressure = 0.0
+reach = 3.0
+risk = 0.08
+rubber = 0.9
+space = 1.3
+stride = 200.0
+style = 2.0
+turn = 0.0

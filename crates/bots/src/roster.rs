@@ -76,7 +76,7 @@ pub fn parse(text: &str) -> Result<Vec<BotBuild>, String> {
 }
 
 /// The roster the game seats by default, embedded at build time
-/// (`rosters/default.toml`: the difficulty ladder and the artists).
+/// (`rosters/default.toml`: one medium bot, four hard ones and the artist).
 pub fn builtin() -> Result<Vec<BotBuild>, String> {
     parse(include_str!("../rosters/default.toml")).map_err(|e| format!("built-in roster: {e}"))
 }

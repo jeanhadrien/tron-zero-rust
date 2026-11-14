@@ -27,7 +27,7 @@ fn rules() -> MatchRules {
         end: EndRules {
             time_limit: None,
             last_standing: true,
-            no_human_left: true,
+            no_human_left: Some(0),
         },
         rounds: 2,
         intermission: 60,

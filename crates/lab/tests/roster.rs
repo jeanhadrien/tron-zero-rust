@@ -1,6 +1,9 @@
-//! The committed roster (`crates/bots/rosters/default.toml`) keeps its promises.
+//! The committed difficulty ladder (`crates/bots/rosters/ladder.toml`) keeps
+//! its promises.
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
+
+use std::path::Path;
 
 use serde::Deserialize;
 use tron_zero_lab::bench::Bench;
@@ -20,7 +23,8 @@ const SEEDS: u64 = 4;
 /// ones (the artists) are outside it.
 #[test]
 fn the_ladder_is_monotonic() {
-    let roster = bots::roster::builtin().unwrap();
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../bots/rosters/ladder.toml");
+    let roster = bots::roster::load(&path).unwrap();
     let rungs = &roster[..5];
     let setups: Setups = toml::from_str(
         r#"

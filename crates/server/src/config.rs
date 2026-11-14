@@ -19,6 +19,7 @@
 //! respawn = "next_round"      # or "anytime"
 //! last_standing = true        # needs respawn = "next_round"
 //! end_without_humans = true   # optional, true by default
+//! end_without_humans_secs = 4 # optional, 4 by default: bots ride on this long
 //!
 //! [bots]
 //! roster = "builtin"          # or a roster file, relative to this file
@@ -77,6 +78,16 @@ pub struct Round {
     pub last_standing: bool,
     #[serde(default = "yes")]
     pub end_without_humans: bool,
+    /// Seconds the bots keep riding after the last human is out.
+    #[serde(default = "no_human_delay_secs")]
+    pub end_without_humans_secs: u32,
+}
+
+/// Default of `round.end_without_humans_secs`.
+const NO_HUMAN_DELAY_SECS: u32 = 4;
+
+fn no_human_delay_secs() -> u32 {
+    NO_HUMAN_DELAY_SECS
 }
 
 #[derive(Clone, Copy, Debug, Deserialize)]
@@ -140,7 +151,10 @@ impl ServerConfig {
             end: EndRules {
                 time_limit: (self.round.secs > 0).then(|| secs_to_ticks(self.round.secs)),
                 last_standing: self.round.last_standing,
-                no_human_left: self.round.end_without_humans,
+                no_human_left: self
+                    .round
+                    .end_without_humans
+                    .then(|| secs_to_ticks(self.round.end_without_humans_secs)),
             },
             rounds: self.r#match.rounds,
             intermission: secs_to_ticks(self.r#match.intermission_secs),
@@ -193,9 +207,12 @@ mod tests {
         let rounds = "secs = 0\nrespawn = \"next_round\"\nlast_standing = true";
         let rules = file(rounds).unwrap().rules().unwrap();
         assert_eq!((rules.rounds, rules.end.time_limit), (7, None));
-        assert!(rules.end.no_human_left && rules.needs_human);
+        assert_eq!(rules.end.no_human_left, Some(secs_to_ticks(4)));
+        assert!(rules.needs_human);
+        let now = file(&format!("{rounds}\nend_without_humans_secs = 0")).unwrap();
+        assert_eq!(now.rules().unwrap().end.no_human_left, Some(0));
         let off = file(&format!("{rounds}\nend_without_humans = false")).unwrap();
-        assert!(!off.rules().unwrap().end.no_human_left);
+        assert_eq!(off.rules().unwrap().end.no_human_left, None);
         // Last standing with respawns could never end a round.
         let bad = rounds.replace("next_round", "anytime");
         assert!(file(&bad).unwrap().rules().is_err());
