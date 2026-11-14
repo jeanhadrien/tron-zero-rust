@@ -5,6 +5,7 @@ use core::net::{IpAddr, Ipv4Addr, SocketAddr};
 use lightyear::prelude::server::*;
 use lightyear::prelude::*;
 use shared::protocol::{RespawnChannel, RespawnOutcome, RespawnReply, RespawnRequest};
+use shared::spawn::{SpawnField, placed};
 
 use crate::admission::{AwaitingHello, MAX_UNADMITTED_LINKS};
 use crate::budget::{LinkBudget, Meter};
@@ -249,56 +250,14 @@ fn try_respawn(world: &mut World, owner: Entity, request: RespawnRequest) -> Res
     let Some(next_life) = shared::LifeGeneration(generation).next() else {
         return RespawnOutcome::NotEligible;
     };
-    let mut arenas =
-        world.query_filtered::<(&shared::ArenaSize, &shared::WallSegments), With<shared::Arena>>();
-    let Ok((size, walls)) = arenas.single(world) else {
+    let Some(mut field) = SpawnField::with_living(world) else {
         return RespawnOutcome::NoSafeSpace;
     };
-    let size = *size;
-    let mut segments: Vec<_> = walls
-        .0
-        .iter()
-        .map(|w| [Vec2::new(w[0], w[1]), Vec2::new(w[2], w[3])])
-        .collect();
-    let mut riders = Vec::new();
-    for (alive, position, trail) in world
-        .query_filtered::<(&shared::IsAlive, &shared::Position, &shared::Trail), With<shared::Player>>()
-        .iter(world)
-    {
-        if alive.0 {
-            riders.push(position.0);
-            let points = trail.points(position.0);
-            segments.extend(points.windows(2).map(|p| [p[0], p[1]]));
-        }
-    }
-    let Some(spawn) = shared::spawn::find_safe_spawn(
-        size,
-        &segments,
-        &riders,
-        owner.to_bits().wrapping_add(generation as u64),
-    ) else {
+    let Some(spawn) = field.place(owner.to_bits().wrapping_add(generation as u64)) else {
         return RespawnOutcome::NoSafeSpace;
     };
     world.entity_mut(entity).insert((placed(&spawn), next_life));
     RespawnOutcome::Accepted
-}
-
-/// Components of a rider placed at `spawn`: alive, fresh trail, speed and
-/// rubber reset. Shared by respawns and round starts.
-pub(crate) fn placed(spawn: &shared::spawn::SafeSpawn) -> impl Bundle {
-    (
-        shared::Position(spawn.position),
-        shared::Direction(spawn.direction),
-        shared::SpeedMult::base(),
-        shared::TargetSpeedMult::default(),
-        shared::Rubber::default(),
-        shared::IsAlive(true),
-        shared::Trail::new(spawn.position),
-        shared::ShouldHandleDeath(true),
-        shared::IsSliding(false),
-        shared::IsColliding(false),
-        shared::ActionState(shared::PlayerInput::None),
-    )
 }
 
 /// When a client disconnects (Connected removed), find their player entity

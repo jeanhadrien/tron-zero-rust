@@ -1,13 +1,19 @@
 //! Match rules: how a game of several rounds is played and when it ends.
 //!
 //! Plain data and pure decisions, outside the simulation: nothing here is read
-//! by `simulate_players`, replicated or part of `PROTOCOL_ID`. The lab and the
-//! game server's rounds mode (`docs/specs/rounds-mode.md`) play matches with it. Later modes (first to K kills, teams) are new
+//! by `simulate_players`, replicated or part of `PROTOCOL_ID`. [`MatchRules`]
+//! is the data, [`MatchFlow`] the state machine that plays a match by it
+//! (`docs/specs/rounds-mode.md`). Later modes (first to K kills, teams) are new
 //! fields of `EndRules` and new `RoundEnd` variants, not a new type.
 
+use bevy_ecs::entity::Entity;
 use serde::{Deserialize, Serialize};
 
+use crate::MatchPhase;
 use crate::constants::TICK_HZ;
+
+/// Riders a match needs to run: with fewer, nobody is playing anybody.
+const MIN_RIDERS: usize = 2;
 
 /// What happens to a rider after its death.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -51,16 +57,6 @@ pub enum RoundEnd {
     TimeLimit,
 }
 
-impl RoundEnd {
-    /// Spelling used in traces and reports.
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::LastStanding => "last_standing",
-            Self::TimeLimit => "time_limit",
-        }
-    }
-}
-
 /// One match: a respawn policy, an end condition and a number of rounds.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -71,7 +67,7 @@ pub struct MatchRules {
     pub end: EndRules,
     #[serde(default = "one_round")]
     pub rounds: u32,
-    /// Ticks between two rounds (the lab has no break and ignores it).
+    /// Ticks between two rounds; 0 chains them with no break.
     #[serde(default = "default_intermission")]
     pub intermission: u32,
     /// Ticks between the last round and the next match, showing the standings.
@@ -139,6 +135,170 @@ impl MatchRules {
     }
 }
 
+/// What [`MatchFlow`] decided for one tick; the caller applies it to its world.
+#[derive(Debug, PartialEq, Eq)]
+pub enum MatchStep {
+    Idle,
+    /// A second rider is here: stop everybody, count down to round 1.
+    Starting,
+    /// Place every rider and start a round; `new_match` resets the scores.
+    Begin {
+        new_match: bool,
+    },
+    /// The round is over, for `reason`: `winner` is the last rider alive, if
+    /// there is one.
+    RoundOver {
+        reason: RoundEnd,
+        winner: Option<Entity>,
+    },
+}
+
+/// The state machine of a match: phases, round counter and clock, decided by
+/// [`MatchRules`]. Pure and counted in fixed ticks; the caller applies each
+/// [`MatchStep`] to its riders.
+#[derive(Debug)]
+pub struct MatchFlow {
+    rules: MatchRules,
+    phase: MatchPhase,
+    /// Current round from 1; 0 while `Free`.
+    round: u32,
+    /// Ticks spent in this phase.
+    ticks: u32,
+}
+
+impl MatchFlow {
+    /// Idle until two riders are here, then a countdown and round 1.
+    pub fn new(rules: MatchRules) -> Self {
+        Self {
+            rules,
+            phase: MatchPhase::Free,
+            round: 0,
+            ticks: 0,
+        }
+    }
+
+    /// Already playing round 1, its riders placed by the caller.
+    pub fn in_round(rules: MatchRules) -> Self {
+        Self {
+            phase: MatchPhase::Playing,
+            round: 1,
+            ..Self::new(rules)
+        }
+    }
+
+    pub fn phase(&self) -> MatchPhase {
+        self.phase
+    }
+
+    /// Current round, from 1; 0 while `Free`.
+    pub fn round(&self) -> u32 {
+        self.round
+    }
+
+    pub fn rules(&self) -> &MatchRules {
+        &self.rules
+    }
+
+    /// Whether a match is on. When false the riders play free: normal respawns.
+    pub fn is_running(&self) -> bool {
+        self.phase != MatchPhase::Free
+    }
+
+    /// Advance one fixed tick, after the tick's deaths. `riders` counts
+    /// everybody in the arena roster, `alive` those still riding.
+    pub fn advance(&mut self, riders: usize, alive: &[Entity]) -> MatchStep {
+        match self.phase {
+            MatchPhase::Free => {
+                if riders < MIN_RIDERS {
+                    return MatchStep::Idle;
+                }
+                self.enter(MatchPhase::Starting, 1);
+                MatchStep::Starting
+            }
+            MatchPhase::Starting => {
+                if !self.wait(riders, self.rules.intermission) {
+                    return MatchStep::Idle;
+                }
+                self.enter(MatchPhase::Playing, 1);
+                MatchStep::Begin { new_match: true }
+            }
+            MatchPhase::Playing => {
+                self.ticks += 1;
+                let Some(end) = self.rules.round_end(self.ticks, alive.len()) else {
+                    return MatchStep::Idle;
+                };
+                let winner = match (end, alive) {
+                    (RoundEnd::LastStanding, &[only]) => Some(only),
+                    _ => None,
+                };
+                let phase = if self.round >= self.rules.rounds {
+                    MatchPhase::MatchOver
+                } else {
+                    MatchPhase::Intermission
+                };
+                self.enter(phase, self.round);
+                MatchStep::RoundOver {
+                    reason: end,
+                    winner,
+                }
+            }
+            MatchPhase::Intermission => {
+                if !self.wait(riders, self.rules.intermission) {
+                    return MatchStep::Idle;
+                }
+                self.enter(MatchPhase::Playing, self.round + 1);
+                MatchStep::Begin { new_match: false }
+            }
+            MatchPhase::MatchOver => {
+                if !self.wait(riders, self.rules.final_intermission) {
+                    return MatchStep::Idle;
+                }
+                self.enter(MatchPhase::Playing, 1);
+                MatchStep::Begin { new_match: true }
+            }
+        }
+    }
+
+    fn enter(&mut self, phase: MatchPhase, round: u32) {
+        self.phase = phase;
+        self.round = round;
+        self.ticks = 0;
+    }
+
+    /// Count a break tick; true once it has lasted `len` ticks. A break of 0
+    /// ticks is over at once, whoever is left. With too few riders left during
+    /// a real break the match is dropped and the riders play free.
+    fn wait(&mut self, riders: usize, len: u32) -> bool {
+        if len == 0 {
+            return true;
+        }
+        if riders < MIN_RIDERS {
+            self.enter(MatchPhase::Free, 0);
+            return false;
+        }
+        self.ticks += 1;
+        self.ticks >= len
+    }
+
+    /// Ticks the current phase's clock lasts, `None` without a limit.
+    fn clock_len(&self) -> Option<u32> {
+        match self.phase {
+            MatchPhase::Free => None,
+            MatchPhase::Playing => self.rules.end.time_limit,
+            MatchPhase::Starting | MatchPhase::Intermission => Some(self.rules.intermission),
+            MatchPhase::MatchOver => Some(self.rules.final_intermission),
+        }
+    }
+
+    /// Whole seconds left on this phase's clock, `None` without a limit.
+    pub fn secs_left(&self) -> Option<u16> {
+        self.clock_len().map(|len| {
+            let left = len.saturating_sub(self.ticks).div_ceil(TICK_HZ as u32);
+            left.min(u32::from(u16::MAX)) as u16
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -170,5 +330,203 @@ mod tests {
         };
         assert_eq!(rules.round_end(99, 0), None);
         assert_eq!(rules.round_end(100, 4), Some(RoundEnd::TimeLimit));
+    }
+
+    fn rounds_of(rounds: u32, limit: Option<u32>) -> MatchRules {
+        MatchRules {
+            respawn: Respawn::Never,
+            end: EndRules {
+                time_limit: limit,
+                last_standing: true,
+            },
+            rounds,
+            intermission: 3,
+            final_intermission: 5,
+        }
+    }
+
+    fn entities(n: u32) -> Vec<Entity> {
+        (1..=n)
+            .map(Entity::from_raw_u32)
+            .map(Option::unwrap)
+            .collect()
+    }
+
+    /// Run `ticks` idle ticks with everyone alive.
+    fn idle(flow: &mut MatchFlow, riders: &[Entity], ticks: u32) {
+        for _ in 0..ticks {
+            assert_eq!(flow.advance(riders.len(), riders), MatchStep::Idle);
+        }
+    }
+
+    /// Bring a fresh match to the first tick of round 1.
+    fn playing(flow: &mut MatchFlow, riders: &[Entity]) {
+        assert_eq!(flow.advance(riders.len(), riders), MatchStep::Starting);
+        idle(flow, riders, 2);
+        assert_eq!(
+            flow.advance(riders.len(), riders),
+            MatchStep::Begin { new_match: true }
+        );
+        assert_eq!(flow.phase(), MatchPhase::Playing);
+    }
+
+    #[test]
+    fn fewer_than_two_riders_keep_the_match_free() {
+        let mut flow = MatchFlow::new(rounds_of(2, None));
+        let riders = entities(1);
+        idle(&mut flow, &riders, 10);
+        assert!(!flow.is_running());
+        assert_eq!(flow.advance(0, &[]), MatchStep::Idle);
+    }
+
+    #[test]
+    fn a_second_rider_starts_a_countdown_then_round_one() {
+        let mut flow = MatchFlow::new(rounds_of(2, None));
+        playing(&mut flow, &entities(2));
+        assert!(flow.is_running());
+        assert_eq!(flow.round(), 1);
+    }
+
+    #[test]
+    fn the_last_rider_alive_wins_and_the_break_precedes_the_next_round() {
+        let mut flow = MatchFlow::new(rounds_of(3, None));
+        let riders = entities(3);
+        playing(&mut flow, &riders);
+        idle(&mut flow, &riders, 5);
+        // Two of three die.
+        assert_eq!(
+            flow.advance(3, &riders[..1]),
+            MatchStep::RoundOver {
+                reason: RoundEnd::LastStanding,
+                winner: Some(riders[0])
+            }
+        );
+        assert_eq!((flow.phase(), flow.round()), (MatchPhase::Intermission, 1));
+        // The break lasts `intermission` ticks, then round 2 begins.
+        idle(&mut flow, &riders, 2);
+        assert_eq!(
+            flow.advance(3, &riders),
+            MatchStep::Begin { new_match: false }
+        );
+        assert_eq!((flow.phase(), flow.round()), (MatchPhase::Playing, 2));
+    }
+
+    #[test]
+    fn nobody_wins_when_the_last_riders_die_together_or_time_runs_out() {
+        let mut flow = MatchFlow::new(rounds_of(3, Some(10)));
+        let riders = entities(3);
+        playing(&mut flow, &riders);
+        assert_eq!(
+            flow.advance(3, &[]),
+            MatchStep::RoundOver {
+                reason: RoundEnd::LastStanding,
+                winner: None
+            }
+        );
+        idle(&mut flow, &riders, 2);
+        assert_eq!(
+            flow.advance(3, &riders),
+            MatchStep::Begin { new_match: false }
+        );
+        // Time limit with several alive: round 2 lasts exactly 10 ticks.
+        idle(&mut flow, &riders, 9);
+        assert_eq!(
+            flow.advance(3, &riders),
+            MatchStep::RoundOver {
+                reason: RoundEnd::TimeLimit,
+                winner: None
+            }
+        );
+    }
+
+    #[test]
+    fn the_last_round_leads_to_the_standings_then_a_new_match() {
+        let mut flow = MatchFlow::new(rounds_of(1, None));
+        let riders = entities(2);
+        playing(&mut flow, &riders);
+        assert_eq!(
+            flow.advance(2, &riders[1..]),
+            MatchStep::RoundOver {
+                reason: RoundEnd::LastStanding,
+                winner: Some(riders[1])
+            }
+        );
+        assert_eq!(flow.phase(), MatchPhase::MatchOver);
+        idle(&mut flow, &riders, 4);
+        assert_eq!(
+            flow.advance(2, &riders),
+            MatchStep::Begin { new_match: true }
+        );
+        assert_eq!((flow.phase(), flow.round()), (MatchPhase::Playing, 1));
+    }
+
+    #[test]
+    fn a_leaver_counts_as_eliminated_and_too_few_riders_end_the_match() {
+        let mut flow = MatchFlow::new(rounds_of(3, None));
+        let riders = entities(2);
+        playing(&mut flow, &riders);
+        // One rider left the arena: one alive, the survivor wins.
+        assert_eq!(
+            flow.advance(1, &riders[..1]),
+            MatchStep::RoundOver {
+                reason: RoundEnd::LastStanding,
+                winner: Some(riders[0])
+            }
+        );
+        // Still alone after the break started: back to free riding.
+        assert_eq!(flow.advance(1, &riders[..1]), MatchStep::Idle);
+        assert!(!flow.is_running());
+        assert_eq!(flow.round(), 0);
+    }
+
+    #[test]
+    fn a_match_with_no_break_chains_its_rounds_from_round_one() {
+        let rules = MatchRules {
+            intermission: 0,
+            end: EndRules {
+                time_limit: Some(4),
+                last_standing: false,
+            },
+            ..rounds_of(2, None)
+        };
+        let mut flow = MatchFlow::in_round(rules);
+        // One rider is enough: a zero break never drops the match.
+        let riders = entities(1);
+        idle(&mut flow, &riders, 3);
+        assert_eq!(
+            flow.advance(1, &riders),
+            MatchStep::RoundOver {
+                reason: RoundEnd::TimeLimit,
+                winner: None
+            }
+        );
+        assert_eq!(
+            flow.advance(1, &riders),
+            MatchStep::Begin { new_match: false }
+        );
+        assert_eq!((flow.phase(), flow.round()), (MatchPhase::Playing, 2));
+        idle(&mut flow, &riders, 3);
+        assert_eq!(
+            flow.advance(1, &riders),
+            MatchStep::RoundOver {
+                reason: RoundEnd::TimeLimit,
+                winner: None
+            }
+        );
+        assert_eq!(flow.phase(), MatchPhase::MatchOver);
+    }
+
+    #[test]
+    fn the_clock_counts_down_in_whole_seconds() {
+        let mut flow = MatchFlow::new(rounds_of(2, Some(secs_to_ticks(90))));
+        assert_eq!(flow.secs_left(), None);
+        let riders = entities(2);
+        flow.advance(2, &riders);
+        assert_eq!(flow.secs_left(), Some(1));
+        flow.enter(MatchPhase::Free, 0);
+        playing(&mut flow, &riders);
+        assert_eq!(flow.secs_left(), Some(90));
+        idle(&mut flow, &riders, secs_to_ticks(1));
+        assert_eq!(flow.secs_left(), Some(89));
     }
 }

@@ -1,7 +1,7 @@
 //! Replicated state of the rounds game mode (server-authoritative display data).
 //!
-//! Never read by `simulate_players`: the match is decided by the server's round
-//! controller and only shown by clients.
+//! Never read by `simulate_players`: the match is decided by `MatchFlow` and
+//! only shown by clients.
 
 use bevy_ecs::prelude::*;
 use bevy_reflect::Reflect;

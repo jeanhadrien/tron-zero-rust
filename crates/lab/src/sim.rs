@@ -11,7 +11,7 @@ use bots::schedule::{SchedulerConfig, Tier};
 use bots::world::WorldSnapshotBuilder;
 use glam::Vec2;
 use serde::Serialize;
-use shared::spawn::{SafeSpawn, find_safe_spawn};
+use shared::spawn::{SpawnField, placed};
 use shared::*;
 
 use crate::forced;
@@ -80,7 +80,7 @@ pub enum EventKind {
     RoundEnd {
         round: u32,
         winner: Option<String>,
-        reason: &'static str,
+        reason: RoundEnd,
     },
     RespawnFailed {
         reason: &'static str,
@@ -171,9 +171,10 @@ pub struct Lab {
     events: Vec<Event>,
     forced: Vec<ForcedDeath>,
     eliminations: Vec<Elimination<String>>,
-    rules: Option<MatchRules>,
+    /// The match, when the scenario has a `[match]` block. The lab chains the
+    /// rounds with no break.
+    flow: Option<MatchFlow>,
     tier: Option<Tier>,
-    round: u32,
     round_start: u32,
     done: bool,
     rounds: Vec<RoundResult>,
@@ -207,7 +208,7 @@ impl Lab {
         schedule.add_systems(simulate_players);
 
         let mut riders: Vec<LabRider> = Vec::with_capacity(scenario.riders.len());
-        let mut placed: Vec<Vec2> = Vec::new();
+        let mut field = SpawnField::walls(&mut world).expect("the arena was just spawned");
         let mut slots = 0;
         for spec in &scenario.riders {
             // Seed 0 keeps the plain name hash, so fixed-start goldens predate
@@ -218,17 +219,16 @@ impl Lab {
             let (position, direction) = match (spec.at, spec.heading) {
                 (Some(at), Some(heading)) => (Vec2::from(at), heading.vector()),
                 _ => {
-                    let segments: Vec<[Vec2; 2]> = walls
-                        .iter()
-                        .map(|w| [Vec2::new(w[0], w[1]), Vec2::new(w[2], w[3])])
-                        .collect();
-                    let spawn = find_safe_spawn(size, &segments, &placed, rider_seed)
+                    let spawn = field
+                        .place(rider_seed)
                         .unwrap_or_else(|| panic!("{}: no safe spawn", spec.name));
                     lives = 1;
                     (spawn.position, spawn.direction)
                 }
             };
-            placed.push(position);
+            if spec.at.is_some() {
+                field.occupy(position);
+            }
             let entity = world
                 .spawn((
                     Player,
@@ -286,15 +286,19 @@ impl Lab {
             events: Vec::new(),
             forced: Vec::new(),
             eliminations: Vec::new(),
-            rules: scenario.rules,
+            flow: scenario.rules.map(|rules| {
+                MatchFlow::in_round(MatchRules {
+                    intermission: 0,
+                    ..rules
+                })
+            }),
             tier: scenario.tier.map(TierPin::tier),
-            round: 0,
             round_start: 0,
             done: false,
             rounds: Vec::new(),
         };
-        if lab.rules.is_some() {
-            lab.push_match(EventKind::RoundStart { round: 0 });
+        if let Some(round) = lab.flow.as_ref().map(MatchFlow::round) {
+            lab.push_match(EventKind::RoundStart { round });
         }
         lab
     }
@@ -547,8 +551,8 @@ impl Lab {
         }
         let next_round = self.close_round();
         self.tick += 1;
-        if let Some(round) = next_round {
-            self.begin_round(round);
+        if next_round {
+            self.begin_round();
         }
     }
 
@@ -562,26 +566,35 @@ impl Lab {
             .then(|| self.world.get::<Position>(e).unwrap().0)
     }
 
-    /// End the round if the match rules say so, after the tick's deaths.
-    /// Returns the next round's number when the match goes on.
-    fn close_round(&mut self) -> Option<u32> {
-        let rules = self.rules?;
-        let alive: Vec<usize> = (0..self.riders.len())
-            .filter(|&i| self.head(i).is_some())
-            .collect();
-        let played = self.tick + 1 - self.round_start;
-        let reason = rules.round_end(played, alive.len())?;
-        let winner = match (reason, alive.as_slice()) {
-            (RoundEnd::LastStanding, &[only]) => Some(only),
-            _ => None,
+    /// End the round if the match flow says so, after the tick's deaths.
+    /// Returns whether the next round begins (the flow has no break here).
+    fn close_round(&mut self) -> bool {
+        let Some(flow) = self.flow.as_mut() else {
+            return false;
         };
+        let alive: Vec<Entity> = self
+            .riders
+            .iter()
+            .filter(|r| self.world.get::<IsAlive>(r.entity).unwrap().0)
+            .map(|r| r.entity)
+            .collect();
+        let MatchStep::RoundOver { reason, winner } = flow.advance(self.riders.len(), &alive)
+        else {
+            return false;
+        };
+        let round = flow.round();
+        let finished = flow.phase() == MatchPhase::MatchOver;
+        if !finished {
+            let next = flow.advance(self.riders.len(), &alive);
+            assert_eq!(next, MatchStep::Begin { new_match: false });
+        }
+        let winner = winner.and_then(|entity| self.riders.iter().position(|r| r.entity == entity));
         let end = self.tick;
         for rider in &mut self.riders {
             if let Some(start) = rider.life_start.take() {
                 rider.stats.lifetimes.push(end + 1 - start);
             }
         }
-        let round = self.round;
         self.rounds.push(RoundResult {
             round,
             start: self.round_start,
@@ -592,33 +605,25 @@ impl Lab {
         self.push_match(EventKind::RoundEnd {
             round,
             winner: winner.map(|i| self.riders[i].name.clone()),
-            reason: reason.label(),
+            reason,
         });
-        if round + 1 >= rules.rounds {
-            self.done = true;
-            return None;
-        }
-        Some(round + 1)
+        self.done = finished;
+        !finished
     }
 
-    /// Reset every rider and place them again for `round`, one after the
-    /// other with a new seed: only walls and the heads already placed count
+    /// Reset every rider and place them again for the flow's round, one after
+    /// the other with a new seed: only walls and the heads already placed count
     /// (every trail is gone).
-    fn begin_round(&mut self, round: u32) {
-        self.round = round;
+    fn begin_round(&mut self) {
+        let round = self.flow.as_ref().expect("a match").round();
         self.round_start = self.tick;
-        let segments: Vec<[Vec2; 2]> = self
-            .walls
-            .iter()
-            .map(|w| [Vec2::new(w[0], w[1]), Vec2::new(w[2], w[3])])
-            .collect();
-        let mut placed: Vec<Vec2> = Vec::new();
+        let mut field = SpawnField::walls(&mut self.world).expect("the arena exists");
         for rider in &mut self.riders {
             let seed = rider.seed.wrapping_add(rider.lives);
             rider.lives += 1;
-            let spawn = find_safe_spawn(self.size, &segments, &placed, seed)
+            let spawn = field
+                .place(seed)
                 .unwrap_or_else(|| panic!("{}: no safe spawn", rider.name));
-            placed.push(spawn.position);
             if let Some(brain) = &mut rider.bot {
                 *brain = brain.reborn_for_round(brain_seed(rider.seed, rider.lives));
             }
@@ -627,7 +632,7 @@ impl Lab {
             rider.was_sliding = false;
             rider.prev_nearest = None;
             rider.life_start = Some(self.tick);
-            self.world.entity_mut(rider.entity).insert(reset(&spawn));
+            self.world.entity_mut(rider.entity).insert(placed(&spawn));
         }
         self.push_match(EventKind::RoundStart { round });
     }
@@ -736,28 +741,14 @@ impl Lab {
         }
     }
 
-    /// Mirror of the server's `try_respawn` reset: same safe-spawn inputs
-    /// (walls + living trails, living riders) and the same component reset.
+    /// Put a dead rider back among the living, as the server's respawn does.
     fn respawn(&mut self, index: usize) {
         let entity = self.riders[index].entity;
         if self.world.get::<IsAlive>(entity).unwrap().0 {
             self.push(index, EventKind::RespawnFailed { reason: "alive" });
             return;
         }
-        let mut segments: Vec<[Vec2; 2]> = self
-            .walls
-            .iter()
-            .map(|w| [Vec2::new(w[0], w[1]), Vec2::new(w[2], w[3])])
-            .collect();
-        let mut riders = Vec::new();
-        for other in &self.riders {
-            if self.world.get::<IsAlive>(other.entity).unwrap().0 {
-                let head = self.world.get::<Position>(other.entity).unwrap().0;
-                riders.push(head);
-                let trail = self.world.get::<Trail>(other.entity).unwrap().points(head);
-                segments.extend(trail.windows(2).map(|p| [p[0], p[1]]));
-            }
-        }
+        let mut field = SpawnField::with_living(&mut self.world).expect("the arena exists");
         // The server seeds with entity bits + life; the lab uses a stable
         // name hash (plus the scenario seed) so runs replay identically.
         let rider = &mut self.riders[index];
@@ -767,7 +758,7 @@ impl Lab {
         if let Some(brain) = &mut rider.bot {
             *brain = brain.reborn(brain_seed(rider.seed, rider.lives));
         }
-        let Some(spawn) = find_safe_spawn(self.size, &segments, &riders, seed) else {
+        let Some(spawn) = field.place(seed) else {
             self.push(
                 index,
                 EventKind::RespawnFailed {
@@ -777,7 +768,7 @@ impl Lab {
             return;
         };
         self.riders[index].life_start = Some(self.tick);
-        self.world.entity_mut(entity).insert(reset(&spawn));
+        self.world.entity_mut(entity).insert(placed(&spawn));
         self.push(
             index,
             EventKind::Respawn {
@@ -786,23 +777,6 @@ impl Lab {
             },
         );
     }
-}
-
-/// Components of a freshly placed rider, as the server's respawn resets them.
-fn reset(spawn: &SafeSpawn) -> impl Bundle {
-    (
-        Position(spawn.position),
-        Direction(spawn.direction),
-        SpeedMult::base(),
-        TargetSpeedMult::default(),
-        Rubber::default(),
-        IsAlive(true),
-        Trail::new(spawn.position),
-        ShouldHandleDeath(true),
-        IsSliding(false),
-        IsColliding(false),
-        ActionState(PlayerInput::None),
-    )
 }
 
 /// Seed of a brain's misjudgments: the rider's seed, then its life counter.

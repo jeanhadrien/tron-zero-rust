@@ -1,7 +1,7 @@
 //! Rated elimination events, resolved from the sim's raw death log.
 //!
-//! Generic over the rider id so the server (bot build ids, human ids) and the
-//! lab (bot build ids, scenario names) share one resolution.
+//! Generic over the rider id, so any caller can name riders as it likes (bot
+//! build ids, account ids, scenario names).
 
 use bevy_ecs::prelude::Entity;
 use serde::Serialize;

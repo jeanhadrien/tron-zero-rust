@@ -1,6 +1,6 @@
 //! Replicated bot introspection snapshot for the debug overlay.
 //!
-//! Written by the server's `bot_brain_input` (one update per bot planning
+//! Written by the bot driver of a server (one update per bot planning
 //! round) and drawn by the client's `draw_bot_debug`. Gated end to end by
 //! `TRON_BOT_DEBUG=1`: when the env var is off no entity ever carries this
 //! component, so replication bandwidth and client cost are both zero.

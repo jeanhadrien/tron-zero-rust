@@ -1,8 +1,12 @@
 //! Bounded authoritative spawn search against the current obstacle snapshot.
 
+use bevy_ecs::prelude::*;
 use glam::Vec2;
 
-use crate::ArenaSize;
+use crate::{
+    Arena, ArenaSize, Direction, IsAlive, IsColliding, IsSliding, PlayerInput, Position, Rubber,
+    ShouldHandleDeath, SpeedMult, TargetSpeedMult, Trail, WallSegments,
+};
 
 /// A rider (radius 14) starts well outside rubber/sliding range.
 pub const SPAWN_CLEARANCE: f32 = 80.0;
@@ -130,6 +134,82 @@ pub fn find_safe_spawn(
     None
 }
 
+/// Components of a rider placed at `spawn`: alive, fresh trail, speed and
+/// rubber reset, no pending input. For respawns and round starts alike.
+pub fn placed(spawn: &SafeSpawn) -> impl Bundle {
+    (
+        Position(spawn.position),
+        Direction(spawn.direction),
+        SpeedMult::base(),
+        TargetSpeedMult::default(),
+        Rubber::default(),
+        IsAlive(true),
+        Trail::new(spawn.position),
+        ShouldHandleDeath(true),
+        IsSliding(false),
+        IsColliding(false),
+        crate::ActionState(PlayerInput::None),
+    )
+}
+
+/// What a new spawn must stay clear of, gathered from the world.
+pub struct SpawnField {
+    size: ArenaSize,
+    segments: Vec<[Vec2; 2]>,
+    heads: Vec<Vec2>,
+}
+
+impl SpawnField {
+    /// The arena walls only: for placing every rider on a cleared arena. `None`
+    /// without an arena.
+    pub fn walls(world: &mut World) -> Option<Self> {
+        let (size, walls) = world
+            .query_filtered::<(&ArenaSize, &WallSegments), With<Arena>>()
+            .single(world)
+            .ok()?;
+        Some(Self {
+            size: *size,
+            segments: walls
+                .0
+                .iter()
+                .map(|w| [Vec2::new(w[0], w[1]), Vec2::new(w[2], w[3])])
+                .collect(),
+            heads: Vec::new(),
+        })
+    }
+
+    /// The walls plus the trail and head of every living rider: for putting
+    /// one rider back among the others.
+    pub fn with_living(world: &mut World) -> Option<Self> {
+        let mut field = Self::walls(world)?;
+        for (alive, position, trail) in world
+            .query_filtered::<(&IsAlive, &Position, &Trail), With<crate::Player>>()
+            .iter(world)
+        {
+            if alive.0 {
+                field.heads.push(position.0);
+                let points = trail.points(position.0);
+                field
+                    .segments
+                    .extend(points.windows(2).map(|p| [p[0], p[1]]));
+            }
+        }
+        Some(field)
+    }
+
+    /// Keep later spawns clear of a rider already standing at `head`.
+    pub fn occupy(&mut self, head: Vec2) {
+        self.heads.push(head);
+    }
+
+    /// A safe spawn for `seed`. The spot is kept: the next one stays clear of it.
+    pub fn place(&mut self, seed: u64) -> Option<SafeSpawn> {
+        let spawn = find_safe_spawn(self.size, &self.segments, &self.heads, seed)?;
+        self.heads.push(spawn.position);
+        Some(spawn)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -192,5 +272,39 @@ mod tests {
             .map(|x| [Vec2::new(x as f32, -1200.0), Vec2::new(x as f32, 1200.0)])
             .collect();
         assert_eq!(find_safe_spawn(size, &blocked, &[], 1), None);
+    }
+
+    #[test]
+    fn a_field_keeps_clear_of_living_riders_and_of_what_it_placed() {
+        let mut world = World::new();
+        world.spawn((
+            Arena,
+            ArenaSize::default(),
+            WallSegments(crate::arena_walls(2000.0, 2000.0)),
+        ));
+        let alive = world
+            .spawn((
+                crate::Player,
+                IsAlive(true),
+                Position(Vec2::ZERO),
+                Trail::new(Vec2::ZERO),
+            ))
+            .id();
+        world.spawn((
+            crate::Player,
+            IsAlive(false),
+            Position(Vec2::new(500.0, 0.0)),
+            Trail(vec![Vec2::new(500.0, -300.0), Vec2::new(500.0, 0.0)]),
+        ));
+        let mut field = SpawnField::with_living(&mut world).unwrap();
+        assert_eq!(field.heads, [Vec2::ZERO]);
+        let first = field.place(3).unwrap();
+        let second = field.place(3).unwrap();
+        assert_ne!(first, second);
+        assert_eq!(field.heads.len(), 3);
+        world.entity_mut(alive).insert(placed(&first));
+        assert!(world.get::<IsAlive>(alive).unwrap().0);
+        // Walls only: living riders do not count.
+        assert!(SpawnField::walls(&mut world).unwrap().heads.is_empty());
     }
 }
