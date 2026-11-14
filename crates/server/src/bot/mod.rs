@@ -12,8 +12,7 @@ use std::path::Path;
 use bevy::prelude::*;
 use bots::Brain;
 use bots::config::BotBuild;
-use bots::plan::Action;
-use bots::schedule::Tier;
+use bots::drive::{Seat, drive};
 use bots::world::WorldSnapshotBuilder;
 use lightyear::prelude::*;
 use shared::{
@@ -105,76 +104,62 @@ pub fn setup_bots(mut commands: Commands, roster: Res<BotRoster>) {
     commands.insert_resource(manager);
 }
 
-/// Look → plan → emit for every alive bot. A bot looks on its reaction
-/// cadence (one `wants_view` predicate) and whenever a planned turn is due;
-/// the snapshot is built once per tick in which any bot looks. Turns are
-/// one-shot: the brain emits each planned turn on its own tick, and every
-/// other tick the bot holds straight (`PlayerInput::None`). Re-emitting a
-/// cached turn every tick would spin the rider (Left, Left = 180° into its own
-/// trail).
+/// Look → plan → emit for every alive bot, through `bots::drive`: the
+/// decisions are the bots', this system adds the logs and the debug overlay.
 pub fn bot_brain_input(
     mut commands: Commands,
     debug_cfg: Res<BotDebugConfig>,
     scheduler: Res<SchedulerConfig>,
     mut manager: ResMut<BotManager>,
     builder: WorldSnapshotBuilder,
-    mut bots: Query<
-        (
-            Entity,
-            &mut BotBrain,
-            &IsAlive,
-            &mut ActionState<PlayerInput>,
-        ),
-        With<Player>,
-    >,
+    mut brains: Query<(Entity, &mut BotBrain, &IsAlive), With<Player>>,
+    mut inputs: Query<&mut ActionState<PlayerInput>, With<BotBrain>>,
 ) {
     let tick = manager.tick;
     manager.tick = manager.tick.wrapping_add(1);
 
-    let looking: Vec<Entity> = bots
-        .iter()
-        .filter(|(_, brain, alive, _)| alive.0 && brain.brain.wants_view(tick, &scheduler))
-        .map(|(entity, ..)| entity)
+    let mut bots: Vec<_> = brains
+        .iter_mut()
+        .map(|(entity, brain, alive)| (entity, alive.0, brain))
         .collect();
-    let snapshot = (!looking.is_empty()).then(|| builder.build(tick));
-    let alive_riders = snapshot
-        .as_ref()
-        .map(|world| world.riders.iter().filter(|r| r.alive).count())
-        .unwrap_or(0);
-
-    for (entity, mut brain, _, mut input) in bots.iter_mut() {
-        let mut action = Action::Hold;
-        if looking.contains(&entity)
-            && let Some(world) = snapshot.as_ref()
-            && let Some(index) = world.index_of(entity.to_bits())
-        {
-            let tier = Tier::from_load(alive_riders, &scheduler);
-            let decision = brain.brain.act(world, index, tier, &scheduler);
-            if let Some(report) = &decision.report {
-                debug!(
-                    bot = %brain.brain.build.name,
-                    kind = ?report.kind,
-                    mode = ?report.mode,
-                    action = ?decision.action,
-                    area = report.area,
-                    open = report.open,
-                    scores = ?report.scores,
-                    "bot plan"
+    let mut seats: Vec<Seat> = bots
+        .iter_mut()
+        .map(|(entity, alive, brain)| Seat {
+            entity: *entity,
+            alive: *alive,
+            brain: &mut brain.brain,
+        })
+        .collect();
+    let actions = drive(&mut seats, &builder, tick, &scheduler, None, |mut look| {
+        let decision = look.act();
+        if let Some(report) = &decision.report {
+            debug!(
+                bot = %look.brain.build.name,
+                kind = ?report.kind,
+                mode = ?report.mode,
+                action = ?decision.action,
+                area = report.area,
+                open = report.open,
+                scores = ?report.scores,
+                "bot plan"
+            );
+            if debug_cfg.enabled {
+                let snapshot = debug::build_debug(
+                    report,
+                    look.world,
+                    look.index,
+                    decision.action,
+                    &look.brain.build.knobs,
                 );
-                if debug_cfg.enabled {
-                    let snapshot = debug::build_debug(
-                        report,
-                        world,
-                        index,
-                        decision.action,
-                        &brain.brain.build.knobs,
-                    );
-                    debug::insert_if_enabled(&mut commands, &debug_cfg, entity, snapshot);
-                }
+                debug::insert_if_enabled(&mut commands, &debug_cfg, look.entity, snapshot);
             }
-            action = decision.action;
         }
-        input.0 = action.to_input();
+        decision
+    });
+    for (seat, action) in seats.iter().zip(actions) {
+        if let Ok(mut input) = inputs.get_mut(seat.entity) {
+            input.0 = action.to_input();
+        }
     }
 }
 

@@ -1,7 +1,7 @@
 //! Bot brain: look at a read-only `WorldSnapshot`, plan a maneuver, follow it.
 //!
-//! Pure and deterministic (no networking, wall clock or `rand`), so the server
-//! drives it from its ECS loop and the lab replays it headless. Bots act only
+//! Pure and deterministic (no networking, wall clock or `rand`), so any runner
+//! can drive it: `drive::drive` runs one tick for a set of brains. Bots act only
 //! through ordinary `PlayerInput`s; physics is never touched.
 //!
 //! Difficulty is a budget (`config::BotKnobs`: reaction, horizon, variety,
@@ -9,6 +9,7 @@
 //! (`objective::Weights`). One planner serves every build.
 
 pub mod config;
+pub mod drive;
 pub mod forecast;
 pub mod grind;
 pub mod noise;

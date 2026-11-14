@@ -7,6 +7,7 @@ use std::time::Instant;
 use bevy_ecs::prelude::*;
 use bevy_ecs::system::SystemState;
 use bots::Brain;
+use bots::drive::{Seat, drive};
 use bots::schedule::{SchedulerConfig, Tier};
 use bots::world::WorldSnapshotBuilder;
 use glam::Vec2;
@@ -637,51 +638,53 @@ impl Lab {
         self.push_match(EventKind::RoundStart { round });
     }
 
-    /// Mirror of the server's `bot_brain_input`: one snapshot per tick in
-    /// which any bot wants a look (planning time, or a planned turn due), and
-    /// each bot turns on the tick its plan says. Returns each rider's input,
-    /// `None` for scripted riders.
+    /// The bots' decisions for this tick (see `bots::drive`), timed one by
+    /// one. Returns each rider's input, `None` for scripted riders.
     fn decide_bots(&mut self) -> Vec<Option<PlayerInput>> {
-        let tick = self.tick;
-        let mut inputs: Vec<Option<PlayerInput>> = self
+        let alive: Vec<bool> = self
             .riders
             .iter()
-            .map(|r| r.bot.as_ref().map(|_| PlayerInput::None))
+            .map(|r| self.world.get::<IsAlive>(r.entity).unwrap().0)
             .collect();
-        let looking: Vec<usize> = (0..self.riders.len())
-            .filter(|&i| {
-                let rider = &self.riders[i];
-                rider.bot.as_ref().is_some_and(|brain| {
-                    self.world.get::<IsAlive>(rider.entity).unwrap().0
-                        && brain.wants_view(tick, &self.scheduler)
-                })
-            })
-            .collect();
-        if looking.is_empty() {
-            return inputs;
+        let mut at = Vec::new();
+        let mut seats = Vec::new();
+        for (i, (rider, alive)) in self.riders.iter_mut().zip(alive).enumerate() {
+            if let Some(brain) = rider.bot.as_mut() {
+                at.push(i);
+                seats.push(Seat {
+                    entity: rider.entity,
+                    alive,
+                    brain,
+                });
+            }
         }
-        let world = self
+        let builder = self
             .snapshot
             .get(&self.world)
-            .expect("snapshot queries are infallible")
-            .build(tick);
-        let alive = world.riders.iter().filter(|r| r.alive).count();
-        let tier = self
-            .tier
-            .unwrap_or_else(|| Tier::from_load(alive, &self.scheduler));
-        for i in looking {
-            let rider = &mut self.riders[i];
-            let Some(index) = world.index_of(rider.entity.to_bits()) else {
-                continue;
-            };
-            let brain = rider.bot.as_mut().expect("filtered to bots");
-            let started = Instant::now();
-            let action = brain.act(&world, index, tier, &self.scheduler).action;
-            let nanos = started.elapsed().as_nanos();
-            rider
-                .think_nanos
-                .push(u32::try_from(nanos).unwrap_or(u32::MAX));
+            .expect("snapshot queries are infallible");
+        let mut nanos: Vec<(Entity, u32)> = Vec::new();
+        let actions = drive(
+            &mut seats,
+            &builder,
+            self.tick,
+            &self.scheduler,
+            self.tier,
+            |mut look| {
+                let started = Instant::now();
+                let decision = look.act();
+                let spent = u32::try_from(started.elapsed().as_nanos()).unwrap_or(u32::MAX);
+                nanos.push((look.entity, spent));
+                decision
+            },
+        );
+        let mut inputs: Vec<Option<PlayerInput>> = vec![None; self.riders.len()];
+        for (&i, action) in at.iter().zip(actions) {
             inputs[i] = Some(action.to_input());
+        }
+        for (entity, spent) in nanos {
+            if let Some(rider) = self.riders.iter_mut().find(|r| r.entity == entity) {
+                rider.think_nanos.push(spent);
+            }
         }
         inputs
     }
