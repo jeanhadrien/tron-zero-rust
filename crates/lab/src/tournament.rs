@@ -6,6 +6,7 @@
 //!
 //! ```toml
 //! seeds = 20                  # matches per setup and lineup: seeds first..first+20
+//! quick_seeds = 3             # optional: seeds with `--quick` (default: seeds / 8)
 //! first_seed = 1              # optional
 //! default_roster = true       # start from bots::config::default_builds()
 //! roster = "ladder.toml"      # optional: a roster file (`lab ladder` output)
@@ -56,6 +57,10 @@ use crate::sim::{EventKind, Lab};
 pub struct Suite {
     /// Seeds per setup and lineup.
     pub seeds: u64,
+    /// Seeds of the quick variant (`--quick`), the normal way to measure;
+    /// `seeds` is for a rare final check. Default: an eighth of `seeds`.
+    #[serde(default)]
+    pub quick_seeds: Option<u64>,
     #[serde(default = "first_seed")]
     pub first_seed: u64,
     #[serde(default)]
@@ -121,6 +126,11 @@ impl Suite {
         }
         check_setups(&suite.setups)?;
         Ok(suite)
+    }
+
+    /// Cut the seed count to the quick variant's.
+    pub fn quick(&mut self) {
+        self.seeds = self.quick_seeds.unwrap_or(self.seeds.div_ceil(8)).max(1);
     }
 
     /// Play every build without evaluation noise (`noise = 0`).
@@ -495,15 +505,17 @@ fn quantile(sorted: &[u32], q: f64) -> f64 {
     f64::from(sorted[rank - 1])
 }
 
-/// A pool of `threads` threads (`None`: one per core).
+/// A pool of `threads` threads (`None`: half the cores, so a lab run leaves
+/// the machine usable).
 pub fn thread_pool(threads: Option<usize>) -> Result<rayon::ThreadPool, String> {
+    let half = std::thread::available_parallelism().map_or(1, |n| (n.get() / 2).max(1));
     rayon::ThreadPoolBuilder::new()
-        .num_threads(threads.unwrap_or(0))
+        .num_threads(threads.unwrap_or(half))
         .build()
         .map_err(|e| e.to_string())
 }
 
-/// Play the whole suite on `threads` threads (`None`: one per core).
+/// Play the whole suite on `threads` threads (`None`: half the cores).
 pub fn run(suite: &Suite, threads: Option<usize>) -> Result<Report, String> {
     let pool = thread_pool(threads)?;
     pool.install(|| run_games(suite, &games(suite)))

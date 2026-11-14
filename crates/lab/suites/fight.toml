@@ -3,6 +3,7 @@
 # engagement weights) and the other presets, last rider standing, five rounds
 # per match. A preset should win clearly more rounds than the reference.
 seeds = 8
+quick_seeds = 2
 
 [[build]]
 name = "Survivalist"

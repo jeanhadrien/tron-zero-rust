@@ -1,6 +1,7 @@
 # Baseline free-for-all with 4 riders, today's rules (respawn after 240 ticks,
 # 3600-tick match = the server's bot cycle).
 seeds = 50
+quick_seeds = 6
 default_roster = true
 
 [[setup]]

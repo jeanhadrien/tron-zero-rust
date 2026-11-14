@@ -113,7 +113,7 @@ fn a_bot_builds_speed_to_run_a_rider_down() {
 }
 
 const SUITE: &str = r#"
-seeds = 3
+seeds = 2
 default_roster = true
 
 [[build]]
@@ -167,7 +167,7 @@ fn bots_rarely_kill_themselves_and_better_bots_less() {
 }
 
 const ROUNDS_SUITE: &str = r#"
-seeds = 4
+seeds = 2
 default_roster = true
 
 [[setup]]

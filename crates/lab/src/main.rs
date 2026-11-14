@@ -1,5 +1,5 @@
 //! `lab <scenario.toml> [options]` — run a scenario headless.
-//! `lab tournament <suite.toml> [--threads N] [--json PATH] [--no-noise]` — see
+//! `lab tournament <suite.toml> [--quick] [--threads N] [--json PATH] [--no-noise]` — see
 //! `tron_zero_lab::tournament`.
 //!
 //! Options:
@@ -225,13 +225,14 @@ fn run(args: Args) -> Result<(), String> {
     Ok(())
 }
 
-/// `lab tournament <suite.toml> [--threads N] [--json PATH] [--no-noise]`:
+/// `lab tournament <suite.toml> [--quick] [--threads N] [--json PATH] [--no-noise]`:
 /// play every build of a suite and print the result tables as markdown.
 fn run_tournament(mut raw: impl Iterator<Item = String>) -> Result<(), String> {
     let mut suite_path: Option<PathBuf> = None;
     let mut threads: Option<usize> = None;
     let mut json: Option<PathBuf> = None;
     let mut no_noise = false;
+    let mut quick = false;
     while let Some(arg) = raw.next() {
         match arg.as_str() {
             "--threads" => {
@@ -240,13 +241,18 @@ fn run_tournament(mut raw: impl Iterator<Item = String>) -> Result<(), String> {
             }
             "--json" => json = Some(raw.next().ok_or("--json expects a path")?.into()),
             "--no-noise" => no_noise = true,
+            "--quick" => quick = true,
             flag if flag.starts_with("--") => return Err(format!("unknown option {flag}")),
             path if suite_path.is_none() => suite_path = Some(path.into()),
             extra => return Err(format!("unexpected argument {extra:?}")),
         }
     }
-    let usage = "usage: lab tournament <suite.toml> [--threads N] [--json PATH] [--no-noise]";
+    let usage =
+        "usage: lab tournament <suite.toml> [--quick] [--threads N] [--json PATH] [--no-noise]";
     let mut suite = Suite::load(&suite_path.ok_or(usage)?)?;
+    if quick {
+        suite.quick();
+    }
     if no_noise {
         suite.without_noise();
     }

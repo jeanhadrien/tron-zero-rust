@@ -297,16 +297,20 @@ plus `[[build]]` entries with personality, difficulty and knob overrides),
 setups (rider count, `[setup.match]` rules, arena, optional `tier` pin) and a
 seed count. Each setup plays every lineup of builds over every seed, with each
 lineup rotated through all seats so spawn position does not favour a build.
-Matches run in parallel (`rayon`); the report is identical whatever the thread
-count.
+Matches run in parallel (`rayon`) on half the machine's cores unless `--threads N`
+says otherwise (tournament, tune and ladder alike); the report is identical
+whatever the thread count.
 
 ```
+cargo run --release -p tron-zero-lab -- tournament crates/lab/suites/rounds4.toml --quick
 cargo run --release -p tron-zero-lab -- tournament crates/lab/suites/ffa4.toml
 cargo run --release -p tron-zero-lab -- tournament crates/lab/suites/rounds4.toml --json rounds4.json
 cargo run --release -p tron-zero-lab -- tournament crates/lab/suites/ffa4.toml --no-noise --threads 4
 ```
 
-`--no-noise` sets `noise = 0` on every build (how much of the play is
+`--quick` cuts the seed count to the suite's `quick_seeds` (default: an eighth of
+`seeds`): the normal way to measure, well under a minute per baseline suite on 4
+threads. The full counts are for a rare final check. `--no-noise` sets `noise = 0` on every build (how much of the play is
 misjudgment, how much the planner itself); `--json PATH` also
 writes the report as JSON. Columns are measured separately, with no combined
 score:
@@ -349,7 +353,8 @@ it across runs, and never assert on it.
 
 Baseline suites live in `crates/lab/suites/` (1v1, FFA with 4 and 8 riders under
 today's rules, and 4-rider last rider standing over 5 rounds); a release run of
-all four takes a couple of minutes. To prove a bot change, run the same suite
+all of them takes a few minutes, `--quick` about 30 seconds each (`rounds4` is
+the slowest). To prove a bot change, run the same suite
 before and after and compare the columns that the change targets.
 
 ### Pattern score (the `pattern` column)
@@ -402,8 +407,11 @@ cargo run --release -p tron-zero-lab -- tune crates/lab/tuning/rounds4.tune.toml
   this setup, or whose range is too small).
 - Without `--sweep` it runs a seeded CMA-ES (the `cmaes` crate) over all
   parameters in a unit cube (`[search]`: population, generations, `sigma`).
-  Whole-number knobs are rounded; identical builds are scored once. The winner
-  and the base are scored on the train seeds and on the held-out seeds, both
+  Whole-number knobs are rounded; identical builds are scored once. Each
+  generation's best build is also played on the held-out seeds; the search stops
+  when that score has not improved for `[search] patience` generations (default
+  3) and prints why it stopped. The winner is the best held-out build. It and
+  the base are scored on the train seeds and on the held-out seeds, both
   printed: a big gap between them is overfitting. `--out` writes the best
   build as a `[[build]]` entry with every knob and weight (paste it in a suite,
   or in a roster file); `--json` writes the full history.

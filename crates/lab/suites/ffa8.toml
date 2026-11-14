@@ -1,6 +1,7 @@
 # Baseline free-for-all with 8 riders (the roster repeats around the table),
 # today's rules. The level of detail follows the rider count, as on the server.
 seeds = 100
+quick_seeds = 10
 default_roster = true
 
 [[setup]]

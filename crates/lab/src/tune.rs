@@ -39,6 +39,7 @@
 //! population = 8              # default: CMA-ES's own choice
 //! generations = 10
 //! sigma = 0.25                # initial step, as a share of each range
+//! patience = 3                # stop when the best held-out score did not improve for 3 generations
 //! ```
 //!
 //! Two modes: `sweep` moves one parameter at a time and prints how every
@@ -133,6 +134,10 @@ struct SearchSpec {
     generations: usize,
     #[serde(default = "quarter")]
     sigma: f64,
+    /// Generations without a better held-out score after which the search
+    /// stops.
+    #[serde(default = "three")]
+    patience: usize,
 }
 
 impl Default for SearchSpec {
@@ -141,12 +146,17 @@ impl Default for SearchSpec {
             population: None,
             generations: 20,
             sigma: 0.25,
+            patience: 3,
         }
     }
 }
 
 fn twenty() -> usize {
     20
+}
+
+fn three() -> usize {
+    3
 }
 
 fn quarter() -> f64 {
@@ -230,8 +240,15 @@ impl Tune {
         if file.train_first < holdout_end && file.holdout_first < train_end {
             return Err("the train and holdout seed sets overlap".into());
         }
-        if file.search.sigma <= 0.0 || file.search.generations == 0 || file.sweep.steps < 2 {
-            return Err("search.sigma > 0, search.generations >= 1 and sweep.steps >= 2".into());
+        if file.search.sigma <= 0.0
+            || file.search.generations == 0
+            || file.search.patience == 0
+            || file.sweep.steps < 2
+        {
+            return Err(
+                "search.sigma > 0, search.generations >= 1, search.patience >= 1 and sweep.steps >= 2"
+                    .into(),
+            );
         }
         let pool = builds::resolve(
             file.default_roster,
@@ -363,31 +380,50 @@ impl Tune {
                 .build(&fitness)
                 .map_err(|e| format!("cmaes: {e:?}"))?;
             let mut history = Vec::new();
-            let done = loop {
+            // The generation's best build is also played on the held-out
+            // seeds; the winner is the best of those, and the search stops
+            // when it has not improved for `patience` generations.
+            let mut held: Option<(f64, Vec<(String, f64)>)> = None;
+            let mut best_generation = 0;
+            let mut stopped = Vec::new();
+            loop {
                 let done = cma.next_parallel();
-                let best = cma.current_best_individual().map(|b| Generation {
-                    generation: cma.generation(),
-                    evals: cma.function_evals(),
-                    best_fitness: b.value,
-                    best: self.decode(b.point.as_slice()).into_iter().collect(),
-                    mean: self.decode(cma.mean().as_slice()).into_iter().collect(),
-                });
-                history.extend(best);
-                if let Some(done) = done {
-                    break done;
+                if let Some(b) = cma.current_best_individual() {
+                    let values = self.decode(b.point.as_slice());
+                    let holdout = self.eval_values(&values, self.holdout)?.fitness;
+                    if held.as_ref().is_none_or(|(best, _)| holdout > *best) {
+                        best_generation = cma.generation();
+                        held = Some((holdout, values.clone()));
+                    }
+                    history.push(Generation {
+                        generation: cma.generation(),
+                        evals: cma.function_evals(),
+                        best_fitness: b.value,
+                        holdout_fitness: holdout,
+                        best: values.into_iter().collect(),
+                        mean: self.decode(cma.mean().as_slice()).into_iter().collect(),
+                    });
                 }
-            };
-            let winner = done
-                .overall_best
-                .ok_or("cmaes found no valid point (fitness was NaN)")?;
-            let best_values = self.decode(winner.point.as_slice());
+                if let Some(done) = done {
+                    stopped = done.reasons.iter().map(|r| format!("{r:?}")).collect();
+                    break;
+                }
+                if cma.generation() - best_generation >= self.search.patience {
+                    stopped.push(format!(
+                        "patience: no better held-out score for {} generations",
+                        self.search.patience
+                    ));
+                    break;
+                }
+            }
+            let (_, best_values) = held.ok_or("cmaes found no valid point (fitness was NaN)")?;
             let best = self.scored(&best_values)?;
             let build = self.candidate(&best_values)?;
             Ok(SearchReport {
                 seed: self.seed,
                 train_seeds: self.train,
                 holdout_seeds: self.holdout,
-                stopped: done.reasons.iter().map(|r| format!("{r:?}")).collect(),
+                stopped,
                 base: self.scored(&self.base_values())?,
                 best,
                 history,
@@ -432,6 +468,8 @@ pub struct Generation {
     /// Fitness evaluations asked for so far (repeated builds included).
     pub evals: usize,
     pub best_fitness: f64,
+    /// The same build on the held-out seeds.
+    pub holdout_fitness: f64,
     pub best: BTreeMap<String, f64>,
     pub mean: BTreeMap<String, f64>,
 }
@@ -531,11 +569,11 @@ impl SearchReport {
             self.holdout_seeds.0,
             self.holdout_seeds.1
         );
-        out += "| generation | evals | best fitness (train) |\n|---:|---:|---:|\n";
+        out += "| generation | evals | best fitness (train) | same build, held-out |\n|---:|---:|---:|---:|\n";
         for g in &self.history {
             out += &format!(
-                "| {} | {} | {:.3} |\n",
-                g.generation, g.evals, g.best_fitness
+                "| {} | {} | {:.3} | {:.3} |\n",
+                g.generation, g.evals, g.best_fitness, g.holdout_fitness
             );
         }
         out += "\n### Scores\n\n";

@@ -1,6 +1,7 @@
 # Baseline last rider standing: 4 riders, 5 rounds per match, nobody respawns.
 # A round ends with one rider alive (or none) or after 3600 ticks.
 seeds = 40
+quick_seeds = 2
 default_roster = true
 
 [[setup]]

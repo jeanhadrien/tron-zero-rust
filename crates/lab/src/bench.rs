@@ -46,6 +46,7 @@ impl Bench {
     fn suite(&self, builds: Vec<BotBuild>, first: u64, count: u64) -> Suite {
         Suite {
             seeds: count,
+            quick_seeds: None,
             first_seed: first,
             default_roster: false,
             roster: None,
