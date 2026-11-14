@@ -1,0 +1,14 @@
+# Baseline free-for-all with 8 riders (the roster repeats around the table),
+# today's rules. The level of detail follows the rider count, as on the server.
+seeds = 100
+default_roster = true
+
+[[setup]]
+name = "ffa8"
+riders = 8
+
+[setup.match]
+respawn = { after = 240 }
+
+[setup.match.end]
+time_limit = 3600

@@ -1,0 +1,14 @@
+# Baseline free-for-all with 4 riders, today's rules (respawn after 240 ticks,
+# 3600-tick match = the server's bot cycle).
+seeds = 50
+default_roster = true
+
+[[setup]]
+name = "ffa4"
+riders = 4
+
+[setup.match]
+respawn = { after = 240 }
+
+[setup.match.end]
+time_limit = 3600

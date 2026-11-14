@@ -30,6 +30,9 @@ pub struct Brain {
     pub cached: Action,
     pub epoch: u32,
     pub degradation: Tier,
+    /// Seeds the mistake roll, so two brains with the same build and the
+    /// same view still err on different ticks. The caller picks it.
+    pub seed: u64,
 }
 
 /// What one epoch decided, with the exact inputs `decide` saw so callers can
@@ -42,13 +45,14 @@ pub struct Decision {
 }
 
 impl Brain {
-    pub fn new(build: BotBuild) -> Self {
+    pub fn new(build: BotBuild, seed: u64) -> Self {
         Self {
             build,
             memory: BotMemory::default(),
             cached: Action::Hold,
             epoch: 0,
             degradation: Tier::Full,
+            seed,
         }
     }
 
@@ -75,7 +79,14 @@ impl Brain {
         // Clamp the look-ahead horizon by the LOD tier before strategies see it.
         let mut knobs = self.build.knobs.clone();
         knobs.lookahead_ticks = knobs.lookahead_ticks.min(tier.max_lookahead());
-        let action = decide(strategy, &perception, world, &PhysicsForecaster, &knobs);
+        let action = decide(
+            strategy,
+            &perception,
+            world,
+            &PhysicsForecaster,
+            &knobs,
+            self.seed,
+        );
         self.cached = action;
         self.epoch = self.epoch.wrapping_add(1);
         Decision {

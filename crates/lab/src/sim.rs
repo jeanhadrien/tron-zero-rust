@@ -2,6 +2,7 @@
 //! the server runs it, plus scripted or bot inputs, respawns and an event log.
 
 use std::collections::BTreeMap;
+use std::time::Instant;
 
 use bevy_ecs::prelude::*;
 use bevy_ecs::system::SystemState;
@@ -10,10 +11,11 @@ use bots::schedule::{SchedulerConfig, Tier, should_redecide};
 use bots::world::WorldSnapshotBuilder;
 use glam::Vec2;
 use serde::Serialize;
-use shared::spawn::find_safe_spawn;
+use shared::spawn::{SafeSpawn, find_safe_spawn};
 use shared::*;
 
-use crate::scenario::{Action, Heading, Scenario};
+use crate::scenario::{Action, Heading, Scenario, TierPin};
+use crate::stats::{IDLE_RANGE, RiderStats, RoundResult};
 
 /// Floats in traces are rounded so goldens survive last-bit platform noise.
 fn round(x: f32) -> f64 {
@@ -67,6 +69,17 @@ pub enum EventKind {
     Respawn {
         at: [f64; 2],
         heading: &'static str,
+    },
+    /// Match events carry no rider (`rider` is empty). Riders are reset and
+    /// placed before the first tick of the round.
+    RoundStart {
+        round: u32,
+    },
+    /// Stamped on the round's last tick. `winner` is the last rider alive.
+    RoundEnd {
+        round: u32,
+        winner: Option<String>,
+        reason: &'static str,
     },
     RespawnFailed {
         reason: &'static str,
@@ -125,6 +138,14 @@ struct LabRider {
     rated_id: String,
     respawn_after: Option<u32>,
     respawn_at: Option<u32>,
+    /// Tick the current life began, `None` while dead.
+    life_start: Option<u32>,
+    /// Distance to the nearest living enemy at the end of the last tick.
+    prev_nearest: Option<f32>,
+    stats: RiderStats,
+    /// Wall-clock cost of each `Brain::think`, in nanoseconds. Not part of
+    /// any deterministic output.
+    think_nanos: Vec<u32>,
 }
 
 /// A bot rider: the server's brain plus its scheduler phase.
@@ -144,7 +165,17 @@ pub struct Lab {
     tick: u32,
     events: Vec<Event>,
     eliminations: Vec<Elimination<String>>,
+    rules: Option<MatchRules>,
+    tier: Option<Tier>,
+    round: u32,
+    round_start: u32,
+    done: bool,
+    rounds: Vec<RoundResult>,
 }
+
+/// Spreads a rider's life counter over the seed space (golden-ratio odd
+/// constant, as for the scenario seed).
+const LIFE_SEED_STEP: u64 = 0xA24B_AED4_963E_E407;
 
 impl Lab {
     pub fn new(scenario: &Scenario) -> Self {
@@ -211,7 +242,7 @@ impl Lab {
                 .map(|build| {
                     slots += 1;
                     LabBot {
-                        brain: Brain::new(build),
+                        brain: Brain::new(build, brain_seed(rider_seed, lives)),
                         slot: slots - 1,
                     }
                 });
@@ -228,13 +259,19 @@ impl Lab {
                     .as_ref()
                     .map_or_else(|| spec.name.clone(), |b| b.brain.build.rating_id()),
                 bot,
-                respawn_after: spec.respawn_after,
+                respawn_after: scenario
+                    .rules
+                    .map_or(spec.respawn_after, |rules| rules.respawn.delay()),
                 respawn_at: None,
+                life_start: Some(0),
+                prev_nearest: None,
+                stats: RiderStats::default(),
+                think_nanos: Vec::new(),
             });
         }
 
         let snapshot = SystemState::new(&mut world);
-        Self {
+        let mut lab = Self {
             world,
             schedule,
             snapshot,
@@ -245,7 +282,42 @@ impl Lab {
             tick: 0,
             events: Vec::new(),
             eliminations: Vec::new(),
+            rules: scenario.rules,
+            tier: scenario.tier.map(TierPin::tier),
+            round: 0,
+            round_start: 0,
+            done: false,
+            rounds: Vec::new(),
+        };
+        if lab.rules.is_some() {
+            lab.push_match(EventKind::RoundStart { round: 0 });
         }
+        lab
+    }
+
+    /// True once a match has played all its rounds; always false without a
+    /// `[match]` block.
+    pub fn done(&self) -> bool {
+        self.done
+    }
+
+    /// Finished rounds, in order.
+    pub fn rounds(&self) -> &[RoundResult] {
+        &self.rounds
+    }
+
+    /// Measurements per rider, in `riders()` order.
+    pub fn stats(&self) -> Vec<&RiderStats> {
+        self.riders.iter().map(|r| &r.stats).collect()
+    }
+
+    /// Wall-clock nanoseconds of each bot decision per rider (empty for
+    /// scripted riders). Not deterministic: for cost reports only.
+    pub fn think_nanos(&self) -> Vec<&[u32]> {
+        self.riders
+            .iter()
+            .map(|r| r.think_nanos.as_slice())
+            .collect()
     }
 
     pub fn tick(&self) -> u32 {
@@ -331,7 +403,7 @@ impl Lab {
 
     /// Run until `until` (exclusive), sampling every `sample` ticks if > 0.
     pub fn run(&mut self, until: u32, sample: u32) {
-        while self.tick < until {
+        while self.tick < until && !self.done {
             if sample > 0 && self.tick.is_multiple_of(sample) {
                 self.sample();
             }
@@ -397,6 +469,7 @@ impl Lab {
         let deaths = std::mem::take(&mut self.world.resource_mut::<DeathLog>().0);
         self.resolve_eliminations(&deaths);
 
+        let heads: Vec<Option<Vec2>> = (0..self.riders.len()).map(|i| self.head(i)).collect();
         for (index, before) in before.into_iter().enumerate() {
             let after = self.view(index);
             if !before.alive {
@@ -417,6 +490,10 @@ impl Lab {
                 rider.was_colliding = false;
                 rider.was_sliding = false;
                 rider.respawn_at = rider.respawn_after.map(|after| tick + after.max(1));
+                rider.prev_nearest = None;
+                if let Some(start) = rider.life_start.take() {
+                    rider.stats.lifetimes.push(tick - start);
+                }
                 let entity = self.riders[index].entity;
                 let cause = deaths
                     .iter()
@@ -433,6 +510,7 @@ impl Lab {
             }
             let at = point(after.position);
             let rider = &mut self.riders[index];
+            track(rider, &after, &heads);
             let zone = (rider.was_colliding, after.colliding);
             let slide = (rider.was_sliding, after.sliding);
             rider.was_colliding = after.colliding;
@@ -450,7 +528,92 @@ impl Lab {
                 _ => {}
             }
         }
+        let next_round = self.close_round();
         self.tick += 1;
+        if let Some(round) = next_round {
+            self.begin_round(round);
+        }
+    }
+
+    /// Living rider's head, `None` when dead.
+    fn head(&self, index: usize) -> Option<Vec2> {
+        let e = self.riders[index].entity;
+        self.world
+            .get::<IsAlive>(e)
+            .unwrap()
+            .0
+            .then(|| self.world.get::<Position>(e).unwrap().0)
+    }
+
+    /// End the round if the match rules say so, after the tick's deaths.
+    /// Returns the next round's number when the match goes on.
+    fn close_round(&mut self) -> Option<u32> {
+        let rules = self.rules?;
+        let alive: Vec<usize> = (0..self.riders.len())
+            .filter(|&i| self.head(i).is_some())
+            .collect();
+        let played = self.tick + 1 - self.round_start;
+        let reason = rules.round_end(played, alive.len())?;
+        let winner = match (reason, alive.as_slice()) {
+            (RoundEnd::LastStanding, &[only]) => Some(only),
+            _ => None,
+        };
+        let end = self.tick;
+        for rider in &mut self.riders {
+            if let Some(start) = rider.life_start.take() {
+                rider.stats.lifetimes.push(end + 1 - start);
+            }
+        }
+        let round = self.round;
+        self.rounds.push(RoundResult {
+            round,
+            start: self.round_start,
+            end,
+            reason,
+            winner,
+        });
+        self.push_match(EventKind::RoundEnd {
+            round,
+            winner: winner.map(|i| self.riders[i].name.clone()),
+            reason: reason.label(),
+        });
+        if round + 1 >= rules.rounds {
+            self.done = true;
+            return None;
+        }
+        Some(round + 1)
+    }
+
+    /// Reset every rider and place them again for `round`, one after the
+    /// other with a new seed: only walls and the heads already placed count
+    /// (every trail is gone).
+    fn begin_round(&mut self, round: u32) {
+        self.round = round;
+        self.round_start = self.tick;
+        let segments: Vec<[Vec2; 2]> = self
+            .walls
+            .iter()
+            .map(|w| [Vec2::new(w[0], w[1]), Vec2::new(w[2], w[3])])
+            .collect();
+        let mut placed: Vec<Vec2> = Vec::new();
+        for rider in &mut self.riders {
+            let seed = rider.seed.wrapping_add(rider.lives);
+            rider.lives += 1;
+            let spawn = find_safe_spawn(self.size, &segments, &placed, seed)
+                .unwrap_or_else(|| panic!("{}: no safe spawn", rider.name));
+            placed.push(spawn.position);
+            if let Some(bot) = &mut rider.bot {
+                bot.brain =
+                    Brain::new(bot.brain.build.clone(), brain_seed(rider.seed, rider.lives));
+            }
+            rider.respawn_at = None;
+            rider.was_colliding = false;
+            rider.was_sliding = false;
+            rider.prev_nearest = None;
+            rider.life_start = Some(self.tick);
+            self.world.entity_mut(rider.entity).insert(reset(&spawn));
+        }
+        self.push_match(EventKind::RoundStart { round });
     }
 
     /// Mirror of the server's `bot_brain_input`: one snapshot per tick in
@@ -486,16 +649,33 @@ impl Lab {
             .expect("snapshot queries are infallible")
             .build(tick);
         let alive = world.riders.iter().filter(|r| r.alive).count();
-        let tier = Tier::from_load(alive, &self.scheduler);
+        let tier = self
+            .tier
+            .unwrap_or_else(|| Tier::from_load(alive, &self.scheduler));
         for i in redecide {
             let rider = &mut self.riders[i];
             let Some(index) = world.index_of(rider.entity.to_bits()) else {
                 continue;
             };
             let bot = rider.bot.as_mut().expect("filtered to bots");
-            inputs[i] = Some(bot.brain.think(&world, index, tier).action.to_input());
+            let started = Instant::now();
+            let action = bot.brain.think(&world, index, tier).action;
+            let nanos = started.elapsed().as_nanos();
+            rider
+                .think_nanos
+                .push(u32::try_from(nanos).unwrap_or(u32::MAX));
+            inputs[i] = Some(action.to_input());
         }
         inputs
+    }
+
+    /// Match-level event, not tied to a rider.
+    fn push_match(&mut self, kind: EventKind) {
+        self.events.push(Event {
+            tick: self.tick,
+            rider: String::new(),
+            kind,
+        });
     }
 
     fn push(&mut self, index: usize, kind: EventKind) {
@@ -573,7 +753,7 @@ impl Lab {
         rider.lives += 1;
         // The server respawns a bot as a fresh entity with a fresh brain.
         if let Some(bot) = &mut rider.bot {
-            bot.brain = Brain::new(bot.brain.build.clone());
+            bot.brain = Brain::new(bot.brain.build.clone(), brain_seed(rider.seed, rider.lives));
         }
         let Some(spawn) = find_safe_spawn(self.size, &segments, &riders, seed) else {
             self.push(
@@ -584,19 +764,8 @@ impl Lab {
             );
             return;
         };
-        self.world.entity_mut(entity).insert((
-            Position(spawn.position),
-            Direction(spawn.direction),
-            SpeedMult::base(),
-            TargetSpeedMult::default(),
-            Rubber::default(),
-            IsAlive(true),
-            Trail::new(spawn.position),
-            ShouldHandleDeath(true),
-            IsSliding(false),
-            IsColliding(false),
-            ActionState(PlayerInput::None),
-        ));
+        self.riders[index].life_start = Some(self.tick);
+        self.world.entity_mut(entity).insert(reset(&spawn));
         self.push(
             index,
             EventKind::Respawn {
@@ -605,6 +774,46 @@ impl Lab {
             },
         );
     }
+}
+
+/// Components of a freshly placed rider, as the server's respawn resets them.
+fn reset(spawn: &SafeSpawn) -> impl Bundle {
+    (
+        Position(spawn.position),
+        Direction(spawn.direction),
+        SpeedMult::base(),
+        TargetSpeedMult::default(),
+        Rubber::default(),
+        IsAlive(true),
+        Trail::new(spawn.position),
+        ShouldHandleDeath(true),
+        IsSliding(false),
+        IsColliding(false),
+        ActionState(PlayerInput::None),
+    )
+}
+
+/// Seed of a brain's mistake rolls: the rider's seed, then its life counter.
+fn brain_seed(rider_seed: u64, lives: u64) -> u64 {
+    rider_seed ^ lives.wrapping_mul(LIFE_SEED_STEP)
+}
+
+/// Fold one tick the rider ended alive into its stats.
+fn track(rider: &mut LabRider, after: &RiderView, heads: &[Option<Vec2>]) {
+    let nearest = heads
+        .iter()
+        .enumerate()
+        .filter(|&(i, _)| i != after.index)
+        .filter_map(|(_, head)| head.map(|h| after.position.distance(h)))
+        .min_by(f32::total_cmp);
+    let near = nearest.is_some_and(|d| d <= IDLE_RANGE);
+    let closing = matches!((nearest, rider.prev_nearest), (Some(d), Some(p)) if d < p);
+    rider.prev_nearest = nearest;
+    let stats = &mut rider.stats;
+    stats.alive_ticks += 1;
+    stats.rubber_ticks += u64::from(after.colliding);
+    stats.idle_ticks += u64::from(!near && !closing);
+    stats.speed_sum += f64::from(after.speed);
 }
 
 fn fnv1a(text: &str) -> u64 {

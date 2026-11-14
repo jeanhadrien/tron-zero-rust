@@ -23,6 +23,8 @@
 //!
 //! ```toml
 //! seed = 7
+//! tier = "full"                    # optional: pin the bots' level of detail
+//!                                  # (full | t1 | t2); default follows the rider count
 //!
 //! [[rider]]
 //! name = "trapper"
@@ -33,13 +35,32 @@
 //! [rider.knobs]                    # optional: override single knobs of the preset
 //! reaction_ticks = 4               # (also lookahead_ticks, mistake_prob, greed,
 //! ```                              #  aggression, caution, bfs_budget, strategy_mix)
+//!
+//! Matches: a `[match]` block (`shared::MatchRules`) plays rounds. The match
+//! rules replace the riders' `respawn_after`; the run stops when the match
+//! ends, and `until` stays the hard cap. After each round every rider is reset
+//! and placed again with a new seed.
+//!
+//! ```toml
+//! until = 9000
+//!
+//! [match]
+//! respawn = "never"                # "never" | { after = 240 }
+//! rounds = 5
+//!
+//! [match.end]
+//! last_standing = true             # round ends with at most one rider alive
+//! time_limit = 1800                # and/or after this many ticks
+//! ```
 
 use std::collections::BTreeMap;
 use std::path::Path;
 
 use bots::config::{BotBuild, Difficulty, KnobOverrides, Personality};
+use bots::schedule::Tier;
 use glam::Vec2;
 use serde::Deserialize;
+use shared::MatchRules;
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -53,8 +74,34 @@ pub struct Scenario {
     /// Seeds spawn placement for riders without `at`, and every respawn.
     #[serde(default)]
     pub seed: u64,
+    /// Rounds, respawn policy and end condition; none keeps the free run.
+    #[serde(default, rename = "match")]
+    pub rules: Option<MatchRules>,
+    /// Pin the bots' level-of-detail tier instead of deriving it from the
+    /// number of living riders.
+    #[serde(default)]
+    pub tier: Option<TierPin>,
     #[serde(rename = "rider")]
     pub riders: Vec<RiderSpec>,
+}
+
+/// `Tier` in scenario spelling.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum TierPin {
+    Full,
+    T1,
+    T2,
+}
+
+impl TierPin {
+    pub fn tier(self) -> Tier {
+        match self {
+            Self::Full => Tier::Full,
+            Self::T1 => Tier::T1,
+            Self::T2 => Tier::T2,
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -84,6 +131,9 @@ pub struct RiderSpec {
     /// Respawn automatically this many ticks after each death.
     #[serde(default)]
     pub respawn_after: Option<u32>,
+    /// A ready-made build (tournaments); wins over `bot`/`difficulty`/`knobs`.
+    #[serde(skip)]
+    pub prebuilt: Option<BotBuild>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
@@ -153,8 +203,20 @@ impl Scenario {
 
     pub fn parse(text: &str) -> Result<Self, String> {
         let scenario: Self = toml::from_str(text).map_err(|e| e.to_string())?;
+        scenario.validate()?;
+        Ok(scenario)
+    }
+
+    /// Check what the TOML types cannot: names, placements, scripts, rules.
+    pub fn validate(&self) -> Result<(), String> {
+        if let Some(rules) = &self.rules {
+            rules.validate()?;
+            if rules.end.last_standing && self.riders.len() < 2 {
+                return Err("match: last_standing needs at least two riders".into());
+            }
+        }
         let mut names = std::collections::HashSet::new();
-        for rider in &scenario.riders {
+        for rider in &self.riders {
             if !names.insert(rider.name.as_str()) {
                 return Err(format!("duplicate rider name {:?}", rider.name));
             }
@@ -170,28 +232,42 @@ impl Scenario {
             }
             rider.build()?;
         }
-        Ok(scenario)
+        Ok(())
     }
+}
+
+/// A bot build in scenario vocabulary: personality name, authoring difficulty
+/// and knob overrides. Suite files describe their builds the same way.
+pub fn bot_build(
+    name: &str,
+    bot: &str,
+    difficulty: u32,
+    knobs: &KnobOverrides,
+) -> Result<BotBuild, String> {
+    let personality = match bot.to_ascii_lowercase().as_str() {
+        "survivalist" => Personality::Survivalist,
+        "trapper" => Personality::Trapper,
+        "adaptive" => Personality::Adaptive,
+        "territorialist" => Personality::Territorialist,
+        "duelist" => Personality::Duelist,
+        "roamer" => Personality::Roamer,
+        other => return Err(format!("{name}: unknown bot {other:?}")),
+    };
+    let mut set = Difficulty(difficulty).knobs(personality);
+    knobs.apply(&mut set);
+    Ok(BotBuild::new(name, personality, set))
 }
 
 impl RiderSpec {
     /// The bot build for a `bot` rider, `None` for a scripted one.
     pub fn build(&self) -> Result<Option<BotBuild>, String> {
-        let Some(name) = &self.bot else {
+        if let Some(build) = &self.prebuilt {
+            return Ok(Some(build.clone()));
+        }
+        let Some(bot) = &self.bot else {
             return Ok(None);
         };
-        let personality = match name.to_ascii_lowercase().as_str() {
-            "survivalist" => Personality::Survivalist,
-            "trapper" => Personality::Trapper,
-            "adaptive" => Personality::Adaptive,
-            "territorialist" => Personality::Territorialist,
-            "duelist" => Personality::Duelist,
-            "roamer" => Personality::Roamer,
-            other => return Err(format!("{}: unknown bot {other:?}", self.name)),
-        };
-        let mut knobs = Difficulty(self.difficulty).knobs(personality);
-        self.knobs.apply(&mut knobs);
-        Ok(Some(BotBuild::new(self.name.clone(), personality, knobs)))
+        bot_build(&self.name, bot, self.difficulty, &self.knobs).map(Some)
     }
 
     /// Parse `"<tick> <action>"` entries into one action per tick. The sim

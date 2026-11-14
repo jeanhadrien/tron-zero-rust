@@ -1,4 +1,6 @@
 //! `lab <scenario.toml> [options]` — run a scenario headless.
+//! `lab tournament <suite.toml> [--threads N] [--json PATH] [--no-mistakes]` — see
+//! `tron_zero_lab::tournament`.
 //!
 //! Options:
 //!   --until N         stop at tick N (default: the scenario's `until`)
@@ -23,6 +25,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use glam::Vec2;
+use tron_zero_lab::tournament::{self, Suite};
 use tron_zero_lab::{Lab, PALETTE, Scenario, View, render};
 
 struct Args {
@@ -144,7 +147,7 @@ fn run(args: Args) -> Result<(), String> {
     let mut lab = Lab::with_seed(&scenario, args.seed.unwrap_or(scenario.seed));
     let view = args.view.unwrap_or_else(|| View::arena(&lab));
 
-    while lab.tick() < until {
+    while lab.tick() < until && !lab.done() {
         if let Some(dir) = &args.frames
             && lab.tick().is_multiple_of(args.every)
         {
@@ -207,8 +210,51 @@ fn run(args: Args) -> Result<(), String> {
     Ok(())
 }
 
+/// `lab tournament <suite.toml> [--threads N] [--json PATH] [--no-mistakes]`:
+/// play every build of a suite and print the result tables as markdown.
+fn run_tournament(mut raw: impl Iterator<Item = String>) -> Result<(), String> {
+    let mut suite_path: Option<PathBuf> = None;
+    let mut threads: Option<usize> = None;
+    let mut json: Option<PathBuf> = None;
+    let mut no_mistakes = false;
+    while let Some(arg) = raw.next() {
+        match arg.as_str() {
+            "--threads" => {
+                let value = raw.next().and_then(|v| v.parse().ok());
+                threads = Some(value.ok_or("--threads expects a number")?);
+            }
+            "--json" => json = Some(raw.next().ok_or("--json expects a path")?.into()),
+            "--no-mistakes" => no_mistakes = true,
+            flag if flag.starts_with("--") => return Err(format!("unknown option {flag}")),
+            path if suite_path.is_none() => suite_path = Some(path.into()),
+            extra => return Err(format!("unexpected argument {extra:?}")),
+        }
+    }
+    let usage = "usage: lab tournament <suite.toml> [--threads N] [--json PATH] [--no-mistakes]";
+    let mut suite = Suite::load(&suite_path.ok_or(usage)?)?;
+    if no_mistakes {
+        suite.without_mistakes();
+    }
+    let report = tournament::run(&suite, threads)?;
+    if let Some(path) = json {
+        let text = serde_json::to_string_pretty(&report).map_err(|e| e.to_string())?;
+        std::fs::write(&path, text).map_err(|e| format!("{}: {e}", path.display()))?;
+    }
+    io::stdout()
+        .lock()
+        .write_all(report.markdown().as_bytes())
+        .map_err(|e| e.to_string())
+}
+
 fn main() -> ExitCode {
-    match parse_args().and_then(run) {
+    let mut raw = std::env::args().skip(1).peekable();
+    let result = if raw.peek().is_some_and(|a| a == "tournament") {
+        raw.next();
+        run_tournament(raw)
+    } else {
+        parse_args().and_then(run)
+    };
+    match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(message) => {
             let _ = writeln!(io::stderr(), "lab: {message}");

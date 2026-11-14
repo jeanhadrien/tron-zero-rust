@@ -578,6 +578,7 @@ pub fn decide(
     world: &WorldSnapshot,
     forecast: &dyn Forecaster,
     knobs: &BotKnobs,
+    seed: u64,
 ) -> Action {
     let scores = strategy.score(perception, world, forecast, knobs);
     let mut best = Action::Hold;
@@ -588,7 +589,7 @@ pub fn decide(
             best = action;
         }
     }
-    let mut rng = BotRng::seed((perception.tick as u64) ^ ((perception.rider as u64) << 32));
+    let mut rng = BotRng::seed(seed, perception.tick, perception.rider);
     if knobs.mistake_prob > 0.0 && rng.next_f32() < knobs.mistake_prob {
         return match rng.next_u32() % 3 {
             0 => Action::Hold,
@@ -599,13 +600,20 @@ pub fn decide(
     best
 }
 
-/// Tiny deterministic xorshift, seeded from tick + rider. Keeps bot mistakes
-/// reproducible without pulling the shared sim into any RNG state.
+/// Tiny deterministic xorshift, seeded from the brain's seed, the tick and the
+/// rider. Keeps bot mistakes reproducible without pulling the shared sim into
+/// any RNG state.
 struct BotRng(u64);
 
 impl BotRng {
-    fn seed(seed: u64) -> Self {
-        Self(seed | 1)
+    /// The inputs are mixed first: xorshift fed a small, low-entropy seed
+    /// returns nearly the same first value whatever the tick.
+    fn seed(brain: u64, tick: u32, rider: usize) -> Self {
+        let mut z = brain ^ u64::from(tick) ^ ((rider as u64) << 32);
+        // splitmix64 finalizer.
+        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+        Self((z ^ (z >> 31)) | 1)
     }
 
     fn next_u64(&mut self) -> u64 {
@@ -721,7 +729,7 @@ mod tests {
 
         let survival_scores = Survivalist.score(&perception, &world, &forecast, &knobs);
         assert_eq!(
-            decide(&Survivalist, &perception, &world, &forecast, &knobs),
+            decide(&Survivalist, &perception, &world, &forecast, &knobs, 0),
             Action::Hold
         );
 
@@ -731,7 +739,7 @@ mod tests {
             "center share should beat holding the corner: {control_scores:?} vs {survival_scores:?}"
         );
         assert_eq!(
-            decide(&Territorialist, &perception, &world, &forecast, &knobs),
+            decide(&Territorialist, &perception, &world, &forecast, &knobs, 0),
             Action::Left
         );
     }
@@ -839,7 +847,7 @@ mod tests {
             "nose cut should beat holding wide: {scores:?}"
         );
         assert_eq!(
-            decide(&Duelist, &perception, &world, &forecast, &knobs),
+            decide(&Duelist, &perception, &world, &forecast, &knobs, 0),
             Action::Left
         );
     }
@@ -926,5 +934,24 @@ mod tests {
         assert_eq!(Duelist.mode(&perception), Mode::Attack);
         perception.threat = 0.0;
         assert_eq!(Duelist.mode(&perception), Mode::Explore);
+    }
+
+    /// The first roll must behave like a uniform draw for every rider index
+    /// and seed, not be a constant of the rider (the unmixed seed was).
+    #[test]
+    fn mistake_roll_is_uniform_per_rider_and_varies_with_seed() {
+        for seed in [0, 7] {
+            for rider in 0..8 {
+                let low = (0..2000)
+                    .filter(|&tick| BotRng::seed(seed, tick, rider).next_f32() < 0.1)
+                    .count();
+                assert!(
+                    (140..260).contains(&low),
+                    "seed {seed} rider {rider}: {low}"
+                );
+            }
+        }
+        let first = |seed| BotRng::seed(seed, 100, 0).next_u32();
+        assert_ne!(first(0), first(7));
     }
 }

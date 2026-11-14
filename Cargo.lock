@@ -7810,6 +7810,7 @@ version = "0.0.0"
 dependencies = [
  "bevy_ecs",
  "glam 0.32.1",
+ "rayon",
  "serde",
  "serde_json",
  "tiny-skia",

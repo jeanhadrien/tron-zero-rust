@@ -7,6 +7,7 @@
 pub mod components;
 pub mod constants;
 pub mod elimination;
+pub mod match_rules;
 pub mod math;
 pub mod physics;
 pub mod polyline;
@@ -23,6 +24,7 @@ pub use components::trail::*;
 pub use constants::*;
 pub use elimination::*;
 pub use lightyear::prelude::input::native::ActionState;
+pub use match_rules::{EndRules, MatchRules, Respawn, RoundEnd};
 pub use math::*;
 pub use physics::*;
 pub use systems::player::*;

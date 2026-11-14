@@ -213,9 +213,77 @@ cargo run -p tron-zero-lab -- crates/lab/scenarios/bot_arena.toml --seed 7
 cargo run -p tron-zero-lab -- crates/lab/scenarios/bot_arena.toml --seed 7 --until 900 --png arena.png
 ```
 
-Same seed, same game, so a bad bot death can be replayed, zoomed with
+Each brain rolls its mistakes (`mistake_prob`) from its own seed: the lab
+derives it from the scenario seed, the rider and the life, the server draws a
+random one per bot. So different seeds also err on different ticks. Same seed,
+same game, so a bad bot death can be replayed, zoomed with
 `--view` and re-run after a tweak. Bot tuning changes the `bot_arena` golden
 trace: bless it once the change is intended.
+
+`tier = "full"` (or `t1`, `t2`) at the top of a scenario pins the bots' level
+of detail; without it the tier follows the number of living riders, as on the
+server.
+
+### Rounds (last rider standing)
+
+A `[match]` block (`shared::MatchRules`: respawn policy, end condition, number
+of rounds) turns a scenario into a match. It replaces the riders'
+`respawn_after`. With `respawn = "never"` and `last_standing = true`, nobody
+respawns during a round and the round ends when at most one rider is alive (or
+at `time_limit`). The winner is the last rider alive: a time-out with several
+alive, or the last riders dying on the same tick, has no winner. Then every
+rider is reset and placed again with the safe-spawn search and a new seed, and
+the next round starts. The trace has `round_start` and `round_end` (with the
+winner and the reason) events; `round_end` carries the round's last tick. The
+run stops when the match is over, `until` stays the hard cap (set it to at
+least `rounds * time_limit`).
+
+```
+cargo run -p tron-zero-lab -- crates/lab/scenarios/rounds.toml --seed 7
+```
+
+### Tournaments (comparing bot builds)
+
+`lab tournament <suite.toml>` plays bot builds against each other and prints
+one markdown table per setup. A suite (format in `crates/lab/src/tournament.rs`)
+lists builds (`default_roster = true` for `bots::config::default_builds`,
+plus `[[build]]` entries with personality, difficulty and knob overrides),
+setups (rider count, `[setup.match]` rules, arena, optional `tier` pin) and a
+seed count. Each setup plays every lineup of builds over every seed, with each
+lineup rotated through all seats so spawn position does not favour a build.
+Matches run in parallel (`rayon`); the report is identical whatever the thread
+count.
+
+```
+cargo run --release -p tron-zero-lab -- tournament crates/lab/suites/ffa4.toml
+cargo run --release -p tron-zero-lab -- tournament crates/lab/suites/rounds4.toml --json rounds4.json
+cargo run --release -p tron-zero-lab -- tournament crates/lab/suites/ffa4.toml --no-mistakes --threads 4
+```
+
+`--no-mistakes` sets `mistake_prob = 0` on every build (how much of the play is
+the random mistake roll, how much the strategy itself); `--json PATH` also
+writes the report as JSON. Columns are measured separately, with no combined
+score:
+
+- rounds (matches for a one-round setup) played; win rate (last-standing setups
+  only; most rounds time out, see the line above the table);
+- kills per minute of alive time; deaths by cause (wall, own trail, other
+  trail); suicide share = (wall + own trail) / all deaths;
+- median life in ticks (a survivor's life counts up to the round or match end,
+  so a median at the time limit means most riders never died);
+- idle share: alive ticks with no living enemy within `IDLE_RANGE`
+  (`crates/lab/src/stats.rs`) and the nearest enemy not getting closer;
+- rubber share: alive ticks in the rubber zone; mean speed multiplier;
+- a kill matrix (row killed column); a mutual head-on counts a kill for both.
+
+The last section, decision cost (mean and p99 microseconds per `Brain::think`),
+is wall-clock and depends on the machine and the thread count: never compare
+it across runs, and never assert on it.
+
+Baseline suites live in `crates/lab/suites/` (1v1, FFA with 4 and 8 riders under
+today's rules, and 4-rider last rider standing over 5 rounds); a release run of
+all four takes a couple of minutes. To prove a bot change, run the same suite
+before and after and compare the columns that the change targets.
 
 Tests: `cargo nextest run -p tron-zero-shared` (unit, property and rollback tests) and
 `cargo nextest run -p tron-zero-lab` (mechanics assertions + golden traces for every

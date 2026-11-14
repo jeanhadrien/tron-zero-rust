@@ -1,0 +1,14 @@
+# Baseline 1v1: every pair of the default roster in both seats, free-for-all
+# rules (respawn after 240 ticks, 3600-tick match = the server's bot cycle).
+seeds = 50
+default_roster = true
+
+[[setup]]
+name = "1v1"
+riders = 2
+
+[setup.match]
+respawn = { after = 240 }
+
+[setup.match.end]
+time_limit = 3600

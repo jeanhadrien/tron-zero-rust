@@ -380,3 +380,58 @@ fn edge_riding_pays_far_less_than_trail_grinding() {
     let trail = peak_target("trail_grind", "a");
     assert!(trail > edge + 0.1, "trail {trail} vs edge {edge}");
 }
+
+#[test]
+fn rounds_end_on_the_last_rider_and_name_the_winner() {
+    let lab = run("rounds");
+    let scenario = load("rounds");
+    let rules = scenario.rules.unwrap();
+    assert!(lab.done());
+    assert_eq!(lab.rounds().len(), rules.rounds as usize);
+    for result in lab.rounds() {
+        let dead_in_round: Vec<&str> = lab
+            .events()
+            .iter()
+            .filter(|e| (result.start..=result.end).contains(&e.tick))
+            .filter(|e| matches!(e.kind, EventKind::Death { .. }))
+            .map(|e| e.rider.as_str())
+            .collect();
+        let riders = lab.riders();
+        let alive: Vec<&str> = riders
+            .iter()
+            .map(|r| r.name.as_str())
+            .filter(|n| !dead_in_round.contains(n))
+            .collect();
+        match result.winner {
+            // Exactly one rider outlived the others.
+            Some(winner) => {
+                assert_eq!(result.reason, shared::RoundEnd::LastStanding);
+                assert_eq!(alive, [riders[winner].name.as_str()]);
+            }
+            None if result.reason == shared::RoundEnd::TimeLimit => {
+                assert_eq!(result.end + 1 - result.start, rules.end.time_limit.unwrap());
+                assert!(alive.len() > 1);
+            }
+            None => assert!(alive.is_empty(), "a draw leaves nobody alive"),
+        }
+    }
+    // Every round starts with everyone alive on a fresh trail.
+    let starts = lab
+        .events()
+        .iter()
+        .filter(|e| matches!(e.kind, EventKind::RoundStart { .. }))
+        .count();
+    assert_eq!(starts, rules.rounds as usize);
+}
+
+#[test]
+fn a_pinned_tier_overrides_the_riders_alive_count() {
+    // Default behaviour (no pin) is covered by the goldens.
+    let pinned = |tier| {
+        let mut scenario = load("bot_arena");
+        scenario.tier = Some(tier);
+        trace(&scenario, 0)
+    };
+    use tron_zero_lab::scenario::TierPin;
+    assert_ne!(pinned(TierPin::Full), pinned(TierPin::T2));
+}

@@ -271,7 +271,7 @@ fn spawn_bot_entity(
         .spawn((
             Player,
             BotBrain {
-                brain: Brain::new(build.clone()),
+                brain: Brain::new(build.clone(), rand::random()),
                 slot_index,
             },
             shared::PlayerId(format!("bot-{}", bot_number)),
