@@ -103,9 +103,10 @@ fn main() {
     app.insert_resource(announce::PlayerCountProbe(counts));
     app.add_systems(Update, announce::publish_player_count);
 
-    // Bots: staggered decisions (one epoch per reaction period). The brain
-    // writes input after respawns and before the shared simulation; spawning
-    // follows it. The debug gate is read once from the environment.
+    // Bots: staggered decisions (one epoch per reaction period). Dead bots are
+    // placed after the humans' respawns, so both see each other; the brain
+    // then writes input before the shared simulation. The debug gate is read
+    // once from the environment.
     let roster = bot::roster_from_env(&|key| std::env::var(key).ok()).unwrap_or_else(|e| {
         tracing::error!("Invalid configuration: BOT_ROSTER: {e}");
         std::process::exit(2);
@@ -116,16 +117,15 @@ fn main() {
     app.add_systems(
         FixedUpdate,
         (
+            bot::respawn_bots
+                .after(systems::handle_respawns)
+                .before(bot::bot_brain_input),
             bot::bot_brain_input
                 .after(systems::handle_respawns)
                 .before(shared::simulate_players),
-            bot::bot_spawner.after(shared::simulate_players),
         ),
     );
-    app.add_systems(
-        Startup,
-        bot::setup_bots.after(systems::spawn_server_arena_and_start),
-    );
+    app.add_systems(Startup, bot::setup_bots);
 
     app.run();
 
