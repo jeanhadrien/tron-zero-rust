@@ -56,13 +56,14 @@ pub fn personality(name: &str) -> Result<Personality, String> {
         "duelist" => Personality::Duelist,
         "roamer" => Personality::Roamer,
         "passive" => Personality::Passive,
+        "artist" => Personality::Artist,
         other => return Err(format!("unknown bot {other:?}")),
     })
 }
 
 /// `base` with the entries of `over` replacing same-named fields. Unknown
 /// names and wrongly typed values are errors.
-fn merged<T: Serialize + DeserializeOwned>(
+pub(crate) fn merged<T: Serialize + DeserializeOwned>(
     base: &T,
     over: &Table,
     what: &str,

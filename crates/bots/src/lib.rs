@@ -19,6 +19,7 @@ pub mod race;
 pub mod roster;
 pub mod schedule;
 pub mod space;
+pub mod style;
 pub mod world;
 
 use config::BotBuild;

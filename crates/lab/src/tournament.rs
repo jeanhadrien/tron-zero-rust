@@ -266,6 +266,7 @@ fn play(suite: &Suite, game: &Game) -> GameResult {
             bot: Some("tournament".into()),
             difficulty: 0,
             knobs: KnobOverrides::default(),
+            weights: toml::Table::new(),
             respawn_after: None,
             prebuilt: Some(suite.builds[build].clone()),
         })

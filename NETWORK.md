@@ -56,6 +56,9 @@ numbers are in `docs/specs/netcode-design.md`; the headless harness is
   by last standing any more (phases 2 and 4 added fighting terms, grinding, rubber and a round heat so rounds end, but evading bots are still rarely killed (about 6% of own-trail deaths in rounds are forced by an opponent, the rest are self-kills); see `docs/guides/dev.md` Lab), and a weak
   build (difficulty 500) still dies on its own trail by design. Tuning the
   planner changes the `bot_duel` and `rounds` goldens (bless after intent).
+  Settled by JH: kills between evading bots stay rare, no rule change. The
+  server now seats a generated five-rung difficulty ladder plus the artist
+  Escher (`crates/bots/rosters/default.toml`, `BOT_ROSTER` to override).
 - [ ] Collision fairness follow-ups (`crates/shared/src/systems/player.rs`):
   same-tick crossings, head-on meetings and endpoint tolerances are resolved.
   Left: client prediction reads an opponent's newest confirmed trail, about

@@ -384,6 +384,25 @@ that vary by more than the tolerance, or whether the pattern is worth looking
 at; U-turns count as two ordinary turns with a short leg. Wandering bots land
 around 0.05 to 0.1 by chance; compare builds, not absolute values.
 
+### Artists (the `style` term)
+
+An artist rides a figure instead of a fight: legs of one length (`stride`, in
+units) and a repeating cycle of turn sides (`motif`: 0 staircase, 1 square
+wave), `crates/bots/src/style.rs`. `Personality::Artist` has `style` on and the
+fight and grind weights at zero (it never hunts and holds a constant speed, so
+legs stay equal); fighters keep `style = 0`. The planner adds the turns that
+continue the figure to its candidates and rates every line by how well it
+continues the figure (a turn when the leg reaches the stride, on the side the
+cycle asks for, rates 1; the mirrored side costs a little, which lets it turn
+away from a wall); `style` only counts for a line with room, so survival wins.
+Use it in a scenario or suite with `bot = "artist"` and `[rider.weights]` /
+`[build.weights]` `motif = 1.0`, `stride = 200.0`. The game's artist is
+`Escher (Artist)` in `crates/bots/rosters/default.toml`, outside the ladder.
+It draws about 50-60% `pattern` in a crowd against 5-25% for the fighters, with
+no wall deaths. A meander (R R L L) was tried and dropped: it jams against walls.
+`tests/gates.rs` gates the pattern score and the artist's own-fault deaths.
+To look at it: `lab <scenario with an artist> --png out.png --until 1000`.
+
 ### Tune (searching a build's knobs and weights)
 
 `lab tune <tune.toml>` searches the parameters of one build for a game setup.

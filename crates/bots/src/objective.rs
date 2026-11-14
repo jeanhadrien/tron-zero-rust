@@ -8,7 +8,7 @@
 use serde::{Deserialize, Serialize};
 
 /// How many terms there are; the length of both `values` arrays.
-pub const TERM_COUNT: usize = 12;
+pub const TERM_COUNT: usize = 13;
 
 /// What a full round heat adds to the fight terms and to the risk a bot takes
 /// (the same for every personality: a round has to end), and takes off room,
@@ -58,6 +58,8 @@ pub struct Terms {
     /// Rubber the line burns against obstacles ahead, as a share of what the
     /// bot has left, `-1..=0`: the more it is spent, the less is left for later.
     pub rubber: f32,
+    /// How well the line continues the bot's figure, `-1..=1` (see `style`).
+    pub style: f32,
 }
 
 impl Terms {
@@ -75,8 +77,13 @@ impl Terms {
             self.engage,
             self.grind,
             self.rubber,
+            self.style,
         ]
     }
+}
+
+fn default_stride() -> f32 {
+    200.0
 }
 
 /// How much a bot cares about each term. Same order as [`Terms::values`].
@@ -96,6 +103,16 @@ pub struct Weights {
     /// How dear rubber is: low means the bot spends it freely (late turns,
     /// tight lines), high means it keeps it for emergencies.
     pub rubber: f32,
+    /// How much it cares to ride its figure (`style`); fighters keep it at 0.
+    #[serde(default)]
+    pub style: f32,
+    /// Not a term: which figure it rides, an index into `style`'s cycles
+    /// (0 staircase, 1 square wave).
+    #[serde(default)]
+    pub motif: f32,
+    /// Not a term: the length (units) of every leg of the figure.
+    #[serde(default = "default_stride")]
+    pub stride: f32,
     /// Not a term: how much of the survival score a bot gives up to fight.
     /// The fight terms only choose among lines at most this far below the
     /// best by the survival terms, so they never pay for a death.
@@ -117,6 +134,9 @@ impl Weights {
         engage: 0.5,
         grind: 4.0,
         rubber: 0.5,
+        style: 0.0,
+        motif: 0.0,
+        stride: 200.0,
         risk: 0.25,
     };
 
@@ -176,6 +196,7 @@ impl Weights {
             self.engage,
             self.grind,
             self.rubber,
+            self.style,
         ]
     }
 

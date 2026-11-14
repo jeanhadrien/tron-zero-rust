@@ -21,6 +21,7 @@ use crate::plan::{Action, Kind, MAX_TURNS, Maneuver, Turn};
 use crate::race::{self, Cells, Laid, MAX_RACERS};
 use crate::schedule::Tier;
 use crate::space::{CELL, COARSE, STEP, Scratch, Space};
+use crate::style::{Figure, Progress};
 use crate::world::{RiderSnapshot, WorldSnapshot};
 
 /// Cells of room a bot wants around it: about 650 ticks of riding in a
@@ -281,6 +282,8 @@ struct Context<'a> {
     ramp: f32,
     /// The objective of this decision: the build's, worn down by the round.
     weights: Weights,
+    /// The bot's figure and where it stands in it, for a bot with style.
+    figure: Option<(Figure, Progress)>,
 }
 
 /// An opponent as the bot sees it: where it is and where it is likely to be.
@@ -323,9 +326,12 @@ fn context<'a>(world: &'a WorldSnapshot, me: usize, params: &'a Params) -> Conte
         foes: Vec::new(),
         ramp: 1.0 + (params.age as f32 / ENGAGE_RAMP).min(ENGAGE_MAX - 1.0),
         weights: params.weights,
+        figure: Figure::of(&params.weights)
+            .map(|figure| (figure, figure.progress(&rider.trail.points(rider.pos)))),
     };
     cx.foes = foes(&cx);
-    if !cx.foes.is_empty() {
+    // An artist does not take up the fight as the round ages.
+    if !cx.foes.is_empty() && cx.figure.is_none() {
         cx.weights = params.weights.heated(heat(params));
     }
     cx
@@ -805,6 +811,9 @@ fn candidates(cx: &Context, current: Option<Maneuver>) -> Vec<Maneuver> {
     if params.variety >= 2 && cx.weights.grind > 0.0 {
         list.extend(lanes(cx));
     }
+    if let Some((figure, progress)) = cx.figure {
+        list.extend(figure.candidates(progress, cx.step, horizon));
+    }
     list
 }
 
@@ -1031,6 +1040,9 @@ fn evaluate(cx: &Context, index: usize, maneuver: &Maneuver, scratch: &mut Scrat
         grind: safe * (speed.mean.min(GRIND_CAP) - cx.rider.target_speed_mult.min(GRIND_CAP))
             / (GRIND_CAP - 1.0),
         rubber: -(rubber_burn(cx, &path, speed) / (cx.rider.rubber + RUBBER_SLACK)).clamp(0.0, 1.0),
+        style: cx.figure.map_or(0.0, |(figure, progress)| {
+            safe * figure.rate(progress, maneuver, cx.step, params.horizon)
+        }),
     };
     Scored {
         index,

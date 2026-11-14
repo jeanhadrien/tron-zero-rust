@@ -133,6 +133,10 @@ pub struct RiderSpec {
     /// Per-knob overrides applied on top of the preset.
     #[serde(default)]
     pub knobs: KnobOverrides,
+    /// Weight overrides (any weight of `bots::objective::Weights`) on top of
+    /// the personality's.
+    #[serde(default)]
+    pub weights: toml::Table,
     /// Respawn automatically this many ticks after each death.
     #[serde(default)]
     pub respawn_after: Option<u32>,
@@ -264,7 +268,10 @@ impl RiderSpec {
         let Some(bot) = &self.bot else {
             return Ok(None);
         };
-        bot_build(&self.name, bot, self.difficulty, &self.knobs).map(Some)
+        let mut build = bot_build(&self.name, bot, self.difficulty, &self.knobs)?;
+        build.weights = crate::builds::merged(&build.weights, &self.weights, "weight")
+            .map_err(|e| format!("{}: {e}", self.name))?;
+        Ok(Some(build))
     }
 
     /// Parse `"<tick> <action>"` entries into one action per tick. The sim

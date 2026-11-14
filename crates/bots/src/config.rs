@@ -35,6 +35,9 @@ pub enum Personality {
     Duelist,
     /// Plain base weights.
     Roamer,
+    /// Rides a figure (staircase, square wave) and never hunts; a
+    /// build's `motif` and `stride` weights pick the drawing.
+    Artist,
     /// Adaptive without any will to fight (no pressure, control or
     /// engagement): the reference opponent of the fight measurements.
     Passive,
@@ -69,7 +72,7 @@ impl BotKnobs {
         let weights = weights
             .values()
             .into_iter()
-            .chain([weights.risk])
+            .chain([weights.risk, weights.motif, weights.stride])
             .map(f32::to_bits)
             .collect::<Vec<u32>>();
         personality
@@ -179,6 +182,7 @@ impl Personality {
             Personality::Territorialist => "territorialist",
             Personality::Duelist => "duelist",
             Personality::Roamer => "roamer",
+            Personality::Artist => "artist",
             Personality::Passive => "passive",
         }
     }
@@ -234,6 +238,19 @@ impl Personality {
                 grind: 4.5,
                 rubber: 0.4,
                 risk: 0.25,
+                ..base
+            },
+            Personality::Artist => Weights {
+                space: 1.3,
+                clear: 1.1,
+                turn: 0.0,
+                pressure: 0.0,
+                control: 0.0,
+                engage: 0.0,
+                grind: 0.0,
+                rubber: 0.9,
+                style: 2.0,
+                risk: 0.08,
                 ..base
             },
             Personality::Adaptive | Personality::Roamer => base,

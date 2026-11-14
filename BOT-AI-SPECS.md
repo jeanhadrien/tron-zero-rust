@@ -373,6 +373,30 @@ build and get something that does neither. Patterns also serve as a
 ### Settled
 
 - [x] Want bots that paint pretty patterns with their tails.
+- [x] **Artist bots** (JH's definition, implemented as the `style` weight and
+  the `Artist` personality, `crates/bots/src/style.rs`): the defining trait is
+  rewarding patterns, repeated turns that lay trail segments of the same length,
+  kind of like fractals (self-similar, repeating figures), all while staying
+  alive. Survival comes first. A kill matters to an artist only as a free lunch
+  (one that costs it nothing: no detour from its figure, no added risk); it
+  never hunts, so its pressure, control and engage weights are zero. Free-kill
+  taking is not built: the artist's kills so far are opponents that ride into
+  its trail. Fighters keep `style` at 0. Figures so far: staircase and square
+  wave of equal legs; nesting figures at several scales are not built.
+- [x] Difficulty ladder: five generated rungs (`Wisp (Novice)` to `Apex (Expert)`,
+  `crates/bots/rosters/default.toml`) plus the artist `Escher (Artist)` outside it.
+- [x] **Artist bots** (JH's definition, implemented as the `style` weight and
+  the `Artist` personality, `crates/bots/src/style.rs`): the defining trait is
+  rewarding patterns, repeated turns that lay trail segments of the same length,
+  kind of like fractals (self-similar, repeating figures), all while staying
+  alive. Survival comes first. A kill matters to an artist only as a free lunch
+  (one that costs it nothing: no detour from its figure, no added risk); it
+  never hunts, so its pressure, control and engage weights are zero. Free-kill
+  taking is not built: the artist's kills so far are opponents that ride into
+  its trail. Fighters keep `style` at 0. Figures so far: staircase and square
+  wave of equal legs; nesting figures at several scales are not built.
+- [x] Difficulty ladder: five generated rungs (`Wisp (Novice)` to `Apex (Expert)`,
+  `crates/bots/rosters/default.toml`) plus the artist `Escher (Artist)` outside it.
 
 ---
 

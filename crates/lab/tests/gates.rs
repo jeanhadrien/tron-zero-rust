@@ -204,3 +204,51 @@ fn rounds_end_with_a_winner_and_riders_stay_in_company() {
         mean(|r| r.mean_speed)
     );
 }
+
+/// An artist draws a repeated figure (a high pattern score, several times what
+/// the fighters happen to draw) and does not die for it.
+#[test]
+fn an_artist_draws_a_pattern_and_stays_alive() {
+    let roster = Path::new(env!("CARGO_MANIFEST_DIR")).join("../bots/rosters/default.toml");
+    let text = format!(
+        "seeds = 3\nroster = {:?}\n{}",
+        roster.to_str().unwrap(),
+        r#"
+[[setup]]
+name = "ffa4"
+riders = 4
+[setup.match]
+respawn = { after = 240 }
+[setup.match.end]
+time_limit = 3600
+"#
+    );
+    let mut suite = Suite::parse(&text).unwrap();
+    suite.builds.retain(|b| {
+        [
+            "Warden (Medium)",
+            "Raptor (Hard)",
+            "Apex (Expert)",
+            "Escher (Artist)",
+        ]
+        .contains(&b.name.as_str())
+    });
+    assert_eq!(suite.builds.len(), 4);
+    let report = tournament::run(&suite, None).unwrap();
+    let rows = &report.setups[0].rows;
+    let artist = rows.iter().find(|r| r.build.contains("Artist")).unwrap();
+    let fighters: Vec<f64> = rows
+        .iter()
+        .filter(|r| !r.build.contains("Artist"))
+        .map(|r| r.pattern.unwrap())
+        .collect();
+    let fighters = fighters.iter().sum::<f64>() / fighters.len() as f64;
+    let drawn = artist.pattern.unwrap();
+    assert!(drawn >= 0.4, "the artist's pattern score is only {drawn}");
+    assert!(
+        drawn >= 3.0 * fighters,
+        "artist {drawn} against fighters {fighters}"
+    );
+    let own = f64::from(artist.deaths_wall + artist.deaths_own_trail) / f64::from(artist.rounds);
+    assert!(own <= 0.15, "the artist kills itself {own} times per match");
+}
