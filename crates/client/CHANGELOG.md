@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.0.0](https://github.com/jeanhadrien/tron-zero-rust/compare/client-v1.0.0...client-v2.0.0) (2026-11-14)
+
+
+### Miscellaneous Chores
+
+* **client:** Synchronize tron-zero versions
+
 ## [1.0.0](https://github.com/jeanhadrien/tron-zero-rust/compare/client-v0.16.0...client-v1.0.0) (2026-11-14)
 
 
