@@ -51,10 +51,11 @@ pub struct EndRules {
     /// End when at most one rider is alive; the survivor wins the round.
     #[serde(default)]
     pub last_standing: bool,
-    /// End when no human is left in the round: all of them dead with no
-    /// respawn. With respawns a dead human can come back, so it never fires.
+    /// End this many ticks after no human is left in the round (all of them
+    /// dead with no respawn), so the bots ride on for a moment; `None` never.
+    /// With respawns a dead human can come back, so it never fires.
     #[serde(default)]
-    pub no_human_left: bool,
+    pub no_human_left: Option<u32>,
 }
 
 /// Why a round ended.
@@ -122,11 +123,16 @@ impl Default for MatchRules {
 
 impl MatchRules {
     /// Whether a round that began `elapsed` ticks ago is over, and why.
-    pub fn round_end(&self, elapsed: u32, roster: &Roster) -> Option<RoundEnd> {
+    /// `humanless` counts the ticks, this one included, since no human rides.
+    pub fn round_end(&self, elapsed: u32, humanless: u32, roster: &Roster) -> Option<RoundEnd> {
         if self.end.last_standing && roster.alive.len() <= 1 {
             return Some(RoundEnd::LastStanding);
         }
-        if self.end.no_human_left && self.respawn == Respawn::Never && roster.humans_alive == 0 {
+        if let Some(delay) = self.end.no_human_left
+            && self.respawn == Respawn::Never
+            && roster.humans_alive == 0
+            && humanless >= delay
+        {
             return Some(RoundEnd::NoHumanLeft);
         }
         match self.end.time_limit {
@@ -153,8 +159,9 @@ impl MatchRules {
         if self.end.last_standing && self.respawn != Respawn::Never {
             return Err("match: last_standing needs respawn = \"never\"".into());
         }
-        let ends =
-            self.end.time_limit.is_some() || self.end.last_standing || self.end.no_human_left;
+        let ends = self.end.time_limit.is_some()
+            || self.end.last_standing
+            || self.end.no_human_left.is_some();
         if self.respawn == Respawn::Never && !ends {
             // The dead would never come back and the round never end.
             return Err("match: a round without respawns needs an end condition".into());
@@ -218,6 +225,8 @@ pub struct MatchFlow {
     round: u32,
     /// Ticks spent in this phase.
     ticks: u32,
+    /// Ticks of this round with no human riding.
+    humanless: u32,
 }
 
 impl MatchFlow {
@@ -228,6 +237,7 @@ impl MatchFlow {
             phase: MatchPhase::Free,
             round: 0,
             ticks: 0,
+            humanless: 0,
         }
     }
 
@@ -300,7 +310,11 @@ impl MatchFlow {
             }
             MatchPhase::Playing => {
                 self.ticks += 1;
-                let Some(end) = self.rules.round_end(self.ticks, roster) else {
+                self.humanless = match roster.humans_alive {
+                    0 => self.humanless + 1,
+                    _ => 0,
+                };
+                let Some(end) = self.rules.round_end(self.ticks, self.humanless, roster) else {
                     return MatchStep::Idle;
                 };
                 let winner = match (end, roster.alive) {
@@ -339,6 +353,7 @@ impl MatchFlow {
         self.phase = phase;
         self.round = round;
         self.ticks = 0;
+        self.humanless = 0;
     }
 
     /// Count a break tick; true once it has lasted `len` ticks. A break of 0
@@ -420,7 +435,7 @@ mod tests {
     }
 
     fn end(rules: &MatchRules, elapsed: u32, riders: &[Entity]) -> Option<RoundEnd> {
-        rules.round_end(elapsed, &Roster::riders(riders.len(), riders))
+        rules.round_end(elapsed, 0, &Roster::riders(riders.len(), riders))
     }
 
     #[test]
@@ -455,10 +470,10 @@ mod tests {
     }
 
     #[test]
-    fn no_human_left_ends_a_round_without_respawns_only() {
+    fn no_human_left_ends_a_round_after_its_delay_without_respawns_only() {
         let mut rules = MatchRules {
             end: EndRules {
-                no_human_left: true,
+                no_human_left: Some(4),
                 ..EndRules::default()
             },
             ..MatchRules::default()
@@ -470,11 +485,16 @@ mod tests {
             alive: &bots,
             humans_alive,
         };
-        assert_eq!(rules.round_end(5, &roster(1)), None);
-        assert_eq!(rules.round_end(5, &roster(0)), Some(RoundEnd::NoHumanLeft));
+        assert_eq!(rules.round_end(5, 0, &roster(1)), None);
+        // The bots ride on for the delay, then the round ends.
+        assert_eq!(rules.round_end(5, 3, &roster(0)), None);
+        assert_eq!(
+            rules.round_end(5, 4, &roster(0)),
+            Some(RoundEnd::NoHumanLeft)
+        );
         // A dead human may come back: the round goes on.
         rules.respawn = Respawn::After(10);
-        assert_eq!(rules.round_end(5, &roster(0)), None);
+        assert_eq!(rules.round_end(5, 4, &roster(0)), None);
     }
 
     fn rounds_of(rounds: u32, limit: Option<u32>) -> MatchRules {

@@ -271,7 +271,7 @@ mod tests {
             end: EndRules {
                 time_limit: limit,
                 last_standing: true,
-                no_human_left: true,
+                no_human_left: Some(2),
             },
             rounds,
             intermission: 3,
@@ -395,8 +395,11 @@ mod tests {
         for _ in 0..4 {
             advance_match(&mut world);
         }
-        // The human dies; two bots still ride: the round is over at once.
+        // The human dies; two bots still ride: the round is over after the delay.
         kill(&mut world, riders[0]);
+        advance_match(&mut world);
+        assert_eq!(status(&mut world).phase, MatchPhase::Playing);
+        assert!(alive(&world, riders[1]));
         advance_match(&mut world);
         let now = status(&mut world);
         assert_eq!(now.phase, MatchPhase::Intermission);
