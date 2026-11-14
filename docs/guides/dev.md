@@ -446,7 +446,7 @@ cargo run --release -p tron-zero-lab -- tune crates/lab/tuning/rounds4.tune.toml
 ### Ladder (generated difficulty rungs)
 
 `lab ladder <ladder.toml>` (format in `crates/lab/src/ladder.rs`, example in
-`crates/lab/tuning/rounds4.ladder.toml`) degrades one build along its budget
+`crates/lab/tuning/duel.ladder.toml`) degrades one build along its budget
 knobs, from itself to the weakest budget (`degrade_to`, an authoring preset;
 `[degrade]` overrides single knobs), in `candidates` steps. Each step is
 measured against the reference pool (`strength` = any tournament metric,

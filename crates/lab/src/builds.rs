@@ -54,7 +54,6 @@ pub fn personality(name: &str) -> Result<Personality, String> {
         "adaptive" => Personality::Adaptive,
         "territorialist" => Personality::Territorialist,
         "duelist" => Personality::Duelist,
-        "roamer" => Personality::Roamer,
         "passive" => Personality::Passive,
         "artist" => Personality::Artist,
         other => return Err(format!("unknown bot {other:?}")),

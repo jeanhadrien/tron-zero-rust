@@ -3,7 +3,7 @@ name = "tron-zero-bots"
 version = "0.0.0"
 edition = "2024"
 publish = false
-description = "Bot brain: sensing, memory, forecasting and strategies over a world snapshot."
+description = "Bot brain: a planner that scores candidate maneuvers over a world snapshot."
 
 [dependencies]
 shared = { path = "../shared", package = "tron-zero-shared" }

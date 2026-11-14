@@ -152,7 +152,8 @@ impl Weights {
         }
     }
 
-    /// The same bot with a round `heat` (`0..=1`) old: it cares less about
+    /// The same bot with a round `heat` old (`1` is full, see the planner's
+    /// `heat`): it cares less about
     /// room and margin, wants the fight (and the risk that goes with it) more,
     /// and spends rubber freely, so a round whose riders all play safe still
     /// comes to an end.

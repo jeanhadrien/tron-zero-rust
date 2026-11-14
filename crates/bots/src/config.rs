@@ -33,8 +33,6 @@ pub enum Personality {
     Adaptive,
     Territorialist,
     Duelist,
-    /// Plain base weights.
-    Roamer,
     /// Rides a figure (staircase, square wave) and never hunts; a
     /// build's `motif` and `stride` weights pick the drawing.
     Artist,
@@ -124,11 +122,6 @@ impl BotBuild {
         Self::new(name, personality, difficulty.knobs())
     }
 
-    /// The objective weights of this build.
-    pub fn weights(&self) -> Weights {
-        self.weights
-    }
-
     /// Stable identity of this build in the rating pool:
     /// `bot:<name>:<fingerprint of personality, weights and knobs>`. Every
     /// instance of the build shares one rating, which starts like any
@@ -181,7 +174,6 @@ impl Personality {
             Personality::Adaptive => "adaptive",
             Personality::Territorialist => "territorialist",
             Personality::Duelist => "duelist",
-            Personality::Roamer => "roamer",
             Personality::Artist => "artist",
             Personality::Passive => "passive",
         }
@@ -253,7 +245,7 @@ impl Personality {
                 risk: 0.08,
                 ..base
             },
-            Personality::Adaptive | Personality::Roamer => base,
+            Personality::Adaptive => base,
             Personality::Passive => base.passive(),
         }
     }

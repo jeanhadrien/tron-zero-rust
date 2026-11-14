@@ -124,7 +124,7 @@ pressure = 3.5
     )
     .unwrap();
     let build = spec.build().unwrap();
-    assert_eq!(build.weights().pressure, 3.5);
+    assert_eq!(build.weights.pressure, 3.5);
     assert_eq!(build.knobs.noise, 0.05);
     let plain = BuildSpec {
         weights: toml::Table::new(),

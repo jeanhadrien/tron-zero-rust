@@ -63,10 +63,15 @@ const RACE_TICKS: f32 = 160.0;
 const BOLD_PRESSURE: f32 = 1.0;
 /// Heat at which a bold line needs no kill chance at all.
 const BOLD_FADE: f32 = 6.0;
-/// A round's heat: none until `HEAT_START` ticks after it began, full
-/// `HEAT_SPAN` ticks later. Only bots told they play a round feel it.
-const HEAT_START: f32 = 0.0;
+/// A round's heat is full `HEAT_SPAN` ticks after the round began, and keeps
+/// rising to `HEAT_MAX`. Only bots told they play a round feel it.
 const HEAT_SPAN: f32 = 500.0;
+const HEAT_MAX: f32 = 3.0;
+/// Riders further than `ROLLOUT_REACH` units per tick of the window, plus
+/// `ROLLOUT_MARGIN`, are left out of a physics check: they cannot reach the
+/// bot's line in time.
+const ROLLOUT_REACH: f32 = 6.0;
+const ROLLOUT_MARGIN: f32 = 150.0;
 /// Territory only matters to a bot with an opponent this close (units); the
 /// weight fades out over `CONTACT_SPAN` further.
 const CONTACT_NEAR: f32 = 900.0;
@@ -137,7 +142,7 @@ impl Params {
             horizon: knobs.horizon_ticks.min(tier.max_horizon()).max(2),
             variety: knobs.variety.min(tier.max_variety()),
             noise: knobs.noise,
-            weights: build.weights(),
+            weights: build.weights,
             flood_cap: tier.flood_cap(),
             seed,
             age: 0,
@@ -147,13 +152,13 @@ impl Params {
     }
 }
 
-/// How hot the round is for the bot, `0..=3` (`1` is full): a round that nobody wins by
-/// waiting has to come to an end, so riders grow bolder as it ages.
+/// How hot the round is for the bot, `0..=HEAT_MAX` (`1` is full): a round that
+/// nobody wins by waiting has to come to an end, so riders grow bolder as it ages.
 fn heat(params: &Params) -> f32 {
     if !params.rounds {
         return 0.0;
     }
-    ((params.age as f32 - HEAT_START) / HEAT_SPAN).clamp(0.0, 3.0)
+    (params.age as f32 / HEAT_SPAN).clamp(0.0, HEAT_MAX)
 }
 
 /// What the bot judges its situation to be (for observation, not for choice).
@@ -746,8 +751,7 @@ pub fn survives(world: &WorldSnapshot, me: usize, maneuver: &Maneuver, params: &
 /// Tick of the bot's death riding `maneuver` through the real physics, others
 /// riding straight on. `None` if it lives for `ticks`.
 fn first_death(world: &WorldSnapshot, me: usize, maneuver: &Maneuver, ticks: u32) -> Option<u32> {
-    // Riders further than this cannot reach the bot's line within the window.
-    let radius = ticks as f32 * 6.0 + 150.0;
+    let radius = ticks as f32 * ROLLOUT_REACH + ROLLOUT_MARGIN;
     let mut rollout = Rollout::new(world, me, radius)?;
     (0..ticks).find(|&tick| !rollout.step(maneuver.action_at(tick)))
 }

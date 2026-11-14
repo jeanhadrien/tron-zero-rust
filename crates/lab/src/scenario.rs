@@ -29,7 +29,7 @@
 //! [[rider]]
 //! name = "trapper"
 //! bot = "trapper"                  # survivalist | trapper | adaptive |
-//! difficulty = 2500                # territorialist | duelist | roamer
+//! difficulty = 2500                # territorialist | duelist | artist | passive
 //! respawn_after = 240              # optional: respawn N ticks after a death
 //!
 //! [rider.knobs]                    # optional: override single knobs of the preset
