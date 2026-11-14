@@ -26,7 +26,7 @@ The server reads its environment at start; an invalid value stops it (exit 2).
 - **Riders** are everybody in the arena roster: admitted humans and bots, alive
   or waiting. A match needs at least **two riders**. With fewer, the server is in
   phase `Free`: free-for-all behaviour (initial spawn, manual respawn with
-  Space, bots respawn and cycle as usual).
+  Space, bots respawn after their delay as usual).
 - **Phases** (`MatchPhase`): `Free` -> `Starting` (countdown of one
   intermission, every rider stopped) -> `Playing` (round 1) -> `Intermission`
   -> `Playing` (round 2) ... -> last round -> `MatchOver` (final intermission,
@@ -40,10 +40,14 @@ The server reads its environment at start; an invalid value stops it (exit 2).
   (no plan, no target, its engagement clock at zero): the bots' wish to
   engage grows with the age of the brain, so a round starts calm.
 - **During a round** nobody respawns. A manual respawn request is answered
-  `RespawnOutcome::WaitForNextRound`; bots are not respawned or replaced
-  (bot auto-cycle is paused). A rider that joins during a round (or a break) is
+  `RespawnOutcome::WaitForNextRound`; bots are not respawned either. A rider that joins during a round (or a break) is
   admitted dead and placed at the next round start. A rider that leaves counts
   as eliminated.
+- **Where it lives:** the phases, the round counter, the clock, the end
+  condition and the winner are `shared::MatchFlow`, driven by `MatchRules`;
+  the lab plays its rounds with the same flow (no break, round 1 already
+  placed). The server applies each `MatchStep` to its riders (`rounds.rs`):
+  scores, new lives for humans, bot brains, the replicated status.
 - **Round end:** after the tick's deaths, when at most one rider is alive, or at
   the time limit (`MatchRules::round_end`). The winner is the last rider alive:
   nobody wins a time-out with several alive, or when the last riders die on the

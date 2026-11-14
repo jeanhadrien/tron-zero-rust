@@ -94,5 +94,6 @@ Seeded sampling followed by a clearance-spaced grid is a bounded search, not an
 exhaustive geometric solver. If it finds no safe candidate, the rider remains
 dead and the client can retry; no unsafe fallback is chosen. Initial human
 spawn uses the same allocator. This is snapshot safety, not spawn invulnerability
-or a guarantee against future opponent motion. Bots retain their existing
-random spawns, two-second death respawns and thirty-second replacement cycle.
+or a guarantee against future opponent motion. Bots use the
+same allocator: a dead bot is placed again as the same entity after a four-second
+delay; bots are never replaced.

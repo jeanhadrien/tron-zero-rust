@@ -211,14 +211,14 @@ cargo run -p tron-zero-lab -- my.toml --frames frames --every 30
 
 Output is a JSONL trace (`turn`, `enter/leave_rubber_zone`, `slide_start/end`,
 `death` with its cause, `respawn`, optional `sample`) plus a `#` summary, and
-PNGs on request. Respawns mirror the server's safe-spawn search. The summary
+PNGs on request. Respawns use the server's safe-spawn search (`shared::spawn`). The summary
 also counts kills and groups deaths by cause.
 
 ### Bot arenas
 
 A rider with `bot = "<personality>"` (and `difficulty`, plus optional `[rider.knobs]` and `[rider.weights]`, the vocabulary of a suite build) is driven by the same brain
-and decision schedule as the server's bots; leave out `at`/`heading` and it
-gets a seeded safe spawn. `respawn_after = 240` mirrors the server's bot
+and decision driver (`bots::drive`) as the server's bots; leave out `at`/`heading` and it
+gets a seeded safe spawn. `respawn_after = 240` is the server's bot
 respawn delay. `scenarios/bot_duel.toml` is a weak bot against a strong one (the weak one dies and respawns):
 
 ```
@@ -283,8 +283,10 @@ respawns during a round and the round ends when at most one rider is alive (or
 at `time_limit`). The winner is the last rider alive: a time-out with several
 alive, or the last riders dying on the same tick, has no winner. Then every
 rider is reset and placed again with the safe-spawn search and a new seed, and
-the next round starts. The trace has `round_start` and `round_end` (with the
-winner and the reason) events; `round_end` carries the round's last tick. The
+the next round starts at once (the lab ignores `intermission`). The rounds are
+played by `shared::MatchFlow`, as on the server, and numbered from 1. The trace
+has `round_start` and `round_end` (with the winner and the reason) events;
+`round_end` carries the round's last tick. The
 run stops when the match is over, `until` stays the hard cap (set it to at
 least `rounds * time_limit`).
 
@@ -570,7 +572,8 @@ rollback. Local prediction adds no configured input-delay ticks.
   and an 80-unit clearance corridor extending 360 units in the chosen heading.
   If no safe candidate is found, the human stays dead and may manually retry.
   This is clearance from **current** geometry, not immunity from moving riders
-  or trails grown later. Bots retain their existing spawn/lifecycle behavior.
+  or trails grown later. Bots use the same search: when one dies, the same
+  entity is placed again after 240 ticks (4 s) with a fresh brain.
 - Queue several turns just before dying; press turn keys while dead, then
   respawn. No pre-death/dead-state turns should execute in the new life. Fresh
   turns after respawn still execute one per tick in OS event order. Disconnect

@@ -134,8 +134,8 @@ is a "connection" as soon as one packet arrives (see `NETWORK.md`). Lightyear
   diff replication (`replicate_diff`/`predict_diff`) would bound that. Corners
   are replicated and predicted as one component, so turns and pruning roll back
   together instead of spawning untracked child entities.
-- Both sides run `simulate_players` in `FixedUpdate`. Server bot input runs before
-  it and bot lifecycle runs afterward. Client input writing precedes simulation.
+- Both sides run `simulate_players` in `FixedUpdate`. Server bot respawns and
+  input run before it. Client input writing precedes simulation.
   Each tick freezes obstacle geometry before advancing any rider, avoiding
   dependence on player iteration order.
 - Client obstacles from nonpredicted opponents use confirmed trail, position
