@@ -20,9 +20,9 @@
 //! weight written out.
 
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
-use bots::config::{BotBuild, BotKnobs, Difficulty, Personality, default_builds};
+use bots::config::{BotBuild, BotKnobs, Difficulty, Personality};
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use serde::ser::Serialize;
@@ -41,6 +41,9 @@ pub struct BuildSpec {
     #[serde(default)]
     pub weights: Table,
 }
+
+/// The `roster` value that names the server's embedded roster.
+const BUILTIN: &str = "builtin";
 
 fn default_difficulty() -> u32 {
     1500
@@ -93,23 +96,19 @@ impl BuildSpec {
     }
 }
 
-/// Where a file's builds come from: the default roster, a roster file
-/// (relative paths resolve against `base`), and inline specs, in this order.
+/// Where a file's builds come from: a roster file (relative paths resolve
+/// against `base`; `"builtin"` is the roster the server seats, embedded in the
+/// bots crate) and inline specs, in this order.
 pub fn resolve(
-    default_roster: bool,
     roster: Option<&Path>,
     specs: &[BuildSpec],
     base: &Path,
 ) -> Result<Vec<BotBuild>, String> {
-    let mut builds = if default_roster {
-        default_builds()
-    } else {
-        Vec::new()
+    let mut builds = match roster {
+        Some(path) if path == Path::new(BUILTIN) => bots::roster::builtin()?,
+        Some(path) => bots::roster::load(&base.join(path))?,
+        None => Vec::new(),
     };
-    if let Some(path) = roster {
-        let path: PathBuf = base.join(path);
-        builds.extend(bots::roster::load(&path)?);
-    }
     for spec in specs {
         builds.push(spec.build()?);
     }

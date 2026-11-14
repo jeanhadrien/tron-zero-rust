@@ -1,8 +1,8 @@
-# Baseline 1v1: every pair of the default roster in both seats, free-for-all
+# Baseline 1v1: every pair of the server roster in both seats, free-for-all
 # rules (respawn after 240 ticks, 3600-tick match = the server's bot cycle).
 seeds = 50
 quick_seeds = 6
-default_roster = true
+roster = "builtin"
 
 [[setup]]
 name = "1v1"

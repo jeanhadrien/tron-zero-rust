@@ -48,7 +48,6 @@ impl Bench {
             seeds: count,
             quick_seeds: None,
             first_seed: first,
-            default_roster: false,
             roster: None,
             tier: self.tier,
             extra_builds: Vec::new(),

@@ -19,9 +19,10 @@ const HORIZON_TICKS: [f32; 5] = [14.0, 32.0, 40.0, 52.0, 64.0];
 const VARIETY: [f32; 5] = [1.0, 1.6, 2.0, 2.7, 3.0];
 const NOISE: [f32; 5] = [0.70, 0.40, 0.28, 0.10, 0.0];
 
-/// Authoring preset: a point on the difficulty curve that expands into a
-/// coherent budget. Not stored on a bot, not rated, never shown; once
-/// expanded, the knobs are the bot.
+/// Authoring shorthand (`difficulty = N` in scenario and suite files): a
+/// point on the difficulty curve that expands into a coherent budget. Not
+/// stored on a bot, not rated, never shown; once expanded, the knobs are the
+/// bot. The bots the game seats are the roster file (`roster`), not this curve.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Difficulty(pub u32);
 
@@ -288,36 +289,19 @@ fn interp(values: &[f32; 5], level: u32) -> f32 {
     values[4]
 }
 
-/// The lab's reference pool (`default_roster = true`): the presets at graded
-/// difficulties. The server's roster is `roster::builtin`.
-pub fn default_builds() -> Vec<BotBuild> {
-    [
-        ("Bastion", Personality::Survivalist, 1000),
-        ("Chameleon", Personality::Adaptive, 1500),
-        ("Warden", Personality::Territorialist, 2000),
-        ("Rapier", Personality::Duelist, 2250),
-        ("Sentinelle", Personality::Trapper, 2500),
-    ]
-    .into_iter()
-    .map(|(name, personality, level)| {
-        BotBuild::from_difficulty(name, personality, Difficulty(level))
-    })
-    .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn rating_id_follows_name_personality_and_knobs() {
-        let build = BotBuild::from_difficulty("Sentinelle", Personality::Trapper, Difficulty(2500));
-        let same = BotBuild::from_difficulty("Sentinelle", Personality::Trapper, Difficulty(2500));
+        let build = BotBuild::from_difficulty("Probe", Personality::Trapper, Difficulty(2500));
+        let same = BotBuild::from_difficulty("Probe", Personality::Trapper, Difficulty(2500));
         assert_eq!(build.rating_id(), same.rating_id());
-        assert!(build.rating_id().starts_with("bot:Sentinelle:"));
+        assert!(build.rating_id().starts_with("bot:Probe:"));
 
         let other_personality =
-            BotBuild::from_difficulty("Sentinelle", Personality::Duelist, Difficulty(2500));
+            BotBuild::from_difficulty("Probe", Personality::Duelist, Difficulty(2500));
         assert_ne!(build.rating_id(), other_personality.rating_id());
 
         let mut tweaked = build.clone();
@@ -327,7 +311,7 @@ mod tests {
 
     #[test]
     fn roster_builds_have_distinct_names_and_identities() {
-        let builds = default_builds();
+        let builds = crate::roster::builtin().unwrap();
         let ids: std::collections::HashSet<_> = builds.iter().map(BotBuild::rating_id).collect();
         let names: std::collections::HashSet<_> = builds.iter().map(|b| &b.name).collect();
         assert_eq!(ids.len(), builds.len());

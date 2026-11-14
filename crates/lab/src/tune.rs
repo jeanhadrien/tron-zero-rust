@@ -6,7 +6,7 @@
 //!
 //! ```toml
 //! seeds = 4                   # seeds first_seed.. (default first_seed = 1)
-//! default_roster = true       # the pool: default roster, a roster file, [[pool]] builds
+//! roster = "builtin"          # the pool: a roster file or "builtin", [[pool]] builds, or both
 //!
 //! [base]                      # the build to start from, see `crate::builds`
 //! name = "Tuned"
@@ -62,8 +62,6 @@ struct File {
     base: BuildSpec,
     #[serde(rename = "param")]
     params: Vec<ParamSpec>,
-    #[serde(default)]
-    default_roster: bool,
     #[serde(default)]
     roster: Option<PathBuf>,
     #[serde(default, rename = "pool")]
@@ -173,12 +171,7 @@ impl Tune {
         if file.seeds == 0 || file.sweep.steps < 2 {
             return Err("seeds >= 1 and sweep.steps >= 2".into());
         }
-        let pool = builds::resolve(
-            file.default_roster,
-            file.roster.as_deref(),
-            &file.pool_builds,
-            dir,
-        )?;
+        let pool = builds::resolve(file.roster.as_deref(), &file.pool_builds, dir)?;
         let bench = Bench::new(file.setups, file.tier, pool)?;
         Ok(Self {
             seeds: (file.first_seed, file.seeds),

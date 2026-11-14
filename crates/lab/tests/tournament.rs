@@ -6,7 +6,19 @@ use tron_zero_lab::tournament::{self, Suite};
 
 const SUITE: &str = r#"
 seeds = 1
-default_roster = true
+
+[[build]]
+name = "a"
+bot = "adaptive"
+[[build]]
+name = "b"
+bot = "survivalist"
+[[build]]
+name = "c"
+bot = "duelist"
+[[build]]
+name = "d"
+bot = "trapper"
 
 [[setup]]
 name = "duel"
@@ -32,9 +44,9 @@ fn report_is_identical_for_one_and_many_threads() {
     let one = tournament::run(&suite, Some(1)).unwrap();
     let many = tournament::run(&suite, Some(4)).unwrap();
     assert_eq!(one.deterministic_json(), many.deterministic_json());
-    // Duel: C(5,2) pairs x 2 seats x 1 seed; the rounds setup plays 2 rounds each.
-    assert_eq!(one.setups[0].matches, 20);
-    assert_eq!(one.setups[1].matches, 30);
+    // Duel: C(4,2) pairs x 2 seats x 1 seed; the rounds setup plays C(4,3) lineups x 3 seats.
+    assert_eq!(one.setups[0].matches, 12);
+    assert_eq!(one.setups[1].matches, 12);
     assert!(one.setups[1].rows.iter().all(|r| r.win_rate.is_some()));
     assert!(one.setups[0].rows.iter().all(|r| r.win_rate.is_none()));
 }

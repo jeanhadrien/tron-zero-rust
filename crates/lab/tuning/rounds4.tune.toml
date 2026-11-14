@@ -1,5 +1,5 @@
 # Sweep a Duelist-like build for 4-rider last-standing rounds, against the
-# default roster: one parameter at a time, the others at the base, every
+# server roster: one parameter at a time, the others at the base, every
 # metric printed along the range. Small on purpose (a minute in release); scale
 # up seeds and sweep.steps for real work. A parameter whose metrics never move
 # is flagged DEAD.
@@ -7,7 +7,7 @@
 #   cargo run --release -p tron-zero-lab -- tune crates/lab/tuning/rounds4.tune.toml
 #   cargo run --release -p tron-zero-lab -- tune crates/lab/tuning/rounds4.tune.toml --out best.toml --json sweep.json
 seeds = 2               # seeds 1..=2 (first_seed to start elsewhere)
-default_roster = true   # opponents: the server's default roster
+roster = "builtin"       # opponents: the roster the server seats
 
 [base]
 name = "Tuned"

@@ -114,7 +114,6 @@ fn a_bot_builds_speed_to_run_a_rider_down() {
 
 const SUITE: &str = r#"
 seeds = 2
-default_roster = true
 
 [[build]]
 name = "weak"
@@ -168,7 +167,7 @@ fn bots_rarely_kill_themselves_and_better_bots_less() {
 
 const ROUNDS_SUITE: &str = r#"
 seeds = 2
-default_roster = true
+roster = "builtin"
 
 [[setup]]
 name = "rounds4"
@@ -181,20 +180,23 @@ last_standing = true
 time_limit = 3600
 "#;
 
-/// Rounds of last rider standing come to an end (the roster measures about 50%
-/// ending with a winner), and the riders stay in company and above base speed.
+/// Rounds of last rider standing come to an end (the ladder measures about 45%
+/// ending with a winner; the weakest rung idles most, about 25% overall), and
+/// the riders stay in company and above base speed.
 #[test]
 fn rounds_end_with_a_winner_and_riders_stay_in_company() {
-    let suite = Suite::parse(ROUNDS_SUITE).unwrap();
+    let mut suite = Suite::parse(ROUNDS_SUITE).unwrap();
+    // The difficulty ladder: the artist is measured by its own test.
+    suite.builds.truncate(5);
     let report = tournament::run(&suite, None).unwrap();
     let setup = &report.setups[0];
     let ended = f64::from(setup.rounds_played - setup.timeouts) / f64::from(setup.rounds_played);
-    assert!(ended >= 0.4, "only {ended} of the rounds ended");
+    assert!(ended >= 0.3, "only {ended} of the rounds ended");
     let mean = |pick: fn(&tournament::BuildRow) -> Option<f64>| {
         setup.rows.iter().filter_map(pick).sum::<f64>() / setup.rows.len() as f64
     };
     assert!(
-        mean(|r| r.idle_share) <= 0.2,
+        mean(|r| r.idle_share) <= 0.35,
         "idle {}",
         mean(|r| r.idle_share)
     );

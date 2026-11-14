@@ -8,8 +8,8 @@
 //! seeds = 20                  # matches per setup and lineup: seeds first..first+20
 //! quick_seeds = 3             # optional: seeds with `--quick` (default: seeds / 8)
 //! first_seed = 1              # optional
-//! default_roster = true       # start from bots::config::default_builds()
-//! roster = "ladder.toml"      # optional: a roster file (`lab ladder` output)
+//! roster = "builtin"          # optional: a roster file (`lab ladder` output), or "builtin":
+//!                             # the roster the server seats (bots/rosters/default.toml)
 //! tier = "full"               # optional: pin the bots' level of detail
 //!
 //! [[build]]                   # optional extra builds, see `crate::builds`
@@ -63,9 +63,7 @@ pub struct Suite {
     pub quick_seeds: Option<u64>,
     #[serde(default = "first_seed")]
     pub first_seed: u64,
-    #[serde(default)]
-    pub default_roster: bool,
-    /// A roster file, relative to the suite file.
+    /// A roster file, relative to the suite file, or `"builtin"`.
     #[serde(default)]
     pub roster: Option<PathBuf>,
     #[serde(default)]
@@ -112,14 +110,9 @@ impl Suite {
     /// Parse a suite whose roster file is relative to `base`.
     pub fn parse_in(text: &str, base: &Path) -> Result<Self, String> {
         let mut suite: Self = toml::from_str(text).map_err(|e| e.to_string())?;
-        suite.builds = builds::resolve(
-            suite.default_roster,
-            suite.roster.as_deref(),
-            &suite.extra_builds,
-            base,
-        )?;
+        suite.builds = builds::resolve(suite.roster.as_deref(), &suite.extra_builds, base)?;
         if suite.builds.is_empty() {
-            return Err("no builds: set default_roster, roster or add [[build]]".into());
+            return Err("no builds: set roster or add [[build]]".into());
         }
         if suite.seeds == 0 {
             return Err("give seeds >= 1".into());

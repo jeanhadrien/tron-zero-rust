@@ -2,7 +2,7 @@
 # today's rules. The level of detail follows the rider count, as on the server.
 seeds = 100
 quick_seeds = 10
-default_roster = true
+roster = "builtin"
 
 [[setup]]
 name = "ffa8"

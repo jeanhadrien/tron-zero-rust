@@ -2,7 +2,7 @@
 # 3600-tick match = the server's bot cycle).
 seeds = 50
 quick_seeds = 6
-default_roster = true
+roster = "builtin"
 
 [[setup]]
 name = "ffa4"

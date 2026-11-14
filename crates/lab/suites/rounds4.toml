@@ -2,7 +2,7 @@
 # A round ends with one rider alive (or none) or after 3600 ticks.
 seeds = 40
 quick_seeds = 2
-default_roster = true
+roster = "builtin"
 
 [[setup]]
 name = "rounds4"

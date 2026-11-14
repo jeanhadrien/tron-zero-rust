@@ -246,7 +246,8 @@ scenario's `bot_build`) zeroes them: use it as the reference opponent.
 `puzzles/intercept.toml` has a scripted straight rider the duelist must cut
 off. `puzzles/hunt.toml` starts the bot beside a straight rider's trail: it must
 grind to speed, pass the rider and cut it off (only the duelist at D4000 does).
-`suites/fight.toml` runs each preset and Passive in 1v1 rounds.
+`suites/fight.toml` runs each personality (all at difficulty 2000) and Passive in
+1v1 rounds.
 
 Speed, rubber and heat (phase 4): `grind` is the speed a line earns riding
 beside trails and walls (`bots::grind`, the sim's own constants; the bot's own
@@ -293,7 +294,7 @@ cargo run -p tron-zero-lab -- crates/lab/scenarios/rounds.toml --seed 7
 
 `lab tournament <suite.toml>` plays bot builds against each other and prints
 one markdown table per setup. A suite (format in `crates/lab/src/tournament.rs`)
-lists builds (`default_roster = true` for the lab's reference pool, `bots::config::default_builds`,
+lists builds (`roster = "builtin"` for the bots the server seats, or a roster file;
 plus `[[build]]` entries with personality, difficulty and knob overrides),
 setups (rider count, `[setup.match]` rules, arena, optional `tier` pin) and a
 seed count. Each setup plays every lineup of builds over every seed, with each
@@ -345,7 +346,8 @@ A suite build is `name`, `bot` (personality, any case), optional `difficulty`
 `bots::config::BotKnobs`) and `[build.weights]` (any weight of
 `bots::objective::Weights`). Knobs and weights are matched by name against the
 bots crate's serde form, so a weight added or renamed there works in suites
-with no lab change; an unknown name is an error. `roster = "file.toml"` adds a
+with no lab change; an unknown name is an error. `roster = "file.toml"` (or
+`"builtin"`, the roster the server seats) adds a
 roster file (see "Ladder").
 
 The last section, decision cost (mean and p99 microseconds per `Brain::think`),
@@ -470,9 +472,10 @@ label and are at most 16 characters), renamed by hand. `bots::roster::builtin`
 embeds it, so the binary needs no file; `BOT_ROSTER=path` loads another one.
 `tests/roster.rs` checks that each rung beats the one below. After a brain
 change that moves strengths, regenerate the rungs and rename them.
-`default_builds()` (preset personalities at preset difficulties) stays as the
-lab's reference pool (`default_roster = true`), and `difficulty = N` stays the
-authoring vocabulary of scenarios and suites.
+The lab measures builds from roster files (`roster = "builtin"` is this one);
+`difficulty = N` (`bots::config::Difficulty`) stays only as the shorthand of
+scenarios, puzzles and suites for a budget curve, and as the weakest end
+(`degrade_to`) of a ladder. No bot is defined twice.
 
 Tests: `cargo nextest run -p tron-zero-shared` (unit, property and rollback tests) and
 `cargo nextest run -p tron-zero-lab` (mechanics assertions + golden traces for every

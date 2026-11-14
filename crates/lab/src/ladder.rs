@@ -16,7 +16,7 @@
 //!                             # better), or "duels": round-robin of the candidates
 //! name = "Cadet"              # rungs are "Cadet 1" (weakest) .. "Cadet 5"
 //! degrade_to = 500            # authoring preset whose budget is the weakest end
-//! default_roster = true       # pool, as in a tune file
+//! roster = "builtin"          # pool, as in a tune file (not played by "duels")
 //!
 //! [degrade]                   # optional: weakest value of single knobs
 //! noise = 0.9
@@ -62,8 +62,6 @@ struct File {
     #[serde(default)]
     tier: Option<TierPin>,
     base: BuildSpec,
-    #[serde(default)]
-    default_roster: bool,
     #[serde(default)]
     roster: Option<PathBuf>,
     #[serde(default, rename = "pool")]
@@ -141,12 +139,7 @@ impl Ladder {
             knobs.push((name, best.clone(), worst));
         }
         let check = file.check_seeds.unwrap_or(file.seeds);
-        let pool = builds::resolve(
-            file.default_roster,
-            file.roster.as_deref(),
-            &file.pool_builds,
-            dir,
-        )?;
+        let pool = builds::resolve(file.roster.as_deref(), &file.pool_builds, dir)?;
         let bench = Bench::new(file.setups, file.tier, pool)?;
         if !bench.setups()[0].rules.end.last_standing {
             return Err("the first setup needs last_standing rules (head-to-head checks)".into());

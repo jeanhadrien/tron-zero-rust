@@ -13,7 +13,7 @@ candidates = 11         # degradation steps measured (>= rungs)
 strength = "duels"      # round robin of the candidates, head to head
 name = "Cadet"
 degrade_to = 500        # authoring preset whose budget is the weakest end
-default_roster = true   # the pool; "duels" does not play it
+roster = "builtin"      # the pool; "duels" does not play it
 
 [degrade]              # past the presets: a bot that blunders often
 reaction_ticks = 36
