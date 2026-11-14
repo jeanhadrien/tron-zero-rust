@@ -1,0 +1,36 @@
+# A difficulty ladder from one strong build, measured against the default
+# roster in 4-rider last-standing rounds. Small on purpose (about a minute in
+# release); for a real ladder raise `seeds`, `check_seeds`, `candidates`, `rungs`.
+#
+#   cargo run --release -p tron-zero-lab -- ladder crates/lab/tuning/rounds4.ladder.toml --out ladder.toml
+#
+# `ladder.toml` is a roster file (bots::roster): list it as `roster = "ladder.toml"`
+# in a suite to play the rungs against each other.
+seeds = 2               # strength measurement: seeds 1..=2
+check_seeds = 4         # head-to-heads: seeds 100000..=100003
+rungs = 3               # builds in the output
+candidates = 6          # degradation steps measured (>= rungs)
+strength = "win_rate"   # any metric of tournament::METRICS
+name = "Cadet"          # rungs are named "Cadet 1" (weakest) .. "Cadet 3"
+degrade_to = 500        # authoring preset whose budget is the weakest end
+default_roster = true   # the reference pool
+
+# [degrade]             # optional: weakest value of single knobs
+# noise = 0.9
+
+[base]
+name = "Ace"
+bot = "trapper"
+difficulty = 4000
+
+[[setup]]
+name = "rounds4"
+riders = 4
+
+[setup.match]
+respawn = "never"
+rounds = 5
+
+[setup.match.end]
+last_standing = true
+time_limit = 3600

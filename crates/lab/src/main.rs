@@ -25,7 +25,9 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use glam::Vec2;
+use tron_zero_lab::ladder::Ladder;
 use tron_zero_lab::tournament::{self, Suite};
+use tron_zero_lab::tune::Tune;
 use tron_zero_lab::{Lab, PALETTE, Scenario, View, render};
 
 struct Args {
@@ -259,13 +261,125 @@ fn run_tournament(mut raw: impl Iterator<Item = String>) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
+/// Flags shared by `tune` and `ladder`: one file, `--threads`, `--json`,
+/// `--out`, and `--sweep` where the caller allows it.
+struct SearchArgs {
+    file: PathBuf,
+    threads: Option<usize>,
+    json: Option<PathBuf>,
+    out: Option<PathBuf>,
+    sweep: bool,
+}
+
+fn search_args(
+    mut raw: impl Iterator<Item = String>,
+    usage: &str,
+    sweep_allowed: bool,
+) -> Result<SearchArgs, String> {
+    let mut args = SearchArgs {
+        file: PathBuf::new(),
+        threads: None,
+        json: None,
+        out: None,
+        sweep: false,
+    };
+    while let Some(arg) = raw.next() {
+        match arg.as_str() {
+            "--threads" => {
+                let value = raw.next().and_then(|v| v.parse().ok());
+                args.threads = Some(value.ok_or("--threads expects a number")?);
+            }
+            "--json" => args.json = Some(raw.next().ok_or("--json expects a path")?.into()),
+            "--out" => args.out = Some(raw.next().ok_or("--out expects a path")?.into()),
+            "--sweep" if sweep_allowed => args.sweep = true,
+            flag if flag.starts_with("--") => return Err(format!("unknown option {flag}")),
+            path if args.file.as_os_str().is_empty() => args.file = path.into(),
+            extra => return Err(format!("unexpected argument {extra:?}")),
+        }
+    }
+    if args.file.as_os_str().is_empty() {
+        return Err(usage.into());
+    }
+    Ok(args)
+}
+
+fn write(path: &Path, text: &str) -> Result<(), String> {
+    std::fs::write(path, text).map_err(|e| format!("{}: {e}", path.display()))
+}
+
+fn print(text: &str) -> Result<(), String> {
+    io::stdout()
+        .lock()
+        .write_all(text.as_bytes())
+        .map_err(|e| e.to_string())
+}
+
+/// `lab tune <tune.toml> [--sweep] [--threads N] [--json PATH] [--out PATH]`:
+/// search the parameters of a build (see `tron_zero_lab::tune`). `--out`
+/// receives the best build as a roster entry.
+fn run_tune(raw: impl Iterator<Item = String>) -> Result<(), String> {
+    let usage = "usage: lab tune <tune.toml> [--sweep] [--threads N] [--json PATH] [--out PATH]";
+    let args = search_args(raw, usage, true)?;
+    let tune = Tune::load(&args.file)?;
+    if args.sweep {
+        let report = tune.sweep(args.threads)?;
+        if let Some(path) = &args.json {
+            let text = serde_json::to_string_pretty(&report).map_err(|e| e.to_string())?;
+            write(path, &text)?;
+        }
+        return print(&report.markdown());
+    }
+    let report = tune.search(args.threads)?;
+    if let Some(path) = &args.json {
+        let text = serde_json::to_string_pretty(&report).map_err(|e| e.to_string())?;
+        write(path, &text)?;
+    }
+    if let Some(path) = &args.out {
+        write(path, &report.build)?;
+    }
+    print(&report.markdown())
+}
+
+/// `lab ladder <ladder.toml> [--threads N] [--json PATH] [--out PATH]`:
+/// build a difficulty ladder (see `tron_zero_lab::ladder`). `--out` receives
+/// the roster file; without it the roster is printed after the report.
+fn run_ladder(raw: impl Iterator<Item = String>) -> Result<(), String> {
+    let usage = "usage: lab ladder <ladder.toml> [--threads N] [--json PATH] [--out PATH]";
+    let args = search_args(raw, usage, false)?;
+    let report = Ladder::load(&args.file)?.run(args.threads)?;
+    let roster = report.roster()?;
+    if let Some(path) = &args.json {
+        let text = serde_json::to_string_pretty(&report.json()).map_err(|e| e.to_string())?;
+        write(path, &text)?;
+    }
+    print(&report.markdown())?;
+    match &args.out {
+        Some(path) => write(path, &roster),
+        None => print(&format!(
+            "
+```toml
+{roster}```
+"
+        )),
+    }
+}
+
 fn main() -> ExitCode {
     let mut raw = std::env::args().skip(1).peekable();
-    let result = if raw.peek().is_some_and(|a| a == "tournament") {
-        raw.next();
-        run_tournament(raw)
-    } else {
-        parse_args().and_then(run)
+    let result = match raw.peek().map(String::as_str) {
+        Some("tournament") => {
+            raw.next();
+            run_tournament(raw)
+        }
+        Some("tune") => {
+            raw.next();
+            run_tune(raw)
+        }
+        Some("ladder") => {
+            raw.next();
+            run_ladder(raw)
+        }
+        _ => parse_args().and_then(run),
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,

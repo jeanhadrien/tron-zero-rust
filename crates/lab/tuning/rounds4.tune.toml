@@ -1,0 +1,66 @@
+# Tune a Duelist-like build for 4-rider last-standing rounds, against the
+# default roster. Small on purpose (a few minutes in release); scale up
+# train_seeds, holdout_seeds, search.generations and sweep.steps for real work.
+#
+#   cargo run --release -p tron-zero-lab -- tune crates/lab/tuning/rounds4.tune.toml --sweep
+#   cargo run --release -p tron-zero-lab -- tune crates/lab/tuning/rounds4.tune.toml --out tuned.toml --json history.json
+seed = 1                # search seed
+train_seeds = 2         # the search scores builds on seeds 1..=2
+holdout_seeds = 4       # the winner is re-scored on seeds 100000..=100003
+default_roster = true   # opponents: the server's default roster
+
+[base]
+name = "Tuned"
+bot = "duelist"
+difficulty = 2250
+
+# Any knob (reaction_ticks, horizon_ticks, variety, noise) or weight
+# (space, pressure, risk, ...) by name; ranges are yours to choose.
+[[param]]
+name = "pressure"
+min = 0.0
+max = 4.0
+
+[[param]]
+name = "risk"
+min = 0.0
+max = 0.6
+
+[[param]]
+name = "engage"
+min = 0.0
+max = 2.0
+
+[[param]]
+name = "horizon_ticks"
+min = 20
+max = 64
+
+# Fitness = weighted sum of tournament metrics (see tournament::METRICS):
+# reward rounds won, penalize idling, rubber-zone time and own-fault deaths
+# (wall and own trail, per round). Penalties are negative weights.
+[fitness]
+win_rate = 1.0
+idle_share = -0.5
+rubber_share = -0.5
+own_deaths_per_round = -0.3
+
+[sweep]
+steps = 3
+
+[search]
+population = 5
+generations = 3
+sigma = 0.25
+
+[[setup]]
+name = "rounds4"
+riders = 4
+
+[setup.match]
+respawn = "never"
+rounds = 5
+
+[setup.match.end]
+last_standing = true
+time_limit = 3600

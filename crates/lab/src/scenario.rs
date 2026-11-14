@@ -56,7 +56,7 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use bots::config::{BotBuild, Difficulty, KnobOverrides, Personality};
+use bots::config::{BotBuild, Difficulty, KnobOverrides};
 use bots::schedule::Tier;
 use glam::Vec2;
 use serde::Deserialize;
@@ -249,16 +249,7 @@ pub fn bot_build(
     difficulty: u32,
     knobs: &KnobOverrides,
 ) -> Result<BotBuild, String> {
-    let personality = match bot.to_ascii_lowercase().as_str() {
-        "survivalist" => Personality::Survivalist,
-        "trapper" => Personality::Trapper,
-        "adaptive" => Personality::Adaptive,
-        "territorialist" => Personality::Territorialist,
-        "duelist" => Personality::Duelist,
-        "roamer" => Personality::Roamer,
-        "passive" => Personality::Passive,
-        other => return Err(format!("{name}: unknown bot {other:?}")),
-    };
+    let personality = crate::builds::personality(bot).map_err(|e| format!("{name}: {e}"))?;
     let mut set = Difficulty(difficulty).knobs();
     knobs.apply(&mut set);
     Ok(BotBuild::new(name, personality, set))

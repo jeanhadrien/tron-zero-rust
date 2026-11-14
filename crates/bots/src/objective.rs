@@ -5,6 +5,8 @@
 //! [`Weights`], one entry in each `values` array and one line in the planner
 //! that measures it. Every term is "higher is better": losses are negative.
 
+use serde::{Deserialize, Serialize};
+
 /// How many terms there are; the length of both `values` arrays.
 pub const TERM_COUNT: usize = 12;
 
@@ -78,7 +80,7 @@ impl Terms {
 }
 
 /// How much a bot cares about each term. Same order as [`Terms::values`].
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Weights {
     pub space: f32,
     pub pocket: f32,

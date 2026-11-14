@@ -8,14 +8,17 @@
 //! seeds = 20                  # matches per setup and lineup: seeds first..first+20
 //! first_seed = 1              # optional
 //! default_roster = true       # start from bots::config::default_builds()
+//! roster = "ladder.toml"      # optional: a roster file (`lab ladder` output)
 //! tier = "full"               # optional: pin the bots' level of detail
 //!
-//! [[build]]                   # optional extra builds, as scenario riders
+//! [[build]]                   # optional extra builds, see `crate::builds`
 //! name = "Tuned"
 //! bot = "trapper"
 //! difficulty = 2500
 //! [build.knobs]
 //! noise = 0.0
+//! [build.weights]
+//! pressure = 3.0
 //!
 //! [[setup]]
 //! name = "ffa4"
@@ -36,14 +39,16 @@
 //! thread count (the `timing` part aside, it is wall-clock).
 
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-use bots::config::{BotBuild, KnobOverrides, default_builds};
+use bots::config::{BotBuild, KnobOverrides};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use shared::{MatchRules, RoundEnd, TICK_HZ};
 
-use crate::scenario::{RiderSpec, Scenario, TierPin, bot_build};
+use crate::builds::{self, BuildSpec};
+use crate::pattern;
+use crate::scenario::{RiderSpec, Scenario, TierPin};
 use crate::sim::{EventKind, Lab};
 
 #[derive(Debug, Deserialize)]
@@ -55,6 +60,9 @@ pub struct Suite {
     pub first_seed: u64,
     #[serde(default)]
     pub default_roster: bool,
+    /// A roster file, relative to the suite file.
+    #[serde(default)]
+    pub roster: Option<PathBuf>,
     #[serde(default)]
     pub tier: Option<TierPin>,
     #[serde(default, rename = "build")]
@@ -70,22 +78,7 @@ fn first_seed() -> u64 {
     1
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct BuildSpec {
-    pub name: String,
-    pub bot: String,
-    #[serde(default = "default_difficulty")]
-    pub difficulty: u32,
-    #[serde(default)]
-    pub knobs: KnobOverrides,
-}
-
-fn default_difficulty() -> u32 {
-    1500
-}
-
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SetupSpec {
     pub name: String,
@@ -101,40 +94,32 @@ pub struct SetupSpec {
 impl Suite {
     pub fn load(path: &Path) -> Result<Self, String> {
         let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
-        Self::parse(&text).map_err(|e| format!("{}: {e}", path.display()))
+        let base = path.parent().unwrap_or(Path::new(""));
+        Self::parse_in(&text, base).map_err(|e| format!("{}: {e}", path.display()))
     }
 
+    /// Parse a suite whose roster file, if any, is relative to the current
+    /// directory.
     pub fn parse(text: &str) -> Result<Self, String> {
+        Self::parse_in(text, Path::new(""))
+    }
+
+    /// Parse a suite whose roster file is relative to `base`.
+    pub fn parse_in(text: &str, base: &Path) -> Result<Self, String> {
         let mut suite: Self = toml::from_str(text).map_err(|e| e.to_string())?;
-        if suite.default_roster {
-            suite.builds = default_builds();
-        }
-        for spec in &suite.extra_builds {
-            let build = bot_build(&spec.name, &spec.bot, spec.difficulty, &spec.knobs)?;
-            suite.builds.push(build);
-        }
-        let mut names = std::collections::HashSet::new();
+        suite.builds = builds::resolve(
+            suite.default_roster,
+            suite.roster.as_deref(),
+            &suite.extra_builds,
+            base,
+        )?;
         if suite.builds.is_empty() {
-            return Err("no builds: set default_roster or add [[build]]".into());
+            return Err("no builds: set default_roster, roster or add [[build]]".into());
         }
-        if let Some(build) = suite.builds.iter().find(|b| !names.insert(b.name.as_str())) {
-            return Err(format!("duplicate build name {:?}", build.name));
+        if suite.seeds == 0 {
+            return Err("give seeds >= 1".into());
         }
-        if suite.seeds == 0 || suite.setups.is_empty() {
-            return Err("give seeds >= 1 and at least one [[setup]]".into());
-        }
-        for setup in &suite.setups {
-            setup.rules.validate()?;
-            if setup.riders < 2 {
-                return Err(format!("{}: riders must be at least 2", setup.name));
-            }
-            if setup.rules.end.time_limit.is_none() {
-                return Err(format!(
-                    "{}: tournament setups need a time_limit",
-                    setup.name
-                ));
-            }
-        }
+        check_setups(&suite.setups)?;
         Ok(suite)
     }
 
@@ -146,12 +131,33 @@ impl Suite {
     }
 }
 
+/// Check what the TOML types cannot: at least one setup, valid rules, at
+/// least two riders and a time limit (tournament matches must end).
+pub fn check_setups(setups: &[SetupSpec]) -> Result<(), String> {
+    if setups.is_empty() {
+        return Err("give at least one [[setup]]".into());
+    }
+    for setup in setups {
+        setup.rules.validate()?;
+        if setup.riders < 2 {
+            return Err(format!("{}: riders must be at least 2", setup.name));
+        }
+        if setup.rules.end.time_limit.is_none() {
+            return Err(format!(
+                "{}: tournament setups need a time_limit",
+                setup.name
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// One match to play: a setup, a spawn seed and who sits where.
-struct Game {
-    setup: usize,
-    seed: u64,
+pub struct Game {
+    pub setup: usize,
+    pub seed: u64,
     /// Build index per seat.
-    seats: Vec<usize>,
+    pub seats: Vec<usize>,
 }
 
 /// Which builds sit in which seats: every subset of `n` builds (or the whole
@@ -211,6 +217,10 @@ struct SeatResult {
     rubber_ticks: u64,
     speed_sum: f64,
     lifetimes: Vec<u32>,
+    /// Length of the legs that belong to a repeated motif, and of the whole
+    /// path ridden (see `pattern`).
+    pattern_len: f64,
+    ridden_len: f64,
     think_nanos: Vec<u32>,
 }
 
@@ -262,6 +272,8 @@ fn play(suite: &Suite, game: &Game) -> GameResult {
     let mut lab = Lab::with_seed(&scenario, game.seed);
     lab.run(scenario.until, 0);
 
+    let names: Vec<String> = (0..game.seats.len()).map(seat_name).collect();
+    let patterned = pattern::covered_by_rider(lab.events(), &names);
     let seat_of = |name: &str| name.strip_prefix('s').and_then(|n| n.parse::<usize>().ok());
     let mut seats: Vec<SeatResult> = game
         .seats
@@ -269,6 +281,8 @@ fn play(suite: &Suite, game: &Game) -> GameResult {
         .zip(lab.stats().into_iter().zip(lab.think_nanos()))
         .enumerate()
         .map(|(seat, (&build, (stats, nanos)))| SeatResult {
+            pattern_len: patterned[seat],
+            ridden_len: stats.speed_sum * f64::from(shared::BASE_SPEED) / TICK_HZ,
             build,
             rounds: lab.rounds().len() as u32,
             wins: lab
@@ -343,6 +357,8 @@ struct Totals {
     rubber_ticks: u64,
     speed_sum: f64,
     lifetimes: Vec<u32>,
+    pattern_len: f64,
+    ridden_len: f64,
 }
 
 /// Metrics of one build in one setup. Rates are `None` when undefined.
@@ -351,6 +367,8 @@ pub struct BuildRow {
     pub build: String,
     /// Rounds played (matches, for a one-round setup).
     pub rounds: u32,
+    /// Rounds won (counted for last-rider-standing setups only).
+    pub wins: u32,
     /// Share of rounds won; only for last-rider-standing setups.
     pub win_rate: Option<f64>,
     pub kills_per_min: Option<f64>,
@@ -367,6 +385,53 @@ pub struct BuildRow {
     pub idle_share: Option<f64>,
     pub rubber_share: Option<f64>,
     pub mean_speed: Option<f64>,
+    /// Share of the ridden path that is a repeated motif (see `pattern`).
+    pub pattern: Option<f64>,
+}
+
+/// Metric names `BuildRow::metric` knows, in table order.
+pub const METRICS: [&str; 12] = [
+    "win_rate",
+    "kills_per_min",
+    "self_kill_share",
+    "own_deaths_per_round",
+    "direct_deaths_per_round",
+    "forced_deaths_per_round",
+    "median_life_ticks",
+    "idle_share",
+    "rubber_share",
+    "mean_speed",
+    "pattern",
+    "rounds",
+];
+
+impl BuildRow {
+    /// A metric by name (see `METRICS`); `None` when undefined in the setup
+    /// or unknown. `own_deaths_per_round` counts wall and own-trail deaths.
+    pub fn metric(&self, name: &str) -> Option<f64> {
+        match name {
+            "win_rate" => self.win_rate,
+            "kills_per_min" => self.kills_per_min,
+            "self_kill_share" => self.self_kill_share,
+            "own_deaths_per_round" => ratio(
+                f64::from(self.deaths_wall + self.deaths_own_trail),
+                f64::from(self.rounds),
+            ),
+            "direct_deaths_per_round" => {
+                ratio(f64::from(self.deaths_trail), f64::from(self.rounds))
+            }
+            "forced_deaths_per_round" => {
+                ratio(f64::from(self.deaths_forced), f64::from(self.rounds))
+            }
+            "median_life_ticks" => self.median_life_ticks,
+            "idle_share" => self.idle_share,
+            "rubber_share" => self.rubber_share,
+            "mean_speed" => self.mean_speed,
+            "pattern" => self.pattern,
+            "rounds" => Some(f64::from(self.rounds)),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -430,16 +495,26 @@ fn quantile(sorted: &[u32], q: f64) -> f64 {
     f64::from(sorted[rank - 1])
 }
 
-/// Play the whole suite on `threads` threads (`None`: one per core).
-pub fn run(suite: &Suite, threads: Option<usize>) -> Result<Report, String> {
-    let pool = rayon::ThreadPoolBuilder::new()
+/// A pool of `threads` threads (`None`: one per core).
+pub fn thread_pool(threads: Option<usize>) -> Result<rayon::ThreadPool, String> {
+    rayon::ThreadPoolBuilder::new()
         .num_threads(threads.unwrap_or(0))
         .build()
-        .map_err(|e| e.to_string())?;
-    let games = games(suite);
+        .map_err(|e| e.to_string())
+}
+
+/// Play the whole suite on `threads` threads (`None`: one per core).
+pub fn run(suite: &Suite, threads: Option<usize>) -> Result<Report, String> {
+    let pool = thread_pool(threads)?;
+    pool.install(|| run_games(suite, &games(suite)))
+}
+
+/// Play `games` on the current rayon pool (the caller `install`s one) and
+/// report them like a suite run. `games` index into `suite.builds` and
+/// `suite.setups`.
+pub fn run_games(suite: &Suite, games: &[Game]) -> Result<Report, String> {
     // Indexed collect keeps game order, so folding below is thread-independent.
-    let results: Vec<GameResult> =
-        pool.install(|| games.par_iter().map(|game| play(suite, game)).collect());
+    let results: Vec<GameResult> = games.par_iter().map(|game| play(suite, game)).collect();
 
     let m = suite.builds.len();
     let mut totals: Vec<Vec<Totals>> = (0..suite.setups.len())
@@ -469,6 +544,8 @@ pub fn run(suite: &Suite, threads: Option<usize>) -> Result<Report, String> {
             t.rubber_ticks += seat.rubber_ticks;
             t.speed_sum += seat.speed_sum;
             t.lifetimes.extend(seat.lifetimes);
+            t.pattern_len += seat.pattern_len;
+            t.ridden_len += seat.ridden_len;
             for (victim, n) in seat.kills_on {
                 kills[game.setup][seat.build][victim] += n;
                 t.kills += n;
@@ -494,6 +571,7 @@ pub fn run(suite: &Suite, threads: Option<usize>) -> Result<Report, String> {
                     BuildRow {
                         build: build.name.clone(),
                         rounds: t.rounds,
+                        wins: if last_standing { t.wins } else { 0 },
                         win_rate: last_standing
                             .then(|| ratio(f64::from(t.wins), f64::from(t.rounds)))
                             .flatten(),
@@ -507,6 +585,7 @@ pub fn run(suite: &Suite, threads: Option<usize>) -> Result<Report, String> {
                         idle_share: ratio(t.idle_ticks as f64, alive),
                         rubber_share: ratio(t.rubber_ticks as f64, alive),
                         mean_speed: ratio(t.speed_sum, alive),
+                        pattern: ratio(t.pattern_len, t.ridden_len),
                     }
                 })
                 .collect();
@@ -526,7 +605,7 @@ pub fn run(suite: &Suite, threads: Option<usize>) -> Result<Report, String> {
         .collect();
 
     let timing = Timing {
-        threads: pool.current_num_threads(),
+        threads: rayon::current_num_threads(),
         builds: suite
             .builds
             .iter()
@@ -584,12 +663,12 @@ impl Report {
                 );
             }
             out += &format!(
-                "| build | {rounds} | win | kills/min | wall | own trail | direct | forced | self-kill | median life | idle | rubber | speed |\n"
+                "| build | {rounds} | win | kills/min | wall | own trail | direct | forced | self-kill | median life | idle | rubber | speed | pattern |\n"
             );
-            out += "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n";
+            out += "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n";
             for r in &setup.rows {
                 out += &format!(
-                    "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
+                    "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |\n",
                     r.build,
                     r.rounds,
                     pct(r.win_rate),
@@ -603,6 +682,7 @@ impl Report {
                     pct(r.idle_share),
                     pct(r.rubber_share),
                     num(r.mean_speed, 3),
+                    pct(r.pattern),
                 );
             }
             out += "\nKills, direct and forced (row killed column):\n\n| |";

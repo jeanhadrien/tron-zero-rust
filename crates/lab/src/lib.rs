@@ -8,12 +8,17 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)] // dev harness: fail fast on bad input
 
+pub mod bench;
+pub mod builds;
 pub mod forced;
+pub mod ladder;
+pub mod pattern;
 pub mod render;
 pub mod scenario;
 pub mod sim;
 pub mod stats;
 pub mod tournament;
+pub mod tune;
 
 pub use render::{PALETTE, View, render};
 pub use scenario::Scenario;
