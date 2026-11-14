@@ -1,6 +1,12 @@
 # Notes
 
-Open feature ideas, not committed work. Neither exists in the code today.
+Open feature ideas, not committed work. None exists in the code today.
+
+## Bot CPU budget
+
+- The load tiers (`[tuning.tiers]`) and the search budget (`verify_top`, `race_top`, `reply_top`) are CPU budgets, yet they sit in the roster's tuning, hashed into every bot's rating id.
+- Extract them into one budget piece: a cost model per decision and a per-tick budget the server owns (it knows its hardware), separate from what defines a bot.
+- Open: a budget that changes with the machine makes the same rated bot play differently across servers; decide whether ratings should care.
 
 ## Audio
 

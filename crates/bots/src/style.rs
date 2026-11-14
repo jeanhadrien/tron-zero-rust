@@ -16,6 +16,7 @@ use shared::rotate_left;
 
 use crate::objective::Weights;
 use crate::plan::{Action, Kind, Maneuver, Turn};
+use crate::tuning::Artist;
 
 const L: Action = Action::Left;
 const R: Action = Action::Right;
@@ -25,19 +26,15 @@ const R: Action = Action::Right;
 /// against a wall.)
 const CYCLES: [&[Action]; 2] = [&[R, L], &[L, R, R, L]];
 
-/// What a figure turned the other way costs in rating: a wall may ask for it,
-/// but the figure as laid is preferred.
-const MIRROR_COST: f32 = 0.25;
-
-/// A leg this much (units) off the stride still counts as on it: turns are
-/// tick-quantized.
-const SLACK: f32 = 6.0;
-
 /// The figure a build rides.
 #[derive(Clone, Copy, Debug)]
 pub struct Figure {
     cycle: &'static [Action],
     stride: f32,
+    /// What the figure turned the other way costs in rating: a wall may ask
+    /// for it, but the figure as laid is preferred. A leg `slack` units off
+    /// the stride still counts as on it: turns are tick-quantized.
+    rating: Artist,
 }
 
 /// Where the bot is in its figure.
@@ -51,10 +48,11 @@ pub struct Progress {
 
 impl Figure {
     /// The figure of `weights`, `None` for a bot without style.
-    pub fn of(weights: &Weights) -> Option<Self> {
+    pub fn of(weights: &Weights, rating: &Artist) -> Option<Self> {
         (weights.style > 0.0).then(|| Self {
             cycle: CYCLES[(weights.motif.round().max(0.0) as usize).min(CYCLES.len() - 1)],
             stride: weights.stride.max(30.0),
+            rating: *rating,
         })
     }
 
@@ -140,7 +138,7 @@ impl Figure {
         if turns.is_empty() {
             // Riding on: right while the leg is short, wrong once it is overdue.
             let end = progress.leg + horizon as f32 * step;
-            let over = (end - self.stride - SLACK).max(0.0);
+            let over = (end - self.stride - self.rating.slack).max(0.0);
             return if over == 0.0 {
                 0.5
             } else {
@@ -149,7 +147,7 @@ impl Figure {
         }
         let as_laid = self.rate_turns(progress, turns, step, false);
         let mirrored = self.rate_turns(progress, turns, step, true);
-        as_laid.max(mirrored - MIRROR_COST)
+        as_laid.max(mirrored - self.rating.mirror_cost)
     }
 
     /// The mean rating of `turns`, against the cycle or its mirror image.
@@ -163,7 +161,8 @@ impl Figure {
             let wanted = self.cycle[(progress.next + j) % self.cycle.len()];
             let wanted = if mirror { flip(wanted) } else { wanted };
             let side = if turn.action == wanted { 1.0 } else { -1.0 };
-            let miss = ((leg - self.stride).abs() - SLACK).max(0.0) / (0.5 * self.stride);
+            let miss =
+                ((leg - self.stride).abs() - self.rating.slack).max(0.0) / (0.5 * self.stride);
             total += 0.5 * side + 0.5 * (1.0 - 2.0 * miss.min(1.0));
             leg = 0.0;
         }
@@ -190,7 +189,8 @@ mod tests {
             motif: 0.0,
             ..Weights::BASE
         };
-        Figure::of(&weights).unwrap()
+        let tuning = crate::roster::builtin_tuning().unwrap();
+        Figure::of(&weights, &tuning.artist).unwrap()
     }
 
     fn turn(at: u32, action: Action) -> Maneuver {

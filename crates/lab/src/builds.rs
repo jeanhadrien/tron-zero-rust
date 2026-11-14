@@ -17,7 +17,8 @@
 //! Knobs and weights are matched by name against the serde form of the bots
 //! crate's types, so a knob or weight added or renamed there needs no change
 //! here. Roster files (`bots::roster`) are the same shape with every knob and
-//! weight written out.
+//! weight written out, plus the planner `[tuning]` shared by their builds;
+//! builds written inline run with the built-in roster's tuning.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -70,11 +71,13 @@ fn merged<T: Serialize + DeserializeOwned>(
 }
 
 impl BuildSpec {
+    /// The build, with the planner tuning of the built-in roster.
     pub fn build(&self) -> Result<BotBuild, String> {
         let mut knobs: BotKnobs = merged(&Difficulty(self.difficulty).knobs(), &self.knobs, "knob")
             .map_err(|e| format!("{}: {e}", self.name))?;
         knobs.clamp();
-        let mut build = BotBuild::new(&self.name, self.bot, knobs);
+        let tuning = bots::roster::builtin_tuning()?;
+        let mut build = BotBuild::new(&self.name, self.bot, knobs, tuning);
         build.weights = merged(&build.weights, &self.weights, "weight")
             .map_err(|e| format!("{}: {e}", self.name))?;
         Ok(build)
@@ -201,6 +204,24 @@ fn number(value: &Value) -> String {
     }
 }
 
+/// `number` for any value: arrays and inline tables of numbers too.
+fn text(value: &Value) -> String {
+    match value {
+        Value::Array(items) => {
+            let items: Vec<String> = items.iter().map(text).collect();
+            format!("[{}]", items.join(", "))
+        }
+        Value::Table(table) => {
+            let items: Vec<String> = table
+                .iter()
+                .map(|(name, value)| format!("{name} = {}", text(value)))
+                .collect();
+            format!("{{ {} }}", items.join(", "))
+        }
+        other => number(other),
+    }
+}
+
 /// A build as a `[[build]]` entry with every knob and weight written out:
 /// valid in rosters and suites (rename the array to `pool` for tune and
 /// ladder files).
@@ -220,11 +241,24 @@ pub fn roster_entry(build: &BotBuild) -> Result<String, String> {
     Ok(out)
 }
 
-/// A whole roster file.
+/// A whole roster file: the tuning its builds share, then the builds.
 pub fn roster_file(builds: &[BotBuild], header: &str) -> Result<String, String> {
+    let tuning = builds.first().ok_or("a roster needs a build")?.tuning;
+    if builds.iter().any(|b| b.tuning != tuning) {
+        return Err("the builds of a roster must share one tuning".into());
+    }
     let mut out = String::new();
     for line in header.lines() {
         out += &format!("# {line}\n");
+    }
+    for (section, value) in Table::try_from(tuning).map_err(|e| e.to_string())? {
+        out += &format!("\n[tuning.{section}]\n");
+        let Value::Table(table) = value else {
+            return Err(format!("tuning.{section} is not a table"));
+        };
+        for (name, value) in table {
+            out += &format!("{name} = {}\n", text(&value));
+        }
     }
     for build in builds {
         out += &format!("\n{}", roster_entry(build)?);

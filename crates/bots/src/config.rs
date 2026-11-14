@@ -9,6 +9,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::objective::Weights;
+use crate::tuning::Tuning;
 
 /// Anchors of the authoring curve. `Difficulty::knobs` interpolates between them.
 const DIFFICULTY_ANCHORS: [u32; 5] = [500, 1000, 1500, 2500, 4000];
@@ -61,9 +62,12 @@ pub struct BotKnobs {
 }
 
 impl BotKnobs {
-    /// Stable 32-bit FNV-1a hash of the personality, its weights and every
-    /// knob. Two builds with the same hash are the same bot, wherever they run.
-    fn fingerprint(&self, personality: Personality, weights: &Weights) -> u32 {
+    /// Stable 32-bit FNV-1a hash of the personality, its weights, every knob
+    /// and the planner tuning. Two builds with the same hash are the same bot,
+    /// wherever they run.
+    fn fingerprint(&self, personality: Personality, weights: &Weights, tuning: &Tuning) -> u32 {
+        // The tuning in its file form: every value with its key.
+        let tuning = toml::to_string(tuning).unwrap_or_default();
         let knobs = [
             self.reaction_ticks,
             self.horizon_ticks,
@@ -82,6 +86,7 @@ impl BotKnobs {
             .bytes()
             .chain(knobs.iter().flat_map(|word| word.to_le_bytes()))
             .chain(weights.iter().flat_map(|word| word.to_le_bytes()))
+            .chain(tuning.bytes())
             .fold(0x811c_9dc5_u32, |hash, byte| {
                 (hash ^ u32::from(byte)).wrapping_mul(0x0100_0193)
             })
@@ -95,9 +100,11 @@ impl BotKnobs {
     }
 }
 
-/// What defines a bot: a name, a personality and its budget. The name is both
-/// its display name in game and its label on the leaderboard.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+/// What defines a bot: a name, a personality, its budget and the planner
+/// tuning it runs with. The name is both its display name in game and its
+/// label on the leaderboard. In a roster file the tuning is written once for
+/// all builds (`roster`).
+#[derive(Clone, Debug)]
 pub struct BotBuild {
     pub name: String,
     pub personality: Personality,
@@ -105,15 +112,22 @@ pub struct BotBuild {
     /// The objective weights. Start from the personality's; a tuned build
     /// carries its own.
     pub weights: Weights,
+    pub tuning: Tuning,
 }
 
 impl BotBuild {
-    pub fn new(name: impl Into<String>, personality: Personality, knobs: BotKnobs) -> Self {
+    pub fn new(
+        name: impl Into<String>,
+        personality: Personality,
+        knobs: BotKnobs,
+        tuning: Tuning,
+    ) -> Self {
         Self {
             name: name.into(),
             personality,
             knobs,
             weights: personality.weights(),
+            tuning,
         }
     }
 
@@ -122,20 +136,22 @@ impl BotBuild {
         name: impl Into<String>,
         personality: Personality,
         difficulty: Difficulty,
+        tuning: Tuning,
     ) -> Self {
-        Self::new(name, personality, difficulty.knobs())
+        Self::new(name, personality, difficulty.knobs(), tuning)
     }
 
     /// Stable identity of this build in the rating pool:
-    /// `bot:<name>:<fingerprint of personality, weights and knobs>`. Every
-    /// instance of the build shares one rating, which starts like any
-    /// newcomer's and is measured. Renaming or retuning a build makes it a new
-    /// rated bot.
+    /// `bot:<name>:<fingerprint of personality, weights, knobs and tuning>`.
+    /// Every instance of the build shares one rating, which starts like any
+    /// newcomer's and is measured. Renaming or retuning a build, or changing
+    /// the planner tuning, makes it a new rated bot.
     pub fn rating_id(&self) -> String {
         format!(
             "bot:{}:{:08x}",
             self.name.replace(':', "-"),
-            self.knobs.fingerprint(self.personality, &self.weights)
+            self.knobs
+                .fingerprint(self.personality, &self.weights, &self.tuning)
         )
     }
 }
@@ -255,19 +271,21 @@ mod tests {
     use super::*;
 
     #[test]
-    fn rating_id_follows_name_personality_and_knobs() {
-        let build = BotBuild::from_difficulty("Probe", Personality::Trapper, Difficulty(2500));
-        let same = BotBuild::from_difficulty("Probe", Personality::Trapper, Difficulty(2500));
-        assert_eq!(build.rating_id(), same.rating_id());
+    fn rating_id_follows_name_personality_knobs_and_tuning() {
+        let tuning = crate::roster::builtin_tuning().unwrap();
+        let probe = |p| BotBuild::from_difficulty("Probe", p, Difficulty(2500), tuning);
+        let build = probe(Personality::Trapper);
+        assert_eq!(build.rating_id(), probe(Personality::Trapper).rating_id());
         assert!(build.rating_id().starts_with("bot:Probe:"));
-
-        let other_personality =
-            BotBuild::from_difficulty("Probe", Personality::Duelist, Difficulty(2500));
-        assert_ne!(build.rating_id(), other_personality.rating_id());
+        assert_ne!(build.rating_id(), probe(Personality::Duelist).rating_id());
 
         let mut tweaked = build.clone();
         tweaked.knobs.reaction_ticks += 1;
         assert_ne!(build.rating_id(), tweaked.rating_id());
+
+        let mut retuned = build.clone();
+        retuned.tuning.engage.range += 1.0;
+        assert_ne!(build.rating_id(), retuned.rating_id());
     }
 
     #[test]

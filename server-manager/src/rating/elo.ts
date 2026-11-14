@@ -23,7 +23,7 @@ export function expected(ra: number, rb: number): number {
   return 1 / (1 + 10 ** ((rb - ra) / C.scale));
 }
 
-/** Bot ids are `bot:<personality>:<skill>`; humans are `acct:<uuid>`. */
+/** Bot ids are `bot:<name>:<fingerprint>`; humans are `acct:<uuid>`. */
 export const isBotId = (id: string): boolean => id.startsWith('bot:');
 
 /** Per-rider K: large while provisional, small once settled. Bots have their own, slower curve. */

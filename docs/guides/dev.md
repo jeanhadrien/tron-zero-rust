@@ -465,9 +465,17 @@ knobs move survival more than winning), `-name` flips a metric where lower is
 better. `duel.ladder.toml` also degrades past the presets (`[degrade]`), because
 rungs close to each other do not separate in a quick check.
 
-The output is a roster file (`bots::roster`: `[[build]]` entries with
-personality, every knob and every weight). The lab reads it with
-`roster = "ladder.toml"` in a suite or a pool.
+The output is a roster file (`bots::roster`: the planner `[tuning]` shared by
+its builds, then `[[build]]` entries with personality, every knob and every
+weight). The lab reads it with `roster = "ladder.toml"` in a suite or a pool.
+
+Roster `[tuning]` (`bots::tuning`) holds the planner's global constants: room
+and safety, search budget, engagement, targeting, bold lines and cuts, lanes,
+round heat, the artist's rating, and the load tiers (riders alive from which
+every bot plans with a shorter horizon, less variety and a smaller flood).
+Every key is required and read as written. It is part of every build's rating
+id. Builds written inline in a suite, scenario, tune or ladder file run with
+the built-in roster's tuning.
 
 The server's roster is `crates/bots/rosters/default.toml`: the five rungs of the
 last `duel.ladder.toml` run, weakest first (`Wisp (Novice)`, `Drifter (Easy)`,

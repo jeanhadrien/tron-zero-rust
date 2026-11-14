@@ -23,9 +23,14 @@ serves every bot. Used by the server (real games) and the lab (measurement).
   A weak bot misjudges distances and room; it never acts at random.
 - **Personality = weight vector** (`objective::Weights`) over named terms.
   A new goal is one field in `Terms`, one in `Weights`, one line in the planner.
-- **A bot = `BotBuild`** (name, personality, knobs, weights). Rosters are TOML
-  files of builds; `rosters/default.toml` is the game's roster, embedded by
-  `roster::builtin` (five difficulty rungs and the artist Escher).
+- **A bot = `BotBuild`** (name, personality, knobs, weights, tuning). Rosters
+  are TOML files: one `[tuning]` (`tuning::Tuning`, the planner's global
+  constants, every key required) shared by their `[[build]]`s;
+  `rosters/default.toml` is the game's roster, embedded by `roster::builtin`
+  (five difficulty rungs and the artist Escher).
+- A tuned number of the planner lives in `Tuning`, never as a `const`. Consts
+  stay for structure only: grid and buffer sizes, `MAX_TURNS`, the reply set,
+  the artist's cycles, and the lab's authoring curve and personality presets.
 
 ## Map
 
@@ -33,7 +38,7 @@ serves every bot. Used by the server (real games) and the lab (measurement).
 - `objective.rs` — `Terms`, `Weights`, round heat. `config.rs` — knobs, personalities, the `difficulty = N` authoring curve.
 - `space.rs` — timed flood fill of reachable room. `race.rs` — who reaches which territory first. `grind.rs` — speed earned beside trails and walls.
 - `forecast.rs` — the best candidates verified with the real `step_riders`. `style.rs` — the artist's figure.
-- `drive.rs` — one tick of decisions for a set of brains. `schedule.rs` — decision cadence and level-of-detail `Tier`. `noise.rs` — seeded misjudgment. `world.rs` — the snapshot.
+- `drive.rs` — one tick of decisions for a set of brains. `schedule.rs` — decision cadence and level-of-detail `Tier` (thresholds and limits in `tuning.rs`). `noise.rs` — seeded misjudgment. `world.rs` — the snapshot.
 
 ## Known limits (do not rediscover)
 
@@ -50,4 +55,4 @@ serves every bot. Used by the server (real games) and the lab (measurement).
   and the gates in `crates/lab/tests/gates.rs`. See `../lab/AGENTS.md`.
 - Change a weight or constant for a measured reason, check the figure it should
   move, and stop after three attempts without a clear gain.
-- Changing knobs or weights of a roster build changes its rating id.
+- Changing knobs or weights of a roster build, or the roster's `[tuning]`, changes its rating id.

@@ -82,12 +82,14 @@ question). The rules above do not change if it is added.
 
 ### Bots
 
-- A bot is a hardcoded build: a name, a personality (objective weights) and a
-  set of named budget knobs (reaction, horizon, variety, noise). The name
-  is its display name in game and on the leaderboard.
-- Its rating identity is `bot:<name>:<fingerprint of personality and knobs>`:
-  **one shared rating per identity**, however many instances run. Renaming or
-  retuning a build makes it a new bot with a new rating.
+- A bot is a build from a roster file: a name, a personality (objective
+  weights), a set of named budget knobs (reaction, horizon, variety, noise) and
+  the planner tuning the file's builds share. The name is its display name in
+  game and on the leaderboard.
+- Its rating identity is `bot:<name>:<fingerprint of personality, weights,
+  knobs and tuning>`: **one shared rating per identity**, however many
+  instances run. Renaming or retuning a build, or changing the roster's
+  tuning, makes it a new bot with a new rating.
 - Bots carry no declared skill. A new bot identity starts at the same rating as
   a newcomer (1500); the pool measures where it really belongs. Bots are chosen
   for a lobby by measured rating.
