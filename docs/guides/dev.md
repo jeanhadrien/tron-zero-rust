@@ -301,7 +301,17 @@ score:
 - idle share: alive ticks with no living enemy within `IDLE_RANGE`
   (`crates/lab/src/stats.rs`) and the nearest enemy not getting closer;
 - rubber share: alive ticks in the rubber zone; mean speed multiplier;
+- pattern: share of the ridden path that is a repeated motif, see
+  "Pattern score" below;
 - a kill matrix (row killed column); a mutual head-on counts a kill for both.
+
+A suite build is `name`, `bot` (personality, any case), optional `difficulty`
+(the authoring preset its knobs start from), `[build.knobs]` (any knob of
+`bots::config::BotKnobs`) and `[build.weights]` (any weight of
+`bots::objective::Weights`). Knobs and weights are matched by name against the
+bots crate's serde form, so a weight added or renamed there works in suites
+with no lab change; an unknown name is an error. `roster = "file.toml"` adds a
+roster file (see "Ladder").
 
 The last section, decision cost (mean and p99 microseconds per `Brain::think`),
 is wall-clock and depends on the machine and the thread count: never compare
@@ -311,6 +321,91 @@ Baseline suites live in `crates/lab/suites/` (1v1, FFA with 4 and 8 riders under
 today's rules, and 4-rider last rider standing over 5 rounds); a release run of
 all four takes a couple of minutes. To prove a bot change, run the same suite
 before and after and compare the columns that the change targets.
+
+### Pattern score (the `pattern` column)
+
+JH's idea of fun includes bots that draw repeatable shapes with their trails.
+`crates/lab/src/pattern.rs` scores it from the turn events of each life:
+
+- A path is a sequence of legs: the turn side (left or right) and the length
+  ridden before the next turn. A life's first turn only sets the heading and
+  the leg after the last turn is unfinished, so neither is a leg.
+- A stretch of legs is patterned when, for a period `p` of 1 to 4 legs, each
+  leg has the side of the leg `p` before it and the length difference to that
+  leg stays the same from one leg to the next (within 15 units + 10%). Zero
+  difference is a repeated motif (staircase `L R L R`, zigzag, square wave
+  `L R R L`); a constant nonzero difference is a growing one (square spiral:
+  always left, legs +60 each). It must run for two periods (three if it
+  grows, since two legs always form a progression).
+- Score = length of the patterned legs / length of the whole path ridden
+  (alive ticks x speed, so a straight life, a single turn or a random walk
+  score near 0 and a clean staircase or spiral near 1). Summed over lives and
+  rounds, not averaged per life.
+
+It is a proxy. It does not see shapes drawn by more than 4 distinct legs,
+mirrored or rotated repeats of a bigger figure, curves of many small legs
+that vary by more than the tolerance, or whether the pattern is worth looking
+at; U-turns count as two ordinary turns with a short leg. Wandering bots land
+around 0.05 to 0.1 by chance; compare builds, not absolute values.
+
+### Tune (searching a build's knobs and weights)
+
+`lab tune <tune.toml>` searches the parameters of one build for a game setup.
+The file (format in `crates/lab/src/tune.rs`, example in
+`crates/lab/tuning/rounds4.tune.toml`) names the base build, the parameters to
+search with their ranges (any knob or weight, by bare name), the setups, the
+reference pool, two seed sets and the fitness: a weighted sum of tournament
+metrics (`win_rate`, `kills_per_min`, `suicide_share`, `own_deaths_per_round`,
+`median_life_ticks`, `idle_share`, `rubber_share`, `mean_speed`, `pattern`),
+penalties being negative weights. The candidate always plays; its seat rotates
+and the other seats take a window of the pool that moves with the seed.
+
+```
+cargo run --release -p tron-zero-lab -- tune crates/lab/tuning/rounds4.tune.toml --sweep
+cargo run --release -p tron-zero-lab -- tune crates/lab/tuning/rounds4.tune.toml --out tuned.toml --json history.json
+```
+
+- `--sweep` moves one parameter at a time over its range (`[sweep] steps`),
+  the others at the base, and prints every metric along it. A parameter whose
+  every metric stays identical is flagged DEAD (a knob that does nothing in
+  this setup, or whose range is too small).
+- Without `--sweep` it runs a seeded CMA-ES (the `cmaes` crate) over all
+  parameters in a unit cube (`[search]`: population, generations, `sigma`).
+  Whole-number knobs are rounded; identical builds are scored once. The winner
+  and the base are scored on the train seeds and on the held-out seeds, both
+  printed: a big gap between them is overfitting. `--out` writes the best
+  build as a `[[build]]` entry with every knob and weight (paste it in a suite,
+  or in a roster file); `--json` writes the full history.
+- Fitness is deterministic for a build and a seed set. The search is
+  reproducible from `seed` and gives the same result on any `--threads`.
+- Cost is about population x generations x (train seeds x riders) matches of
+  `rounds` rounds each: the example takes 2-3 minutes in release. For real
+  work try `train_seeds = 8..16`, `holdout_seeds = 16+`, `generations = 20+`;
+  few seeds make a noisy fitness that the search will happily overfit. Rounds
+  that time out count in `idle_share` and `win_rate` like any other.
+
+### Ladder (generated difficulty rungs)
+
+`lab ladder <ladder.toml>` (format in `crates/lab/src/ladder.rs`, example in
+`crates/lab/tuning/rounds4.ladder.toml`) degrades one build along its budget
+knobs, from itself to the weakest budget (`degrade_to`, an authoring preset;
+`[degrade]` overrides single knobs), in `candidates` steps. Each step is
+measured against the reference pool (`strength` = any tournament metric,
+default `win_rate`), `rungs` of them are picked evenly spaced in measured
+strength, and every pair of rungs plays head to head (both seats, `check_seeds`
+seeds, the first setup's rules with two riders) to check that each higher rung
+wins more rounds than each lower one. The report says whether the ladder is
+monotonic; the roster is written either way.
+
+```
+cargo run --release -p tron-zero-lab -- ladder crates/lab/tuning/rounds4.ladder.toml --out ladder.toml
+```
+
+The output is a roster file (`bots::roster`: `[[build]]` entries with
+personality, every knob and every weight). The lab reads it with
+`roster = "ladder.toml"` in a suite or a pool. The server does not load it yet;
+its roster is still `default_builds()` (see `crates/server/src/bot/mod.rs`,
+`setup_bots`).
 
 Tests: `cargo nextest run -p tron-zero-shared` (unit, property and rollback tests) and
 `cargo nextest run -p tron-zero-lab` (mechanics assertions + golden traces for every
