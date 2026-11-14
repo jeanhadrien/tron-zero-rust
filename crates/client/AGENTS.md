@@ -21,7 +21,7 @@ same code. Lib + bin: logic stays in the lib so `nettest` can run the real app.
 - `connection` (lifecycle, readiness, autoconnect, quit), `input/` (keyboard queue, `TurnOutbox` redundant delivery), `look` (rider color/shape, sent as `SetLook`).
 - `menu`, `settings`, `browser`, `config` (UI, bindings, room list, preferences), `chat`, `account` (manager account, ranked tickets, rating), `local_scan`.
 - `theme` — design tokens; new UI uses them.
-- `render/` — arena, trails, riders, `shape`, `smooth` (render pose), `fx`, `layers`, camera, HUD, `death`, `round` (rounds bar and banners), bot `debug`.
+- `render/` — arena, trails, riders, `shape`, `smooth` (render pose), `fx`, `layers`, camera, HUD, `death`, `round` (round bar and banners), `scoreboard` (held Tab, end screen), bot `debug`.
 - `sim` — latency simulator (`TRON_SIM_*`), the only `rand` user besides the first-launch look.
 
 ## Rules
