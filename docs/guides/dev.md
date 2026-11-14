@@ -116,7 +116,7 @@ Server environment variables (read once at start; `MAX_PLAYERS`, `PORT`, `WEB_PO
 | `ROUND_SECS` | Round time limit in seconds (default 90; `0` = no limit). |
 | `INTERMISSION_SECS` | Break between rounds, and before round 1 (default 3). |
 | `FINAL_INTERMISSION_SECS` | Break showing the final standings (default 8). |
-| `BOT_ROSTER` | Path of a roster file (see § Ladder) to seat instead of the built-in one, `crates/bots/rosters/default.toml` (embedded at build time: five difficulty rungs and the artists). One bot per build; logged at `info!` at start; an invalid file stops the server. |
+| `BOT_ROSTER` | Path of a roster file (see § Ladder) to seat instead of the built-in one, `crates/bots/rosters/default.toml` (embedded at build time: five difficulty rungs and the artist Escher). One bot per build; logged at `info!` at start; an invalid file stops the server. |
 
 **How the simulation works.** Lightyear's link conditioner only delays what a
 peer *receives*, so a client-only conditioner would shape just the server ->

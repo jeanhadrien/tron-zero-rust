@@ -36,7 +36,7 @@ The server runs the **rounds mode** (5 rounds, last rider standing; `GAME_MODE`,
 `ROUNDS`, `ROUND_SECS`, `INTERMISSION_SECS`, `FINAL_INTERMISSION_SECS`, see
 `docs/specs/rounds-mode.md`). Set `GAME_MODE=ffa` before running the script for
 the endless free-for-all. The bots are the built-in roster (five difficulty rungs
-`Wisp (Novice)` to `Apex (Expert)`, plus the artists); `BOT_ROSTER=path` seats the
+`Wisp (Novice)` to `Apex (Expert)`, plus the artist `Escher (Artist)`); `BOT_ROSTER=path` seats the
 builds of another roster file instead (`docs/guides/dev.md` § Ladder). A bare `cargo run -p tron-zero-server` is
 free-for-all. If a round is already running when you join, you wait for the
 next one. No lobby involved. `set TRON_SIM_LATENCY_MS=0` first to remove the simulated
