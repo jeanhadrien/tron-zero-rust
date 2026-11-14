@@ -1,0 +1,12 @@
+# A local server listed on the Cloud Run lobby (`scripts/dev-cloud.bat`).
+# Every key is required; see `src/config.rs`.
+
+[server]
+name = "JH dev"
+max_players = 10
+
+[game]
+mode = "ffa"
+
+[bots]
+roster = "builtin"

@@ -32,13 +32,14 @@ scripts\play-local.bat            # or: scripts\play-local.bat release  (Linux/m
 ```
 
 Server with bots + a client that joins by itself with a simulated 20 ms ping.
-The server runs the **rounds mode** (5 rounds, last rider standing; `GAME_MODE`,
-`ROUNDS`, `ROUND_SECS`, `INTERMISSION_SECS`, `FINAL_INTERMISSION_SECS`, see
-`docs/specs/rounds-mode.md`). Set `GAME_MODE=ffa` before running the script for
-the endless free-for-all. The bots are the built-in roster (five difficulty rungs
-`Wisp (Novice)` to `Apex (Expert)`, plus the artist `Escher (Artist)`); `BOT_ROSTER=path` seats the
-builds of another roster file instead (`docs/guides/dev.md` § Ladder). A bare `cargo run -p tron-zero-server` is
-free-for-all. If a round is already running when you join, you wait for the
+The server runs the **rounds mode** (5 rounds, last rider standing) from
+`crates/server/config/local.toml` (see `docs/specs/rounds-mode.md`). Set
+`SERVER_CONFIG` to another config file before running the script, e.g.
+`crates/server/config/official.toml` for the endless free-for-all. The bots are
+the built-in roster (five difficulty rungs `Wisp (Novice)` to `Apex (Expert)`,
+plus the artist `Escher (Artist)`); `bots.roster` in a config file seats the
+builds of another roster file instead (`docs/guides/dev.md` § Ladder). A bare
+`cargo run -p tron-zero-server` runs the official config (free-for-all). If a round is already running when you join, you wait for the
 next one. No lobby involved. `set TRON_SIM_LATENCY_MS=0` first to remove the simulated
 ping. Restart on save instead: `bacon server` and `bacon client` (see `docs/guides/dev.md`).
 
@@ -77,14 +78,14 @@ the desktop client and `https://play.tronzero.dev` on this PC both list it
 and can join it.
 
 ```
-scripts\dev-cloud.bat "JH dev"
+scripts\dev-cloud.bat            # room "JH dev" (crates/server/config/dev-cloud.toml); or pass another config file
 ```
 
 To let **friends** join a server on your PC instead: forward UDP 5000 and
 5001 on your router to this PC, then start the server with
 `MANAGER_URL=https://server-manager.tronzero.dev`,
-`ADVERTISED_HOST=<your public IP>` and `SERVER_NAME=<name>` (no
-`ALLOW_LOOPBACK_ANNOUNCE`). More in `docs/guides/release.md`.
+`ADVERTISED_HOST=<your public IP>` and `SERVER_CONFIG=<a config file with your
+room name>` (no `ALLOW_LOOPBACK_ANNOUNCE`). More in `docs/guides/release.md`.
 
 ### 5. The production server on GCP
 

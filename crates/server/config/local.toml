@@ -1,0 +1,16 @@
+# Local play (`scripts/play-local.*`): rounds mode with the built-in bots.
+# Copy this file to try other settings; every key is required.
+
+[server]
+name = "Local"
+max_players = 10
+
+[game]
+mode = "rounds"
+rounds = 5
+round_secs = 90
+intermission_secs = 3
+final_intermission_secs = 8
+
+[bots]
+roster = "builtin"

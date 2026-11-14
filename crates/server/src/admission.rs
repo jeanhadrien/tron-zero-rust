@@ -18,7 +18,7 @@ use crate::ranked::{AccountId, RankedMode, RankedState, TicketClaims, now_ms, ve
 use crate::session::SessionLease;
 use crate::systems::{Human, spawn_human};
 
-/// Human capacity, from `MAX_PLAYERS`. Bots do not count against it: they
+/// Human capacity, from `server.max_players` in the config file. Bots do not count against it: they
 /// are a fixed roster, so counting them would make capacity flicker as they
 /// die and respawn.
 #[derive(Resource, Debug, Clone, Copy)]

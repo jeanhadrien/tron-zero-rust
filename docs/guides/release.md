@@ -41,12 +41,12 @@ machine, so it must be reachable from the internet:
    ```
    set MANAGER_URL=https://server-manager.tronzero.dev
    set ADVERTISED_HOST=<your-public-ip>
-   set SERVER_NAME=JH dev
-   set MAX_PLAYERS=10
+   set SERVER_CONFIG=crates\server\config\dev-cloud.toml
    cargo run --release -p tron-zero-server
    ```
-   The full variable list (`PORT`, `MAX_PLAYERS`, `ADVERTISED_PORT`, ...) is in
-   `docs/guides/building.md`. The transport is not authenticated or encrypted yet, so
+   The room name and capacity are in the config file (copy one to rename the
+   room). The full variable and key list (`PORT`, `ADVERTISED_PORT`,
+   `server.max_players`, ...) is in `docs/guides/building.md`. The transport is not authenticated or encrypted yet, so
    treat a public server as a friends-only convenience.
 4. Sanity: `curl https://server-manager.tronzero.dev/api/rooms` should list
    your room with the public host. Friends Refresh in-game and Connect.

@@ -40,7 +40,7 @@ impl TestServer {
         Self::build(port, None, None, impairment)
     }
 
-    /// A server in rounds mode (what `GAME_MODE=rounds` selects in production).
+    /// A server in rounds mode (what `mode = "rounds"` selects in production).
     pub fn with_rounds(port: u16, rules: shared::MatchRules, impairment: Impairment) -> Self {
         Self::build(port, None, Some(rules), impairment)
     }
@@ -112,7 +112,7 @@ impl TestServer {
         query.iter(world).map(|id| id.0.clone()).collect()
     }
 
-    /// Cap the number of human riders (what `MAX_PLAYERS` does in production).
+    /// Cap the number of human riders (what `server.max_players` does in production).
     pub fn set_max_players(&mut self, max: u32) {
         self.app
             .world_mut()

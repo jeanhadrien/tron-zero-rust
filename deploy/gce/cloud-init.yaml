@@ -1,8 +1,9 @@
 #cloud-config
 # Container-Optimized OS boot config for a Tron Zero game server VM.
 # Pulls the server image from Artifact Registry and runs it under systemd.
-# Instance metadata (set by create-vm.sh) provides the image and room settings;
-# the advertised host is the VM's current external IP, read at every start, so
+# Instance metadata (set by create-vm.sh) provides the image and the manager;
+# the room and game settings are the official config built into the image
+# (crates/server/config/official.toml). The advertised host is the VM's current external IP, read at every start, so
 # no reserved (billed) static IP is needed. COS runs cloud-init on every boot,
 # so a VM restart picks up changes to this file.
 
@@ -34,8 +35,6 @@ write_files:
         exec /usr/bin/docker run --rm --name tron-zero --network host \
           --memory 1536m --memory-swap 1536m \
           -e ADVERTISED_HOST="$ip" \
-          -e SERVER_NAME="$(md attributes/tron-server-name)" \
-          -e MAX_PLAYERS="$(md attributes/tron-max-players)" \
           -e MANAGER_URL="$manager" \
           -e RANKED_IDENTITY=gcp \
           -e RUST_LOG=info \

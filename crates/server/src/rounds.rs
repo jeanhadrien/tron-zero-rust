@@ -1,7 +1,7 @@
 //! Rounds mode: last rider standing per round, over a fixed number of rounds.
 //!
-//! The server has this mode when [`MatchState`] exists (`GAME_MODE=rounds`,
-//! see [`rules_from_env`]); without it the game is the free-for-all. The state
+//! The server has this mode when [`MatchState`] exists (`mode = "rounds"` in
+//! the server config, see `config`); without it the game is the free-for-all. The state
 //! machine is `shared::MatchFlow`; the system [`advance_match`] applies its
 //! decisions to the world: it retires and places riders, keeps the scores and
 //! publishes the replicated [`MatchStatus`]. Nothing here is read by
@@ -9,20 +9,13 @@
 
 use bevy::prelude::*;
 use lightyear::prelude::*;
-use shared::match_rules::secs_to_ticks;
 use shared::spawn::{SpawnField, placed};
 use shared::{
-    DisplayName, EndRules, IsAlive, IsColliding, IsSliding, LifeGeneration, MatchFlow, MatchRules,
-    MatchStatus, MatchStep, Player, Respawn, Rubber, ShouldHandleDeath, SpeedMult, TargetSpeedMult,
-    Trail,
+    DisplayName, IsAlive, IsColliding, IsSliding, LifeGeneration, MatchFlow, MatchRules,
+    MatchStatus, MatchStep, Player, Rubber, ShouldHandleDeath, SpeedMult, TargetSpeedMult, Trail,
 };
 
 use crate::systems::{Human, InitialSpawn};
-
-const DEFAULT_ROUNDS: u32 = 5;
-const DEFAULT_ROUND_SECS: u32 = 90;
-const DEFAULT_INTERMISSION_SECS: u32 = 3;
-const DEFAULT_FINAL_INTERMISSION_SECS: u32 = 8;
 
 /// Round wins of a rider, this match. Server-only; clients get the names and
 /// totals through [`MatchStatus::standings`].
@@ -69,43 +62,6 @@ impl MatchState {
             standings: Vec::new(),
         }
     }
-}
-
-/// Read the game mode from the environment: `GAME_MODE` is `ffa` (default,
-/// `None`) or `rounds`, tuned by `ROUNDS`, `ROUND_SECS` (0: no time limit),
-/// `INTERMISSION_SECS` and `FINAL_INTERMISSION_SECS`. An invalid value is an
-/// error: the server must not silently run another mode than asked.
-pub fn rules_from_env(get: &dyn Fn(&str) -> Option<String>) -> Result<Option<MatchRules>, String> {
-    match get("GAME_MODE").as_deref().map(str::trim) {
-        None | Some("") | Some("ffa") => return Ok(None),
-        Some("rounds") => {}
-        Some(other) => return Err(format!("GAME_MODE must be ffa or rounds, got {other:?}")),
-    }
-    let number = |key: &str, default: u32| match get(key).as_deref().map(str::trim) {
-        None | Some("") => Ok(default),
-        Some(raw) => raw
-            .parse::<u32>()
-            .map_err(|_| format!("{key} must be a whole number, got {raw:?}")),
-    };
-    let round_secs = number("ROUND_SECS", DEFAULT_ROUND_SECS)?;
-    let rules = MatchRules {
-        respawn: Respawn::Never,
-        end: EndRules {
-            time_limit: (round_secs > 0).then(|| secs_to_ticks(round_secs)),
-            last_standing: true,
-        },
-        rounds: number("ROUNDS", DEFAULT_ROUNDS)?,
-        intermission: secs_to_ticks(number("INTERMISSION_SECS", DEFAULT_INTERMISSION_SECS)?),
-        final_intermission: secs_to_ticks(number(
-            "FINAL_INTERMISSION_SECS",
-            DEFAULT_FINAL_INTERMISSION_SECS,
-        )?),
-    };
-    rules.validate()?;
-    if rules.intermission == 0 || rules.final_intermission == 0 {
-        return Err("intermissions must last at least 1 second".into());
-    }
-    Ok(Some(rules))
 }
 
 /// Run the match one tick, apply what it decided and publish the status.
@@ -257,7 +213,7 @@ fn publish_status(world: &mut World) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use shared::MatchPhase;
+    use shared::{EndRules, MatchPhase, Respawn};
 
     fn rules(rounds: u32, limit: Option<u32>) -> MatchRules {
         MatchRules {
@@ -270,37 +226,6 @@ mod tests {
             intermission: 3,
             final_intermission: 5,
         }
-    }
-
-    #[test]
-    fn mode_comes_from_the_environment() {
-        let env = |pairs: &'static [(&'static str, &'static str)]| {
-            move |key: &str| {
-                pairs
-                    .iter()
-                    .find(|(k, _)| *k == key)
-                    .map(|(_, v)| (*v).to_owned())
-            }
-        };
-        assert_eq!(rules_from_env(&env(&[])), Ok(None));
-        assert_eq!(rules_from_env(&env(&[("GAME_MODE", "ffa")])), Ok(None));
-        let rules = rules_from_env(&env(&[("GAME_MODE", "rounds")]))
-            .unwrap()
-            .unwrap();
-        assert_eq!(rules.rounds, 5);
-        assert_eq!(rules.end.time_limit, Some(secs_to_ticks(90)));
-        assert_eq!(rules.intermission, secs_to_ticks(3));
-        let custom = rules_from_env(&env(&[
-            ("GAME_MODE", "rounds"),
-            ("ROUNDS", "7"),
-            ("ROUND_SECS", "0"),
-        ]))
-        .unwrap()
-        .unwrap();
-        assert_eq!((custom.rounds, custom.end.time_limit), (7, None));
-        assert!(rules_from_env(&env(&[("GAME_MODE", "tdm")])).is_err());
-        assert!(rules_from_env(&env(&[("GAME_MODE", "rounds"), ("ROUNDS", "0")])).is_err());
-        assert!(rules_from_env(&env(&[("GAME_MODE", "rounds"), ("ROUNDS", "x")])).is_err());
     }
 
     /// A world with an arena and `n` riders (the first is a human), match

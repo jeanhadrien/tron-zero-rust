@@ -1,5 +1,5 @@
 # The bots a server seats by default (embedded in the server at build time;
-# BOT_ROSTER=path loads another file instead). Five difficulty rungs, weakest
+# `bots.roster` in a server config file loads another file instead). Five difficulty rungs, weakest
 # first, each named with its label. Generated with
 #   cargo run --release -p tron-zero-lab -- ladder crates/lab/tuning/duel.ladder.toml --threads 4 --out ladder.toml
 # (a round robin of 1v1 rounds, then a head-to-head check of every pair on

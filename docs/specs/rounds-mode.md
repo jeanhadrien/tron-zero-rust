@@ -9,17 +9,20 @@ lab), replicated state `shared::MatchStatus`, client overlay
 
 ## Selecting the mode
 
-The server reads its environment at start; an invalid value stops it (exit 2).
+The `[game]` table of the server config file (`docs/guides/building.md`)
+selects it; an invalid value stops the server (exit 2). Every key is required.
 
-| Variable | Default | Meaning |
-|----------|---------|---------|
-| `GAME_MODE` | `ffa` | `ffa` (free-for-all) or `rounds`. |
-| `ROUNDS` | 5 | Rounds per match, at least 1. |
-| `ROUND_SECS` | 90 | Round time limit in seconds; `0` means no limit. |
-| `INTERMISSION_SECS` | 3 | Break between rounds and before round 1, at least 1. |
-| `FINAL_INTERMISSION_SECS` | 8 | Break after the last round (standings), at least 1. |
+| Key | Meaning |
+|-----|---------|
+| `mode` | `ffa` (free-for-all, no other key) or `rounds`. |
+| `rounds` | Rounds per match, at least 1. |
+| `round_secs` | Round time limit in seconds; `0` means no limit. |
+| `intermission_secs` | Break between rounds and before round 1, at least 1. |
+| `final_intermission_secs` | Break after the last round (standings), at least 1. |
 
-`scripts/play-local.bat` and `.sh` start the server with `GAME_MODE=rounds`.
+`scripts/play-local.bat` and `.sh` start the server with
+`crates/server/config/local.toml` (rounds: 5, 90 s, 3 s, 8 s). The official
+config runs the free-for-all.
 
 ## Rules
 

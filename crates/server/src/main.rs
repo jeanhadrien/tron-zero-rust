@@ -2,7 +2,9 @@
 
 use bevy::prelude::*;
 use std::sync::Arc;
-use tron_zero_server::{add_core, add_web, admission, announce, bot, ranked, rounds, systems, web};
+use tron_zero_server::{
+    add_core, add_web, admission, announce, bot, config, ranked, rounds, systems, web,
+};
 
 /// Pause between main-loop iterations. Packets are read (and replies sent)
 /// only once per iteration, so this bounds the polling latency added to every
@@ -22,7 +24,13 @@ fn main() {
     app.add_plugins(MinimalPlugins.set(bevy::app::ScheduleRunnerPlugin::run_loop(LOOP_WAIT)));
     app.add_plugins(bevy::log::LogPlugin::default());
 
-    let mut announce_cfg = announce::AnnounceConfig::from_env();
+    // Game settings from the config file (SERVER_CONFIG, else the official
+    // one); deployment settings from env vars. A bad file stops the server.
+    let config = config::ServerConfig::from_env().unwrap_or_else(|e| {
+        tracing::error!("Invalid configuration: {e}");
+        std::process::exit(2);
+    });
+    let mut announce_cfg = announce::AnnounceConfig::from_env(&config.server);
     // Browser players: a WebTransport listener beside the UDP one. A config
     // that cannot work (e.g. WEB_PORT == PORT) stops the server; a failure to
     // load WEB_CERT/WEB_KEY disables only the web side. The room is announced
@@ -75,8 +83,8 @@ fn main() {
         app.insert_resource(ranked::RankedMode(state));
     }
     app.insert_resource(admission::MaxPlayers(announce_cfg.max_players));
-    // Game mode: rounds when GAME_MODE=rounds, else the free-for-all.
-    match rounds::rules_from_env(&|key| std::env::var(key).ok()) {
+    // Game mode: rounds, else the free-for-all.
+    match config.rules() {
         Ok(Some(rules)) => {
             tracing::info!(?rules, "Rounds mode");
             app.insert_resource(rounds::MatchState::new(rules));
@@ -107,11 +115,12 @@ fn main() {
     // placed after the humans' respawns, so both see each other; the brain
     // then writes input before the shared simulation. The debug gate is read
     // once from the environment.
-    let roster = bot::roster_from_env(&|key| std::env::var(key).ok()).unwrap_or_else(|e| {
-        tracing::error!("Invalid configuration: BOT_ROSTER: {e}");
+    let roster = config.roster().unwrap_or_else(|e| {
+        tracing::error!("Invalid configuration: bots.roster: {e}");
         std::process::exit(2);
     });
-    app.insert_resource(roster);
+    tracing::info!(roster = %config.bots.roster, bots = roster.len(), "Bot roster");
+    app.insert_resource(bot::BotRoster(roster));
     app.init_resource::<bot::SchedulerConfig>();
     app.insert_resource(bot::BotDebugConfig::from_env());
     app.add_systems(

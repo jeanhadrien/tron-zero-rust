@@ -8,14 +8,28 @@ builds live in `docs/guides/dev.md`; releases and hosting for friends in `docs/g
 The game server listens on **UDP** (raw, unauthenticated, unencrypted for now;
 see `NETWORK.md`) bound to `0.0.0.0`. The lobby manager speaks HTTP.
 
-Server (`tron-zero-server`, all optional):
+Server (`tron-zero-server`). Game settings come from a TOML config file;
+deployment settings from env vars.
+
+**Config file** (`SERVER_CONFIG=path`; unset: the official config built into
+the binary, `crates/server/config/official.toml`). Every key is required; an
+invalid file stops the server (exit 2). Format in `crates/server/src/config.rs`.
+
+| Key | Effect |
+|-----|--------|
+| `server.name` | Name shown in the server browser. |
+| `server.max_players` | Human capacity; the next player is rejected `ServerFull`. Bots do not count. |
+| `game.mode` | `ffa` (free-for-all) or `rounds` with `rounds`, `round_secs` (0: no limit), `intermission_secs`, `final_intermission_secs`; see `docs/specs/rounds-mode.md`. |
+| `bots.roster` | `builtin` (`crates/bots/rosters/default.toml`) or a roster file path, relative to the config file. One bot per build. |
+
+Other files there: `local.toml` (rounds, `scripts/play-local.*`), `dev-cloud.toml` (`scripts/dev-cloud.bat`).
+
+**Env vars** (all optional):
 
 | Variable | Default | Effect |
 |----------|---------|--------|
+| `SERVER_CONFIG` | unset | Path of the config file above. |
 | `PORT` | `5000` | UDP port to bind (also the default advertised port). |
-| `MAX_PLAYERS` | `10` | Human capacity; the 11th player is rejected `ServerFull`. Bots do not count. |
-| `GAME_MODE` | `ffa` | `rounds` for last rider standing per round (`ROUNDS` 5, `ROUND_SECS` 90, `INTERMISSION_SECS` 3, `FINAL_INTERMISSION_SECS` 8); see `docs/specs/rounds-mode.md`. |
-| `SERVER_NAME` | `Unnamed Server` | Name shown in the server browser. |
 | `MANAGER_URL` | `http://localhost:3001` | Lobby to register with. |
 | `RANKED_KEY` | none | `<keyId>.<secret>` from the manager's `add-key.ts`: registers the room as ranked (join tickets required, results move ratings). For community servers. |
 | `RANKED_IDENTITY` | none | `gcp`: register as ranked with the VM service account's ID token from the GCE metadata server instead of a key. The manager must trust the account and set `IDENTITY_AUDIENCE` equal to `MANAGER_URL` (see `deploy/gce/README.md`). Wins over `RANKED_KEY`. |
