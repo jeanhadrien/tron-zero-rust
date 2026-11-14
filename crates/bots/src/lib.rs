@@ -15,6 +15,7 @@ pub mod objective;
 pub mod plan;
 pub mod planner;
 pub mod race;
+pub mod roster;
 pub mod schedule;
 pub mod space;
 pub mod world;

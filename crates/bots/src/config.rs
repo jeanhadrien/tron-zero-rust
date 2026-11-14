@@ -59,14 +59,13 @@ pub struct BotKnobs {
 impl BotKnobs {
     /// Stable 32-bit FNV-1a hash of the personality, its weights and every
     /// knob. Two builds with the same hash are the same bot, wherever they run.
-    fn fingerprint(&self, personality: Personality) -> u32 {
+    fn fingerprint(&self, personality: Personality, weights: &Weights) -> u32 {
         let knobs = [
             self.reaction_ticks,
             self.horizon_ticks,
             self.variety,
             self.noise.to_bits(),
         ];
-        let weights = personality.weights();
         let weights = weights
             .values()
             .into_iter()
@@ -83,7 +82,7 @@ impl BotKnobs {
             })
     }
 
-    fn clamp(&mut self) {
+    pub fn clamp(&mut self) {
         self.reaction_ticks = self.reaction_ticks.max(1);
         self.horizon_ticks = self.horizon_ticks.max(1);
         self.variety = self.variety.clamp(1, 3);
@@ -98,6 +97,9 @@ pub struct BotBuild {
     pub name: String,
     pub personality: Personality,
     pub knobs: BotKnobs,
+    /// The objective weights. Start from the personality's; a tuned build
+    /// carries its own.
+    pub weights: Weights,
 }
 
 impl BotBuild {
@@ -106,6 +108,7 @@ impl BotBuild {
             name: name.into(),
             personality,
             knobs,
+            weights: personality.weights(),
         }
     }
 
@@ -120,7 +123,7 @@ impl BotBuild {
 
     /// The objective weights of this build.
     pub fn weights(&self) -> Weights {
-        self.personality.weights()
+        self.weights
     }
 
     /// Stable identity of this build in the rating pool:
@@ -132,7 +135,7 @@ impl BotBuild {
         format!(
             "bot:{}:{:08x}",
             self.name.replace(':', "-"),
-            self.knobs.fingerprint(self.personality)
+            self.knobs.fingerprint(self.personality, &self.weights)
         )
     }
 }
