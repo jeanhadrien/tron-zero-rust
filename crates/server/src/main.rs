@@ -2,9 +2,7 @@
 
 use bevy::prelude::*;
 use std::sync::Arc;
-use tron_zero_server::{
-    add_core, add_web, admission, announce, bot, config, ranked, rounds, systems, web,
-};
+use tron_zero_server::{add_core, add_web, admission, announce, bot, config, ranked, systems, web};
 
 /// Pause between main-loop iterations. Packets are read (and replies sent)
 /// only once per iteration, so this bounds the polling latency added to every
@@ -83,19 +81,12 @@ fn main() {
         app.insert_resource(ranked::RankedMode(state));
     }
     app.insert_resource(admission::MaxPlayers(announce_cfg.max_players));
-    // Game mode: rounds, else the free-for-all.
-    match config.rules() {
-        Ok(Some(rules)) => {
-            tracing::info!(?rules, "Rounds mode");
-            app.insert_resource(rounds::MatchState::new(rules));
-        }
-        Ok(None) => {}
-        Err(e) => {
-            tracing::error!("Invalid configuration: {e}");
-            std::process::exit(2);
-        }
-    }
-    add_core(&mut app, announce_cfg.port);
+    let rules = config.rules().unwrap_or_else(|e| {
+        tracing::error!("Invalid configuration: {e}");
+        std::process::exit(2);
+    });
+    tracing::info!(?rules, "Match rules");
+    add_core(&mut app, announce_cfg.port, rules);
     if let Some(endpoint) = web_endpoint {
         // Self-signed certificates expire within 14 days: exit before that
         // (when idle, else at the hard limit) and let the service supervisor

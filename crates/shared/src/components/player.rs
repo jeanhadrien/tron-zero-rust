@@ -38,6 +38,13 @@ pub struct PlayerId(pub String);
 #[derive(Component, Clone, Debug, Default, Serialize, Deserialize, Reflect)]
 pub struct DisplayName(pub String);
 
+/// Round-trip time of a human's link in milliseconds, as the server measures
+/// it. Display-only (scoreboard); bots have none.
+#[derive(
+    Component, Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, Reflect,
+)]
+pub struct RoundTrip(pub u16);
+
 /// World position.
 #[derive(Component, Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Reflect)]
 pub struct Position(pub Vec2);

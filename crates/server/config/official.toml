@@ -1,14 +1,24 @@
 # Official server config: what the official servers run (embedded in the
 # server at build time; SERVER_CONFIG=path loads another file instead). Game
 # settings only: ports, advertised host, manager and secrets are env vars
-# (docs/guides/building.md). Every key is required; see `src/config.rs`.
+# (docs/guides/building.md). Keys: see `src/config.rs`.
+#
+# One long round with respawns: ride, crash, press Space, ride again; the
+# scores reset every 10 minutes.
 
 [server]
 name = "Tron Zero EU"
 max_players = 10
 
-[game]
-mode = "ffa"
+[match]
+rounds = 1
+intermission_secs = 3
+end_screen_secs = 8
+
+[round]
+secs = 600
+respawn = "anytime"
+last_standing = false
 
 [bots]
 roster = "builtin"

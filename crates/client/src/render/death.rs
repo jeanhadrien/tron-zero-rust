@@ -7,6 +7,7 @@ use lightyear::prelude::{Client, Connected, ControlledBy, Predicted};
 use shared::protocol::RespawnOutcome;
 use shared::{IsAlive, MatchPhase, MatchStatus, Player, PlayerInput};
 
+use super::scoreboard::ScoreboardShown;
 use crate::connection::{ConnectionPhase, Session};
 use crate::input::RespawnUi;
 use crate::menu::MenuState;
@@ -34,8 +35,8 @@ const WAIT_TEXT: &str = "Waiting for the next round...";
 
 // Visibility + text in one pure helper so tests skip the egui context:
 // hidden while the menu is open or outside Playing, else the prompt above.
-// While a rounds match runs nobody respawns: the dead wait, and the round
-// banner replaces this panel between rounds.
+// When the match forbids respawning the dead wait for the next round, and the
+// round banner replaces this panel between rounds.
 pub fn death_message(
     phase: ConnectionPhase,
     menu_open: bool,
@@ -47,22 +48,22 @@ pub fn death_message(
         return "";
     }
     match (alive, round) {
-        (None, _) => "",
-        (Some(alive), Some(status)) if status.phase != MatchPhase::Free => {
-            if alive || status.phase != MatchPhase::Playing {
-                ""
-            } else {
+        (None | Some(true), _) => "",
+        (Some(false), Some(status)) if !status.respawn_now => {
+            if status.phase == MatchPhase::Playing {
                 WAIT_TEXT
+            } else {
+                ""
             }
         }
-        (Some(alive), _) => prompt(alive, respawn),
+        (Some(false), _) => prompt(false, respawn),
     }
 }
 
-// Headline of the panel: a crash in free-for-all, merely being out in rounds
-// (a late joiner has not crashed).
+// Headline of the panel: a crash when Space brings the rider back, merely
+// being out when it waits for the next round (a late joiner has not crashed).
 fn title(round: Option<&MatchStatus>) -> &'static str {
-    if super::round::waits_for_round(round) {
+    if round.is_some_and(|status| !status.respawn_now) {
         "OUT OF THE ROUND"
     } else {
         "YOU DIED"
@@ -85,7 +86,12 @@ pub fn death_ui(
     >,
     respawn: Res<RespawnUi>,
     round: Option<Single<&MatchStatus>>,
+    scoreboard: Res<ScoreboardShown>,
 ) {
+    // The scoreboard takes the middle of the screen while it is up.
+    if scoreboard.0 {
+        return;
+    }
     let round = round.as_deref().copied();
     let local = clients.iter().next().and_then(|client| {
         players
@@ -196,28 +202,31 @@ mod tests {
     }
 
     #[test]
-    fn in_rounds_mode_the_dead_wait_and_the_banner_covers_the_breaks() {
+    fn without_respawns_the_dead_wait_and_the_banner_covers_the_breaks() {
         let respawn = RespawnUi::default();
-        let status = |phase| MatchStatus {
+        let status = |phase, respawn_now| MatchStatus {
             rounds: 3,
             round: 1,
             phase,
+            respawn_now,
             ..MatchStatus::default()
         };
-        let text = |phase| {
+        let text = |phase, respawn_now| {
             death_message(
                 ConnectionPhase::Playing,
                 false,
                 Some(false),
                 &respawn,
-                Some(&status(phase)),
+                Some(&status(phase, respawn_now)),
             )
         };
-        assert!(text(MatchPhase::Playing).contains("next round"));
-        assert!(text(MatchPhase::Intermission).is_empty());
-        assert!(text(MatchPhase::MatchOver).is_empty());
-        // Waiting for opponents is free riding: Space respawns as before.
-        assert!(text(MatchPhase::Free).contains("Press Space"));
+        assert!(text(MatchPhase::Playing, false).contains("next round"));
+        assert!(text(MatchPhase::Intermission, false).is_empty());
+        assert!(text(MatchPhase::MatchOver, false).is_empty());
+        // Waiting for players is free riding: Space respawns as before.
+        assert!(text(MatchPhase::Free, true).contains("Press Space"));
+        // A match with respawns: Space brings the rider back mid-round.
+        assert!(text(MatchPhase::Playing, true).contains("Press Space"));
         let mut refused = RespawnUi::default();
         refused.outcome = Some(RespawnOutcome::WaitForNextRound);
         assert!(prompt(false, &refused).contains("next round"));

@@ -579,14 +579,15 @@ impl Lab {
             .filter(|r| self.world.get::<IsAlive>(r.entity).unwrap().0)
             .map(|r| r.entity)
             .collect();
-        let MatchStep::RoundOver { reason, winner } = flow.advance(self.riders.len(), &alive)
+        let MatchStep::RoundOver { reason, winner } =
+            flow.advance(&Roster::riders(self.riders.len(), &alive))
         else {
             return false;
         };
         let round = flow.round();
         let finished = flow.phase() == MatchPhase::MatchOver;
         if !finished {
-            let next = flow.advance(self.riders.len(), &alive);
+            let next = flow.advance(&Roster::riders(self.riders.len(), &alive));
             assert_eq!(next, MatchStep::Begin { new_match: false });
         }
         let winner = winner.and_then(|entity| self.riders.iter().position(|r| r.entity == entity));

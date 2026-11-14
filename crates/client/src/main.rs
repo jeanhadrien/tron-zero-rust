@@ -89,6 +89,7 @@ fn main() {
             .after(connection::monitor_connection)
             .before(input::buffer_keyboard_input),
     );
+    app.init_resource::<render::ScoreboardShown>();
     // egui overlays share one pass; order keeps the menu above HUD/death on
     // any same-order tie (menu.open also hides both outright).
     app.add_systems(
@@ -98,6 +99,9 @@ fn main() {
             (
                 render::hud_ui,
                 render::status_badge_ui,
+                // Decides first whether the board is up: the death panel
+                // makes room for it.
+                render::scoreboard_ui.before(render::death_ui),
                 render::death_ui,
                 render::round_ui,
                 render::debug_panel_ui,

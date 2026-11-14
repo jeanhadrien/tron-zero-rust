@@ -32,15 +32,15 @@ scripts\play-local.bat            # or: scripts\play-local.bat release  (Linux/m
 ```
 
 Server with bots + a client that joins by itself with a simulated 20 ms ping.
-The server runs the **rounds mode** (5 rounds, last rider standing) from
-`crates/server/config/local.toml` (see `docs/specs/rounds-mode.md`). Set
+The server plays **5 last-standing rounds** from
+`crates/server/config/local.toml` (see `docs/specs/match-rules.md`). Set
 `SERVER_CONFIG` to another config file before running the script, e.g.
-`crates/server/config/official.toml` for the endless free-for-all. The bots are
+`crates/server/config/official.toml` for one 10-minute round with respawns. The bots are
 the built-in roster (five difficulty rungs `Wisp (Novice)` to `Apex (Expert)`,
 plus the artist `Escher (Artist)`); `bots.roster` in a config file seats the
 builds of another roster file instead (`docs/guides/dev.md` § Ladder). A bare
-`cargo run -p tron-zero-server` runs the official config (free-for-all). If a round is already running when you join, you wait for the
-next one. No lobby involved. `set TRON_SIM_LATENCY_MS=0` first to remove the simulated
+`cargo run -p tron-zero-server` runs the official config. If a last-standing round is already running when you join, you wait for the
+next one. Hold Tab for the scoreboard. No lobby involved. `set TRON_SIM_LATENCY_MS=0` first to remove the simulated
 ping. Restart on save instead: `bacon server` and `bacon client` (see `docs/guides/dev.md`).
 
 ### 2. Web client against a local server

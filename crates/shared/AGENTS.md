@@ -22,9 +22,9 @@ build on it.
 
 - `systems/` — `simulate_players` at 120 Hz (`TICK_HZ`): turn → sense → move → rubber. The order is load-bearing.
 - `physics.rs` — `step_rider`, pure. `constants.rs` — every gameplay number.
-- `components/` — incl. `trail.rs` (the rollbackable trail of corners) and `round.rs` (replicated `MatchStatus`).
+- `components/` — incl. `trail.rs` (the rollbackable trail of corners) and `round.rs` (replicated `MatchStatus`, `Score` and its credits from the death log).
 - `spawn.rs` — safe-spawn search, `SpawnField` (spawn inputs), `placed` (the fresh-life bundle). `math.rs` — rotations, arena walls, seeded spawn.
-- `match_rules.rs` — `MatchRules` (respawn, end condition, rounds) and `MatchFlow`, the pure round state machine. Outside the sim: not read by `simulate_players`, not in `PROTOCOL_ID`.
+- `match_rules.rs` — `MatchRules` (respawn, end conditions, rounds, start condition), `Roster` (what the flow sees) and `MatchFlow`, the pure match state machine, incl. `may_spawn`. Outside the sim: not read by `simulate_players`, not in `PROTOCOL_ID`.
 - `elimination.rs` — rated elimination events from the death log.
 - `protocol.rs` — components, messages, channels, `PROTOCOL_ID`, turn constants. `probe.rs` — UDP discovery datagram. `polyline.rs` — render-only helpers.
 
@@ -45,8 +45,8 @@ rubber max 120 (about 22 ticks to die at base speed, 14 at the cap, above the
 12-tick late window), speed capped at `MAX_SPEED_MULT` 3.0 and earned by
 grinding within `GRIND_RANGE` of any trail (own trail from
 `OWN_GRIND_MIN_FROM_HEAD` legs back; arena walls pay 0.4x), deterministic
-spawn search. Free-for-all: manual human respawn. Rounds mode: riders are
-placed at each round start and nobody respawns during a round.
+spawn search. Manual human respawn when the match allows it; riders are
+placed at each round start (`docs/specs/match-rules.md`).
 
 ## Wire model (summary; contract in `docs/specs/netcode-design.md`)
 

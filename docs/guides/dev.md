@@ -107,11 +107,11 @@ Environment variables (all opt-in, read by the client; `TRON_BOT_DEBUG=1` is rea
 | `TRON_CONFIG_FILE` | Use this settings file instead of the platform one. |
 | `MANAGER_URL` | Lobby base URL for the server browser (see Settings file for precedence). |
 
-Server game settings (room name and capacity, game mode, bot roster) come from
-a config file: `SERVER_CONFIG=path`, else the official one built into the
-binary (`crates/server/config/official.toml`, free-for-all).
-`scripts/play-local.*` uses `crates/server/config/local.toml` (rounds mode,
-`docs/specs/rounds-mode.md`). Keys and the server's env vars (`PORT`,
+Server game settings (room name and capacity, match rules, bot roster) come
+from a config file: `SERVER_CONFIG=path`, else the official one built into the
+binary (`crates/server/config/official.toml`, one long round with respawns).
+`scripts/play-local.*` uses `crates/server/config/local.toml` (five
+last-standing rounds, `docs/specs/match-rules.md`). Keys and the server's env vars (`PORT`,
 `WEB_PORT`, the lobby ones) are in `docs/guides/building.md`. `bots.roster`
 names a roster file (see § Ladder) to seat instead of the built-in one,
 `crates/bots/rosters/default.toml` (embedded at build time: five difficulty
@@ -280,7 +280,9 @@ of rounds) turns a scenario into a match. It replaces the riders'
 `respawn_after`. With `respawn = "never"` and `last_standing = true`, nobody
 respawns during a round and the round ends when at most one rider is alive (or
 at `time_limit`). The winner is the last rider alive: a time-out with several
-alive, or the last riders dying on the same tick, has no winner. Then every
+alive, or the last riders dying on the same tick, has no winner. (The server names
+the top scorer of a timed-out one-round match, `shared::round_winner`; the lab
+keeps no scores.) Then every
 rider is reset and placed again with the safe-spawn search and a new seed, and
 the next round starts at once (the lab ignores `intermission`). The rounds are
 played by `shared::MatchFlow`, as on the server, and numbered from 1. The trace

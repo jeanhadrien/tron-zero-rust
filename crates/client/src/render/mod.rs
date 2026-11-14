@@ -7,6 +7,7 @@ pub mod hud;
 pub mod layers;
 pub mod player;
 pub mod round;
+pub mod scoreboard;
 pub(crate) mod shape;
 pub mod smooth;
 
@@ -18,4 +19,5 @@ pub use fx::{FxSettings, add_fx};
 pub use hud::{hud_ui, status_badge_ui};
 pub use player::{draw_players, draw_trails, sync_name_labels};
 pub use round::round_ui;
+pub use scoreboard::{ScoreboardShown, scoreboard_ui};
 pub use smooth::{RenderSet, add_smoothing};
