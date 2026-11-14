@@ -56,7 +56,7 @@ impl TestServer {
     /// starts on the tick after the first human arrives (no countdown).
     pub fn endless() -> shared::MatchRules {
         shared::MatchRules {
-            respawn: shared::Respawn::After(ts::bot::RESPAWN_DELAY_TICKS),
+            respawn: shared::Respawn::After(shared::match_rules::RESPAWN_DELAY_TICKS),
             end: shared::EndRules::default(),
             rounds: 1,
             intermission: 0,

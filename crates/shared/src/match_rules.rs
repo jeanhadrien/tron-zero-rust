@@ -26,6 +26,10 @@ pub enum Respawn {
     After(u32),
 }
 
+/// Ticks a dead automatic rider (a bot) waits before it rides again, in a
+/// round with respawns.
+pub const RESPAWN_DELAY_TICKS: u32 = 240;
+
 impl Respawn {
     /// Ticks between a death and an automatic respawn, `None` when riders
     /// stay dead until the next round.
@@ -148,6 +152,12 @@ impl MatchRules {
         }
         if self.end.last_standing && self.respawn != Respawn::Never {
             return Err("match: last_standing needs respawn = \"never\"".into());
+        }
+        let ends =
+            self.end.time_limit.is_some() || self.end.last_standing || self.end.no_human_left;
+        if self.respawn == Respawn::Never && !ends {
+            // The dead would never come back and the round never end.
+            return Err("match: a round without respawns needs an end condition".into());
         }
         Ok(())
     }
@@ -366,11 +376,13 @@ impl MatchFlow {
 }
 
 /// The winner of a round that ran out of time: most kills, then fewest
-/// deaths. A tie at the top has no winner.
+/// deaths. Without a kill nobody wins (a rider that never rode is not ahead of
+/// those who died), and a tie at the top has no winner.
 pub fn top_scorer(scores: &[(Entity, Score)]) -> Option<Entity> {
     let rank = |score: &Score| (score.kills, std::cmp::Reverse(score.deaths));
-    let best = scores.iter().map(|(_, score)| rank(score)).max()?;
-    match scores
+    let scorers: Vec<_> = scores.iter().filter(|(_, s)| s.kills > 0).collect();
+    let best = scorers.iter().map(|(_, score)| rank(score)).max()?;
+    match scorers
         .iter()
         .filter(|(_, s)| rank(s) == best)
         .collect::<Vec<_>>()[..]
@@ -722,5 +734,7 @@ mod tests {
         assert_eq!(top_scorer(&[(a, score(3, 5)), (b, score(3, 2))]), Some(b));
         assert_eq!(top_scorer(&[(a, score(3, 2)), (b, score(3, 2))]), None);
         assert_eq!(top_scorer(&[]), None);
+        // A late joiner at 0/0 is not ahead of riders who died without a kill.
+        assert_eq!(top_scorer(&[(a, score(0, 1)), (b, score(0, 0))]), None);
     }
 }

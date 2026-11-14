@@ -24,6 +24,10 @@ The `[match]` and `[round]` tables of the server config file
 | `round.last_standing` | End the round when at most one rider is alive. Needs `next_round`. |
 | `round.end_without_humans` | Optional, `true` by default. End the round when no human is left in it. |
 
+A round may have no end condition (it lasts until the match is dropped), but
+only with `anytime` respawns: with `next_round` and no end condition the dead
+would never come back, so the config is refused.
+
 Shipped configs (`crates/server/config/`): `official.toml` and `dev-cloud.toml`
 play one 600 s round with respawns; `local.toml` (`scripts/play-local.*`)
 plays five 90 s last-standing rounds.
@@ -65,8 +69,9 @@ plays five 90 s last-standing rounds.
   - `end_without_humans`: every human is dead with `next_round` respawns (with
     `anytime` a dead human can come back, so it never fires). With one rider
     alive, last standing names it the winner first; with more, nobody wins.
-  - Time limit. The winner is the top scorer: most kills, then fewest deaths; a
-    tie at the top has no winner.
+  - Time limit. In a one-round match the winner is the top scorer: most kills,
+    then fewest deaths; without a kill, or with a tie at the top, nobody wins.
+    With several rounds the scores span the match, so a time-out has no winner.
 
   The winner scores one round win. The surviving riders are stopped (dead,
   trail cleared) so nothing happens during the break and no death of the break
@@ -87,7 +92,8 @@ Server-authoritative display state; it does not enter the predicted simulation.
   present: `rounds`, `round` (from 1, 0 when `Free`), `phase`, `secs_left`
   (whole seconds left on the current clock, round limit or break, once per
   second), `winner` (name of the last round's winner, `None` for a draw) and
-  `respawns` (whether dead riders come back during a round).
+  `respawn_now` (whether the server accepts a dead human's respawn request
+  right now: the client shows the Space prompt from it and never re-derives it).
 - `Score` on each rider (`replicate()`), and `RoundTrip` on each human: the
   link's round-trip time in ms, measured by the server, updated once per second.
 - `RespawnOutcome::WaitForNextRound` is the refusal reason of a respawn request.

@@ -144,7 +144,7 @@ fn a_round_with_respawns_takes_riders_back_and_ends_on_its_clock() {
         net.clients[ann].rider_alive() && phase(net, ann) == Some((MatchPhase::Playing, 1))
     });
     assert!(playing, "a lone human starts the match");
-    assert!(net.clients[ann].match_status().unwrap().respawns);
+    assert!(net.clients[ann].match_status().unwrap().respawn_now);
 
     // Ann crashes and comes back in the same round.
     let ann_id = net.clients[ann].player_id().unwrap();

@@ -15,15 +15,12 @@ use bots::config::BotBuild;
 use bots::drive::{Seat, drive};
 use bots::world::WorldSnapshotBuilder;
 use lightyear::prelude::*;
+use shared::match_rules::RESPAWN_DELAY_TICKS;
 use shared::spawn::{SpawnField, placed};
 use shared::{ActionState, DisplayName, IsAlive, Player, PlayerColor, PlayerInput};
 
 pub use bots::schedule::SchedulerConfig;
 pub use debug::BotDebugConfig;
-
-/// Ticks a dead bot waits before it is placed again when the rules allow
-/// respawns (`respawn = "anytime"` in the config).
-pub const RESPAWN_DELAY_TICKS: u32 = 240;
 
 const BOT_COLORS: [u32; 8] = [
     0xFF4444, 0x44FF44, 0x4488FF, 0xFFCC00, 0xFF44FF, 0x44FFFF, 0xFF8800, 0x8844FF,

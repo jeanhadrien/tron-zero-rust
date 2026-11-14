@@ -340,7 +340,6 @@ impl TestClient {
             .map(|(name, score)| (name.0.clone(), *score))
             .collect();
         scores.sort_by(|a, b| a.0.cmp(&b.0));
-        scores.dedup_by(|a, b| a.0 == b.0);
         scores
     }
 

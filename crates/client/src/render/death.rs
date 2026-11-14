@@ -7,7 +7,6 @@ use lightyear::prelude::{Client, Connected, ControlledBy, Predicted};
 use shared::protocol::RespawnOutcome;
 use shared::{IsAlive, MatchPhase, MatchStatus, Player, PlayerInput};
 
-use super::round::respawn_allowed;
 use super::scoreboard::ScoreboardShown;
 use crate::connection::{ConnectionPhase, Session};
 use crate::input::RespawnUi;
@@ -50,7 +49,7 @@ pub fn death_message(
     }
     match (alive, round) {
         (None | Some(true), _) => "",
-        (Some(false), Some(status)) if !respawn_allowed(status) => {
+        (Some(false), Some(status)) if !status.respawn_now => {
             if status.phase == MatchPhase::Playing {
                 WAIT_TEXT
             } else {
@@ -64,7 +63,7 @@ pub fn death_message(
 // Headline of the panel: a crash when Space brings the rider back, merely
 // being out when it waits for the next round (a late joiner has not crashed).
 fn title(round: Option<&MatchStatus>) -> &'static str {
-    if round.is_some_and(|status| !respawn_allowed(status)) {
+    if round.is_some_and(|status| !status.respawn_now) {
         "OUT OF THE ROUND"
     } else {
         "YOU DIED"
@@ -205,27 +204,27 @@ mod tests {
     #[test]
     fn without_respawns_the_dead_wait_and_the_banner_covers_the_breaks() {
         let respawn = RespawnUi::default();
-        let status = |phase, respawns| MatchStatus {
+        let status = |phase, respawn_now| MatchStatus {
             rounds: 3,
             round: 1,
             phase,
-            respawns,
+            respawn_now,
             ..MatchStatus::default()
         };
-        let text = |phase, respawns| {
+        let text = |phase, respawn_now| {
             death_message(
                 ConnectionPhase::Playing,
                 false,
                 Some(false),
                 &respawn,
-                Some(&status(phase, respawns)),
+                Some(&status(phase, respawn_now)),
             )
         };
         assert!(text(MatchPhase::Playing, false).contains("next round"));
         assert!(text(MatchPhase::Intermission, false).is_empty());
-        assert!(text(MatchPhase::MatchOver, true).is_empty());
+        assert!(text(MatchPhase::MatchOver, false).is_empty());
         // Waiting for players is free riding: Space respawns as before.
-        assert!(text(MatchPhase::Free, false).contains("Press Space"));
+        assert!(text(MatchPhase::Free, true).contains("Press Space"));
         // A match with respawns: Space brings the rider back mid-round.
         assert!(text(MatchPhase::Playing, true).contains("Press Space"));
         let mut refused = RespawnUi::default();

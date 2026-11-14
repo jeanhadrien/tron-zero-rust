@@ -74,16 +74,6 @@ fn match_result(status: &MatchStatus) -> String {
     }
 }
 
-/// Whether a dead rider may respawn with Space now: riding free while no
-/// match runs, or during a round of a match with respawns.
-pub fn respawn_allowed(status: &MatchStatus) -> bool {
-    match status.phase {
-        MatchPhase::Free => true,
-        MatchPhase::Playing => status.respawns,
-        MatchPhase::Starting | MatchPhase::Intermission | MatchPhase::MatchOver => false,
-    }
-}
-
 pub fn round_ui(
     mut contexts: EguiContexts,
     session: Res<Session>,
@@ -158,7 +148,7 @@ mod tests {
             phase,
             secs_left: Some(72),
             winner: winner.map(str::to_owned),
-            respawns: false,
+            respawn_now: false,
         }
     }
 
@@ -203,21 +193,5 @@ mod tests {
         assert_eq!(title, "MATCH OVER - NO WINNER");
         let (title, _) = banner(&status(1, MatchPhase::Starting, None)).unwrap();
         assert_eq!(title, "MATCH STARTS");
-    }
-
-    #[test]
-    fn respawns_follow_the_phase_and_the_match_rules() {
-        assert!(respawn_allowed(&status(5, MatchPhase::Free, None)));
-        assert!(!respawn_allowed(&status(5, MatchPhase::Playing, None)));
-        let with_respawns = MatchStatus {
-            respawns: true,
-            ..status(1, MatchPhase::Playing, None)
-        };
-        assert!(respawn_allowed(&with_respawns));
-        let over = MatchStatus {
-            phase: MatchPhase::MatchOver,
-            ..with_respawns
-        };
-        assert!(!respawn_allowed(&over));
     }
 }

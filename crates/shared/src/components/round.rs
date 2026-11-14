@@ -40,8 +40,9 @@ pub struct MatchStatus {
     /// Winner of the round that just ended; `None` for a draw. Only meaningful
     /// in `Intermission` and `MatchOver`.
     pub winner: Option<String>,
-    /// Whether a dead rider may respawn during a round of this match.
-    pub respawns: bool,
+    /// Whether the server accepts a dead human's respawn request right now
+    /// (the server's own decision, so clients never re-derive it).
+    pub respawn_now: bool,
 }
 
 /// A rider's record this match, reset when a new match starts. Replicated on

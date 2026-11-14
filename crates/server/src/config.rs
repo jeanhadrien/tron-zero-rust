@@ -43,8 +43,7 @@ const BUILTIN: &str = "builtin";
 #[serde(deny_unknown_fields)]
 pub struct ServerConfig {
     pub server: Room,
-    #[serde(rename = "match")]
-    pub game: Match,
+    pub r#match: Match,
     pub round: Round,
     pub bots: Bots,
     /// Directory relative paths resolve against: the file's.
@@ -133,7 +132,7 @@ impl ServerConfig {
     /// Rules that cannot run are an error.
     pub fn rules(&self) -> Result<MatchRules, String> {
         let respawn = match self.round.respawn {
-            RespawnRule::Anytime => Respawn::After(crate::bot::RESPAWN_DELAY_TICKS),
+            RespawnRule::Anytime => Respawn::After(shared::match_rules::RESPAWN_DELAY_TICKS),
             RespawnRule::NextRound => Respawn::Never,
         };
         let rules = MatchRules {
@@ -143,9 +142,9 @@ impl ServerConfig {
                 last_standing: self.round.last_standing,
                 no_human_left: self.round.end_without_humans,
             },
-            rounds: self.game.rounds,
-            intermission: secs_to_ticks(self.game.intermission_secs),
-            final_intermission: secs_to_ticks(self.game.end_screen_secs),
+            rounds: self.r#match.rounds,
+            intermission: secs_to_ticks(self.r#match.intermission_secs),
+            final_intermission: secs_to_ticks(self.r#match.end_screen_secs),
             needs_human: true,
         };
         rules.validate()?;

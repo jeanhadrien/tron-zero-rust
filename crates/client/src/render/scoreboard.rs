@@ -93,7 +93,8 @@ pub fn scoreboard_ui(
         .map(|(name, score, ping, me)| Row {
             name: name.0.clone(),
             score: score.copied().unwrap_or_default(),
-            ping: ping.map(|p| p.0),
+            // No sample yet reads 0: show nothing, like the HUD.
+            ping: ping.map(|p| p.0).filter(|ms| *ms > 0),
             me,
         })
         .collect();

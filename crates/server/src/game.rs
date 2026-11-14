@@ -60,14 +60,14 @@ impl MatchState {
     }
 
     /// The replicated view of the match.
-    fn status(&self) -> MatchStatus {
+    fn status(&self, riders: &Riders) -> MatchStatus {
         MatchStatus {
             rounds: self.flow.rules().rounds,
             round: self.flow.round(),
             phase: self.flow.phase(),
             secs_left: self.flow.secs_left(),
             winner: self.winner.clone(),
-            respawns: self.flow.rules().respawn.delay().is_some(),
+            respawn_now: self.may_spawn(true, riders),
         }
     }
 }
@@ -139,9 +139,13 @@ pub fn advance_match(world: &mut World) {
             retire(world, &riders.alive);
         }
         MatchStep::RoundOver { reason, winner } => {
-            // A round that ran out of time goes to its top scorer.
-            let winner = winner
-                .or_else(|| (reason == RoundEnd::TimeLimit).then(|| top_scorer(&scores(world)))?);
+            // A one-round match that ran out of time goes to its top scorer.
+            // With several rounds the scores span the match, not this round,
+            // so a time-out has no winner.
+            let single = world.resource::<MatchState>().rules().rounds == 1;
+            let winner = winner.or_else(|| {
+                (reason == RoundEnd::TimeLimit && single).then(|| top_scorer(&scores(world)))?
+            });
             let name = winner.and_then(|entity| {
                 world.get_mut::<Score>(entity)?.wins += 1;
                 Some(world.get::<DisplayName>(entity)?.0.clone())
@@ -163,7 +167,9 @@ pub fn advance_match(world: &mut World) {
             .collect();
         retire(world, &bots);
     }
-    publish_status(world);
+    // The step changes who is alive, not who is here: the roster still says
+    // whether a human may respawn.
+    publish_status(world, &riders);
 }
 
 fn scores(world: &mut World) -> Vec<(Entity, Score)> {
@@ -243,8 +249,8 @@ fn begin_round(world: &mut World, riders: &Riders, new_match: bool) {
 }
 
 /// Mirror the match into the replicated status entity.
-fn publish_status(world: &mut World) {
-    let status = world.resource::<MatchState>().status();
+fn publish_status(world: &mut World, riders: &Riders) {
+    let status = world.resource::<MatchState>().status(riders);
     let existing = world.resource::<MatchState>().status;
     match existing.and_then(|entity| world.get_mut::<MatchStatus>(entity)) {
         Some(mut current) => {
@@ -431,6 +437,6 @@ mod tests {
         let now = status(&mut world);
         assert_eq!(now.phase, MatchPhase::MatchOver);
         assert_eq!(now.winner.as_deref(), Some("r1"));
-        assert!(now.respawns);
+        assert!(!now.respawn_now, "nobody respawns on the end screen");
     }
 }
