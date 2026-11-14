@@ -1,12 +1,13 @@
 //! Match rules: how a game of several rounds is played and when it ends.
 //!
 //! Plain data and pure decisions, outside the simulation: nothing here is read
-//! by `simulate_players`, replicated or part of `PROTOCOL_ID`. The lab plays
-//! matches with it today; the game server is meant to adopt the same type for
-//! an in-game rounds mode. Later modes (first to K kills, teams) are new
+//! by `simulate_players`, replicated or part of `PROTOCOL_ID`. The lab and the
+//! game server's rounds mode (`docs/specs/rounds-mode.md`) play matches with it. Later modes (first to K kills, teams) are new
 //! fields of `EndRules` and new `RoundEnd` variants, not a new type.
 
 use serde::{Deserialize, Serialize};
+
+use crate::constants::TICK_HZ;
 
 /// What happens to a rider after its death.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -70,6 +71,25 @@ pub struct MatchRules {
     pub end: EndRules,
     #[serde(default = "one_round")]
     pub rounds: u32,
+    /// Ticks between two rounds (the lab has no break and ignores it).
+    #[serde(default = "default_intermission")]
+    pub intermission: u32,
+    /// Ticks between the last round and the next match, showing the standings.
+    #[serde(default = "default_final_intermission")]
+    pub final_intermission: u32,
+}
+
+/// `secs` seconds in ticks.
+pub fn secs_to_ticks(secs: u32) -> u32 {
+    (f64::from(secs) * TICK_HZ) as u32
+}
+
+fn default_intermission() -> u32 {
+    secs_to_ticks(3)
+}
+
+fn default_final_intermission() -> u32 {
+    secs_to_ticks(8)
 }
 
 fn one_round() -> u32 {
@@ -82,6 +102,8 @@ impl Default for MatchRules {
             respawn: Respawn::default(),
             end: EndRules::default(),
             rounds: one_round(),
+            intermission: default_intermission(),
+            final_intermission: default_final_intermission(),
         }
     }
 }
@@ -144,7 +166,7 @@ mod tests {
                 time_limit: Some(100),
                 last_standing: false,
             },
-            rounds: 1,
+            ..MatchRules::default()
         };
         assert_eq!(rules.round_end(99, 0), None);
         assert_eq!(rules.round_end(100, 4), Some(RoundEnd::TimeLimit));

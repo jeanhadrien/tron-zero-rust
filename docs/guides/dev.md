@@ -107,6 +107,16 @@ Environment variables (all opt-in, read by the client; `TRON_BOT_DEBUG=1` is rea
 | `TRON_CONFIG_FILE` | Use this settings file instead of the platform one. |
 | `MANAGER_URL` | Lobby base URL for the server browser (see Settings file for precedence). |
 
+Server environment variables (read once at start; `MAX_PLAYERS`, `PORT`, `WEB_PORT` and the lobby ones are in `docs/guides/building.md`). The game mode is described in `docs/specs/rounds-mode.md`; `scripts/play-local.*` sets `GAME_MODE=rounds`:
+
+| Variable | Effect |
+|----------|--------|
+| `GAME_MODE` | `ffa` (default: free-for-all, manual respawns) or `rounds` (last rider standing per round). |
+| `ROUNDS` | Rounds per match in rounds mode (default 5). |
+| `ROUND_SECS` | Round time limit in seconds (default 90; `0` = no limit). |
+| `INTERMISSION_SECS` | Break between rounds, and before round 1 (default 3). |
+| `FINAL_INTERMISSION_SECS` | Break showing the final standings (default 8). |
+
 **How the simulation works.** Lightyear's link conditioner only delays what a
 peer *receives*, so a client-only conditioner would shape just the server ->
 client direction. The client therefore splits the requested RTT: half goes to

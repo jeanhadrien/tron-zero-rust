@@ -37,18 +37,31 @@ pub struct TestServer {
 
 impl TestServer {
     pub fn new(port: u16, impairment: Impairment) -> Self {
-        Self::build(port, None, impairment)
+        Self::build(port, None, None, impairment)
+    }
+
+    /// A server in rounds mode (what `GAME_MODE=rounds` selects in production).
+    pub fn with_rounds(port: u16, rules: shared::MatchRules, impairment: Impairment) -> Self {
+        Self::build(port, None, Some(rules), impairment)
     }
 
     /// A server that also accepts WebTransport sessions on `web_port`, with a
     /// fresh self-signed certificate (its digest is `endpoint.cert_hash`).
     pub fn with_web(port: u16, web: ts::web::WebEndpoint, impairment: Impairment) -> Self {
-        Self::build(port, Some(web), impairment)
+        Self::build(port, Some(web), None, impairment)
     }
 
-    fn build(port: u16, web: Option<ts::web::WebEndpoint>, impairment: Impairment) -> Self {
+    fn build(
+        port: u16,
+        web: Option<ts::web::WebEndpoint>,
+        rules: Option<shared::MatchRules>,
+        impairment: Impairment,
+    ) -> Self {
         let mut app = App::new();
         app.add_plugins(MinimalPlugins);
+        if let Some(rules) = rules {
+            app.insert_resource(ts::rounds::MatchState::new(rules));
+        }
         ts::add_core(&mut app, port);
         if let Some(web) = web {
             ts::add_web(&mut app, web);

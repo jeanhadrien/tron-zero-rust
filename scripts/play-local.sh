@@ -25,6 +25,8 @@ fi
 
 export TRON_SIM_LATENCY_MS="${TRON_SIM_LATENCY_MS:-20}"
 export TRON_AUTOCONNECT="127.0.0.1:5000"
+# Rounds mode (last rider standing, 5 rounds); GAME_MODE=ffa for the endless free-for-all.
+export GAME_MODE="${GAME_MODE:-rounds}"
 
 cargo run "${cargo_flags[@]}" -p tron-zero-server &
 server_pid=$!

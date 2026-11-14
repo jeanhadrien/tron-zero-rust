@@ -5,7 +5,7 @@ use bevy_egui::{EguiContexts, egui};
 use lightyear::prelude::input::native::InputMarker;
 use lightyear::prelude::{Client, Connected, ControlledBy, Predicted};
 use shared::protocol::RespawnOutcome;
-use shared::{IsAlive, Player, PlayerInput};
+use shared::{IsAlive, MatchPhase, MatchStatus, Player, PlayerInput};
 
 use crate::connection::{ConnectionPhase, Session};
 use crate::input::RespawnUi;
@@ -20,6 +20,7 @@ pub fn prompt(alive: bool, respawn: &RespawnUi) -> &'static str {
         "Respawn requested — waiting for server..."
     } else {
         match respawn.outcome {
+            Some(RespawnOutcome::WaitForNextRound) => WAIT_TEXT,
             Some(RespawnOutcome::NoSafeSpace) => "No safe spawn space. Press Space to retry.",
             Some(RespawnOutcome::NotEligible) => {
                 "Server has not confirmed eligibility. Press Space to retry."
@@ -29,18 +30,42 @@ pub fn prompt(alive: bool, respawn: &RespawnUi) -> &'static str {
     }
 }
 
+const WAIT_TEXT: &str = "Waiting for the next round...";
+
 // Visibility + text in one pure helper so tests skip the egui context:
 // hidden while the menu is open or outside Playing, else the prompt above.
+// While a rounds match runs nobody respawns: the dead wait, and the round
+// banner replaces this panel between rounds.
 pub fn death_message(
     phase: ConnectionPhase,
     menu_open: bool,
     alive: Option<bool>,
     respawn: &RespawnUi,
+    round: Option<&MatchStatus>,
 ) -> &'static str {
     if menu_open || phase != ConnectionPhase::Playing {
-        ""
+        return "";
+    }
+    match (alive, round) {
+        (None, _) => "",
+        (Some(alive), Some(status)) if status.phase != MatchPhase::Free => {
+            if alive || status.phase != MatchPhase::Playing {
+                ""
+            } else {
+                WAIT_TEXT
+            }
+        }
+        (Some(alive), _) => prompt(alive, respawn),
+    }
+}
+
+// Headline of the panel: a crash in free-for-all, merely being out in rounds
+// (a late joiner has not crashed).
+fn title(round: Option<&MatchStatus>) -> &'static str {
+    if super::round::waits_for_round(round) {
+        "OUT OF THE ROUND"
     } else {
-        alive.map_or("", |alive| prompt(alive, respawn))
+        "YOU DIED"
     }
 }
 
@@ -59,7 +84,9 @@ pub fn death_ui(
         ),
     >,
     respawn: Res<RespawnUi>,
+    round: Option<Single<&MatchStatus>>,
 ) {
+    let round = round.as_deref().copied();
     let local = clients.iter().next().and_then(|client| {
         players
             .iter()
@@ -70,6 +97,7 @@ pub fn death_ui(
         menu.open,
         local.map(|(alive, _)| alive.0),
         &respawn,
+        round,
     );
     if text.is_empty() {
         return;
@@ -87,7 +115,7 @@ pub fn death_ui(
                 ui.set_min_width(384.0);
                 ui.vertical_centered(|ui| {
                     ui.label(
-                        egui::RichText::new("YOU DIED")
+                        egui::RichText::new(title(round))
                             .size(36.0)
                             .strong()
                             .color(theme.danger.egui()),
@@ -167,6 +195,34 @@ mod tests {
         assert!(prompt(false, &ui).contains("eligibility"));
     }
 
+    #[test]
+    fn in_rounds_mode_the_dead_wait_and_the_banner_covers_the_breaks() {
+        let respawn = RespawnUi::default();
+        let status = |phase| MatchStatus {
+            rounds: 3,
+            round: 1,
+            phase,
+            ..MatchStatus::default()
+        };
+        let text = |phase| {
+            death_message(
+                ConnectionPhase::Playing,
+                false,
+                Some(false),
+                &respawn,
+                Some(&status(phase)),
+            )
+        };
+        assert!(text(MatchPhase::Playing).contains("next round"));
+        assert!(text(MatchPhase::Intermission).is_empty());
+        assert!(text(MatchPhase::MatchOver).is_empty());
+        // Waiting for opponents is free riding: Space respawns as before.
+        assert!(text(MatchPhase::Free).contains("Press Space"));
+        let mut refused = RespawnUi::default();
+        refused.outcome = Some(RespawnOutcome::WaitForNextRound);
+        assert!(prompt(false, &refused).contains("next round"));
+    }
+
     // Mirrors death_ui's lookup + visibility without an egui context.
     #[derive(Resource, Default)]
     struct Probe(String);
@@ -184,6 +240,7 @@ mod tests {
             ),
         >,
         respawn: Res<RespawnUi>,
+        round: Option<Single<&MatchStatus>>,
         probe: Option<ResMut<Probe>>,
     ) {
         let local = clients.iter().next().and_then(|client| {
@@ -196,6 +253,7 @@ mod tests {
             menu.open,
             local.map(|(alive, _)| alive.0),
             &respawn,
+            round.as_deref().copied(),
         );
         if let Some(mut probe) = probe {
             probe.0 = text.to_owned();

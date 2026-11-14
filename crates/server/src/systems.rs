@@ -15,8 +15,10 @@ use crate::session::SessionLease;
 #[require(shared::LifeGeneration)]
 pub struct Human;
 
+/// A human rider that has not been placed yet (placed on the next fixed tick,
+/// or, in rounds mode, when the next round starts).
 #[derive(Component)]
-struct InitialSpawn;
+pub(crate) struct InitialSpawn;
 
 #[derive(Resource, Default)]
 pub struct PendingRespawns(Vec<(Entity, RespawnRequest)>);
@@ -159,11 +161,20 @@ pub(crate) fn spawn_human(
 /// trusting a player identifier supplied by a client. Exclusive access makes
 /// simultaneous allocations see each other's freshly reset trail and rider.
 pub fn handle_respawns(world: &mut World) {
-    let initial: Vec<_> = world
-        .query_filtered::<(Entity, &ControlledBy, &shared::LifeGeneration), (With<Human>, With<InitialSpawn>)>()
-        .iter(world)
-        .map(|(entity, controlled, generation)| (entity, controlled.owner, generation.0))
-        .collect();
+    // In rounds mode the round controller places riders (and keeps late
+    // joiners and the dead waiting); only a free server spawns and respawns.
+    let rounds_run = world
+        .get_resource::<crate::rounds::MatchState>()
+        .is_some_and(|state| state.is_running());
+    let initial: Vec<_> = if rounds_run {
+        Vec::new()
+    } else {
+        world
+            .query_filtered::<(Entity, &ControlledBy, &shared::LifeGeneration), (With<Human>, With<InitialSpawn>)>()
+            .iter(world)
+            .map(|(entity, controlled, generation)| (entity, controlled.owner, generation.0))
+            .collect()
+    };
     for (entity, owner, generation) in initial {
         world.entity_mut(entity).remove::<InitialSpawn>();
         let outcome = try_respawn(world, owner, RespawnRequest { generation });
@@ -178,7 +189,11 @@ pub fn handle_respawns(world: &mut World) {
 
     let requests = std::mem::take(&mut world.resource_mut::<PendingRespawns>().0);
     for (owner, request) in requests {
-        let outcome = try_respawn(world, owner, request);
+        let outcome = if rounds_run {
+            RespawnOutcome::WaitForNextRound
+        } else {
+            try_respawn(world, owner, request)
+        };
         match outcome {
             RespawnOutcome::Accepted => info!(
                 ?owner,
@@ -190,6 +205,12 @@ pub fn handle_respawns(world: &mut World) {
             }
             RespawnOutcome::NotEligible => {
                 debug!(?owner, "Ignoring ineligible or stale respawn request")
+            }
+            RespawnOutcome::WaitForNextRound => {
+                debug!(
+                    ?owner,
+                    "Respawn refused: the rider waits for the next round"
+                )
             }
         }
         if let Some(mut sender) = world.get_mut::<MessageSender<RespawnReply>>(owner) {
@@ -258,7 +279,14 @@ fn try_respawn(world: &mut World, owner: Entity, request: RespawnRequest) -> Res
     ) else {
         return RespawnOutcome::NoSafeSpace;
     };
-    world.entity_mut(entity).insert((
+    world.entity_mut(entity).insert((placed(&spawn), next_life));
+    RespawnOutcome::Accepted
+}
+
+/// Components of a rider placed at `spawn`: alive, fresh trail, speed and
+/// rubber reset. Shared by respawns and round starts.
+pub(crate) fn placed(spawn: &shared::spawn::SafeSpawn) -> impl Bundle {
+    (
         shared::Position(spawn.position),
         shared::Direction(spawn.direction),
         shared::SpeedMult::base(),
@@ -270,9 +298,7 @@ fn try_respawn(world: &mut World, owner: Entity, request: RespawnRequest) -> Res
         shared::IsSliding(false),
         shared::IsColliding(false),
         shared::ActionState(shared::PlayerInput::None),
-        next_life,
-    ));
-    RespawnOutcome::Accepted
+    )
 }
 
 /// When a client disconnects (Connected removed), find their player entity

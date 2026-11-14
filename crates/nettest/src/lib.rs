@@ -144,6 +144,21 @@ impl Net {
         }
     }
 
+    /// Like [`Net::new`], with the server in rounds mode under `rules`.
+    pub fn new_rounds(rules: shared::MatchRules) -> Self {
+        let port = free_port();
+        Self {
+            server: TestServer::with_rounds(port, rules, Impairment::NONE),
+            clients: Vec::new(),
+            port,
+            web: None,
+            impairment: Impairment::NONE,
+            last_step: Instant::now(),
+            server_wait: server_wait_from_env(),
+            last_server_update: Instant::now(),
+        }
+    }
+
     /// Like [`Net::new`], with a WebTransport listener beside the UDP one.
     pub fn new_with_web(impairment: Impairment) -> Self {
         let port = free_port();

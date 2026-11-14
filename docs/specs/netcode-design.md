@@ -174,6 +174,14 @@ is a "connection" as soon as one packet arrives (see `NETWORK.md`). Lightyear
   `FixedUpdate`, rechecking connected session ownership, dead human eligibility
   and generation. Accepted/no-space/ineligible outcomes are observable through
   replies and structured server logs. Disconnect invalidates queued requests.
+- Rounds mode (`docs/specs/rounds-mode.md`): the server's round controller runs
+  after `resolve_deaths` in `FixedUpdate`, outside `simulate_players`. While a
+  match runs, `handle_respawns` neither spawns joiners nor accepts requests
+  (`RespawnOutcome::WaitForNextRound`); the controller places every rider at a
+  round start with the same reset as a respawn and a new `LifeGeneration` for
+  humans. The match is shown through one replicated, non-predicted `MatchStatus`
+  entity (reason in `protocol.rs`); it changes on transitions, new wins and once
+  per second for the clock. `PROTOCOL_VERSION` 11.
 - An accepted respawn atomically resets the existing entity, not its control or
   replication targets. Serialized spawn allocation sees earlier allocations
   in the same tick. `LifeGeneration` is replicated **and predicted**, so

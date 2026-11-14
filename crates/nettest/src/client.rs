@@ -323,6 +323,18 @@ impl TestClient {
         query.iter(world).next().map(|life| life.0)
     }
 
+    /// The rounds-mode status this client has received, if the server has one.
+    pub fn match_status(&mut self) -> Option<shared::MatchStatus> {
+        let world = self.app.world_mut();
+        let mut query = world.query::<&shared::MatchStatus>();
+        query.iter(world).next().cloned()
+    }
+
+    /// The server's last answer to this client's respawn request.
+    pub fn respawn_outcome(&self) -> Option<shared::protocol::RespawnOutcome> {
+        self.app.world().resource::<tc::input::RespawnUi>().outcome
+    }
+
     /// Queue a press for when the client timeline reaches `tick`.
     pub fn schedule(&mut self, tick: u32, key: KeyCode) {
         self.script.push_back(ScriptedPress { tick, key });
