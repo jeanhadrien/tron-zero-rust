@@ -279,8 +279,8 @@ fn interp(values: &[f32; 5], level: u32) -> f32 {
     values[4]
 }
 
-/// Default arena roster: graded difficulty and mixed personalities so a single
-/// weak bot is not farmed.
+/// The lab's reference pool (`default_roster = true`): the presets at graded
+/// difficulties. The server's roster is `roster::builtin`.
 pub fn default_builds() -> Vec<BotBuild> {
     [
         ("Bastion", Personality::Survivalist, 1000),

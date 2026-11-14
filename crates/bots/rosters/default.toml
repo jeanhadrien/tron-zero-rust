@@ -1,0 +1,121 @@
+# The bots a server seats by default (embedded in the server at build time;
+# BOT_ROSTER=path loads another file instead). Five difficulty rungs, weakest
+# first, each named with its label. Generated with
+#   cargo run --release -p tron-zero-lab -- ladder crates/lab/tuning/duel.ladder.toml --threads 4 --out ladder.toml
+# (a round robin of 1v1 rounds, then a head-to-head check of every pair on
+# held-out seeds), renamed by hand. Outside the ladder, the artists at the end.
+
+[[build]]
+name = "Wisp (Novice)"
+personality = "Trapper"
+[build.knobs]
+horizon_ticks = 8
+noise = 0.95
+reaction_ticks = 36
+variety = 1
+[build.weights]
+clear = 0.8
+commit = 0.3
+control = 0.5
+engage = 0.4
+fill = 0.5
+grind = 4.5
+pocket = 2.0
+pressure = 2.0
+reach = 3.0
+risk = 0.25
+rubber = 0.4
+space = 1.0
+turn = 0.12
+
+[[build]]
+name = "Drifter (Easy)"
+personality = "Trapper"
+[build.knobs]
+horizon_ticks = 14
+noise = 0.855
+reaction_ticks = 33
+variety = 1
+[build.weights]
+clear = 0.8
+commit = 0.3
+control = 0.5
+engage = 0.4
+fill = 0.5
+grind = 4.5
+pocket = 2.0
+pressure = 2.0
+reach = 3.0
+risk = 0.25
+rubber = 0.4
+space = 1.0
+turn = 0.12
+
+[[build]]
+name = "Warden (Medium)"
+personality = "Trapper"
+[build.knobs]
+horizon_ticks = 30
+noise = 0.57
+reaction_ticks = 22
+variety = 2
+[build.weights]
+clear = 0.8
+commit = 0.3
+control = 0.5
+engage = 0.4
+fill = 0.5
+grind = 4.5
+pocket = 2.0
+pressure = 2.0
+reach = 3.0
+risk = 0.25
+rubber = 0.4
+space = 1.0
+turn = 0.12
+
+[[build]]
+name = "Raptor (Hard)"
+personality = "Trapper"
+[build.knobs]
+horizon_ticks = 47
+noise = 0.285
+reaction_ticks = 12
+variety = 2
+[build.weights]
+clear = 0.8
+commit = 0.3
+control = 0.5
+engage = 0.4
+fill = 0.5
+grind = 4.5
+pocket = 2.0
+pressure = 2.0
+reach = 3.0
+risk = 0.25
+rubber = 0.4
+space = 1.0
+turn = 0.12
+
+[[build]]
+name = "Apex (Expert)"
+personality = "Trapper"
+[build.knobs]
+horizon_ticks = 64
+noise = 0.0
+reaction_ticks = 2
+variety = 3
+[build.weights]
+clear = 0.8
+commit = 0.3
+control = 0.5
+engage = 0.4
+fill = 0.5
+grind = 4.5
+pocket = 2.0
+pressure = 2.0
+reach = 3.0
+risk = 0.25
+rubber = 0.4
+space = 1.0
+turn = 0.12

@@ -15,6 +15,9 @@
 //! # ... every weight of `objective::Weights`
 //! ```
 //!
+//! The default roster of the game is `rosters/default.toml` in this crate; the
+//! lab reads the same file by path.
+//!
 //! A roster is exactly `Vec<BotBuild>` in serde form: every knob and weight is
 //! written out, so a roster keeps playing the same after the presets change.
 
@@ -41,6 +44,12 @@ pub fn parse(text: &str) -> Result<Vec<BotBuild>, String> {
         return Err(format!("duplicate build name {:?}", build.name));
     }
     Ok(file.build)
+}
+
+/// The roster the server seats by default, embedded at build time
+/// (`rosters/default.toml`: the difficulty ladder and the artists).
+pub fn builtin() -> Result<Vec<BotBuild>, String> {
+    parse(include_str!("../rosters/default.toml")).map_err(|e| format!("built-in roster: {e}"))
 }
 
 /// Read and parse a roster file.

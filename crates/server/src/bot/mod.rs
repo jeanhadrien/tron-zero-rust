@@ -7,9 +7,11 @@
 
 pub(crate) mod debug;
 
+use std::path::Path;
+
 use bevy::prelude::*;
 use bots::Brain;
-use bots::config::{BotBuild, default_builds};
+use bots::config::BotBuild;
 use bots::plan::Action;
 use bots::schedule::Tier;
 use bots::world::WorldSnapshotBuilder;
@@ -53,9 +55,29 @@ struct BotSlot {
     respawn_ticks: Option<u32>,
 }
 
-/// Spawn the heterogeneous roster from `default_builds`.
-pub fn setup_bots(mut commands: Commands) {
-    let builds = default_builds();
+/// The builds the server seats, one bot each.
+#[derive(Resource)]
+pub struct BotRoster(pub Vec<BotBuild>);
+
+/// The roster from `BOT_ROSTER` (a roster file), else the embedded default.
+pub fn roster_from_env(get: &dyn Fn(&str) -> Option<String>) -> Result<BotRoster, String> {
+    match get("BOT_ROSTER").filter(|path| !path.trim().is_empty()) {
+        Some(path) => {
+            let builds = bots::roster::load(Path::new(path.trim()))?;
+            info!(path = %path, bots = builds.len(), "Bot roster loaded from BOT_ROSTER");
+            Ok(BotRoster(builds))
+        }
+        None => {
+            let builds = bots::roster::builtin()?;
+            info!(bots = builds.len(), "Bot roster: built-in default");
+            Ok(BotRoster(builds))
+        }
+    }
+}
+
+/// Spawn one bot per build of the roster.
+pub fn setup_bots(mut commands: Commands, roster: Res<BotRoster>) {
+    let builds = roster.0.clone();
     let slots = builds
         .iter()
         .enumerate()
@@ -283,4 +305,18 @@ fn random_spawn() -> (Vec2, Vec2) {
     };
 
     (pos, dir)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_roster_is_the_built_in_one_unless_a_file_is_named() {
+        let none = |_: &str| None;
+        let roster = roster_from_env(&none).unwrap();
+        assert!(roster.0.len() >= 5);
+        let missing = |_: &str| Some("no/such/roster.toml".to_owned());
+        assert!(roster_from_env(&missing).is_err());
+    }
 }

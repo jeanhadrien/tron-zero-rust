@@ -12,7 +12,8 @@
 //! check_seeds = 6             # seeds of each head-to-head (check_first = 100000)
 //! rungs = 5
 //! candidates = 12             # at least `rungs`
-//! strength = "win_rate"       # any metric of `tournament::METRICS`
+//! strength = "win_rate"       # a metric of `tournament::METRICS` ("-name": lower is
+//!                             # better), or "duels": round-robin of the candidates
 //! name = "Cadet"              # rungs are "Cadet 1" (weakest) .. "Cadet 5"
 //! degrade_to = 500            # authoring preset whose budget is the weakest end
 //! default_roster = true       # pool, as in a tune file
@@ -30,6 +31,7 @@
 use std::path::{Path, PathBuf};
 
 use bots::config::BotBuild;
+use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::bench::{Bench, mean_metrics};
@@ -78,6 +80,10 @@ fn check_first() -> u64 {
     100_000
 }
 
+/// The strength measure that needs no pool: every candidate plays every
+/// other head to head, and its strength is the share of decided rounds it won.
+const DUELS: &str = "duels";
+
 fn win_rate() -> String {
     "win_rate".into()
 }
@@ -109,7 +115,7 @@ impl Ladder {
 
     pub fn parse(text: &str, dir: &Path) -> Result<Self, String> {
         let file: File = toml::from_str(text).map_err(|e| e.to_string())?;
-        if !METRICS.contains(&file.strength.as_str()) {
+        if file.strength != DUELS && !METRICS.contains(&file.strength.trim_start_matches('-')) {
             return Err(format!("strength: unknown metric {:?}", file.strength));
         }
         if file.rungs < 2 || file.candidates < file.rungs || file.seeds == 0 {
@@ -158,6 +164,39 @@ impl Ladder {
         })
     }
 
+    /// Strength of every candidate (at degradations `ts`) from a round robin:
+    /// the share of decided rounds it won against the other candidates.
+    fn round_robin(&self, ts: &[f64]) -> Result<Vec<f64>, String> {
+        let builds = ts
+            .iter()
+            .enumerate()
+            .map(|(k, &t)| self.degraded(&format!("step-{k}"), t))
+            .collect::<Result<Vec<_>, _>>()?;
+        let pairs: Vec<(usize, usize)> = (0..builds.len())
+            .flat_map(|a| (a + 1..builds.len()).map(move |b| (a, b)))
+            .collect();
+        let results = pairs
+            .par_iter()
+            .map(|&(a, b)| {
+                self.bench
+                    .duel(&builds[a], &builds[b], self.seeds.0, self.seeds.1)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut won = vec![0.0; builds.len()];
+        let mut decided = vec![0.0; builds.len()];
+        for (&(a, b), [wa, wb]) in pairs.iter().zip(results) {
+            won[a] += f64::from(wa);
+            won[b] += f64::from(wb);
+            decided[a] += f64::from(wa + wb);
+            decided[b] += f64::from(wa + wb);
+        }
+        Ok(won
+            .iter()
+            .zip(&decided)
+            .map(|(w, d)| if *d > 0.0 { w / d } else { 0.5 })
+            .collect())
+    }
+
     /// The base build degraded by `t` in `0..=1`: every knob that far along
     /// its way to the weakest value.
     fn degraded(&self, name: &str, t: f64) -> Result<BotBuild, String> {
@@ -176,15 +215,30 @@ impl Ladder {
     }
 
     fn run_on_pool(&self) -> Result<LadderReport, String> {
-        let mut steps = Vec::new();
-        for k in 0..self.candidates {
-            let t = k as f64 / (self.candidates - 1) as f64;
-            let build = self.degraded(&format!("step-{k}"), t)?;
-            let rows = self.bench.play(&build, self.seeds.0, self.seeds.1)?;
-            let strength = mean_metrics(&rows)[self.strength.as_str()]
-                .ok_or_else(|| format!("strength {:?} is undefined in a setup", self.strength))?;
-            steps.push(Step { t, strength });
-        }
+        let ts: Vec<f64> = (0..self.candidates)
+            .map(|k| k as f64 / (self.candidates - 1) as f64)
+            .collect();
+        let strengths = if self.strength == DUELS {
+            self.round_robin(&ts)?
+        } else {
+            let name = self.strength.trim_start_matches('-');
+            let sign = if name == self.strength { 1.0 } else { -1.0 };
+            let mut out = Vec::new();
+            for (k, &t) in ts.iter().enumerate() {
+                let build = self.degraded(&format!("step-{k}"), t)?;
+                let rows = self.bench.play(&build, self.seeds.0, self.seeds.1)?;
+                let value = mean_metrics(&rows)[name].ok_or_else(|| {
+                    format!("strength {:?} is undefined in a setup", self.strength)
+                })?;
+                out.push(value * sign);
+            }
+            out
+        };
+        let steps: Vec<Step> = ts
+            .iter()
+            .zip(strengths)
+            .map(|(&t, strength)| Step { t, strength })
+            .collect();
 
         // Evenly spaced targets between the weakest and strongest measured.
         let low = steps.iter().map(|s| s.strength).fold(f64::MAX, f64::min);

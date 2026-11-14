@@ -116,6 +116,7 @@ Server environment variables (read once at start; `MAX_PLAYERS`, `PORT`, `WEB_PO
 | `ROUND_SECS` | Round time limit in seconds (default 90; `0` = no limit). |
 | `INTERMISSION_SECS` | Break between rounds, and before round 1 (default 3). |
 | `FINAL_INTERMISSION_SECS` | Break showing the final standings (default 8). |
+| `BOT_ROSTER` | Path of a roster file (see § Ladder) to seat instead of the built-in one, `crates/bots/rosters/default.toml` (embedded at build time: five difficulty rungs and the artists). One bot per build; logged at `info!` at start; an invalid file stops the server. |
 
 **How the simulation works.** Lightyear's link conditioner only delays what a
 peer *receives*, so a client-only conditioner would shape just the server ->
@@ -292,7 +293,7 @@ cargo run -p tron-zero-lab -- crates/lab/scenarios/rounds.toml --seed 7
 
 `lab tournament <suite.toml>` plays bot builds against each other and prints
 one markdown table per setup. A suite (format in `crates/lab/src/tournament.rs`)
-lists builds (`default_roster = true` for `bots::config::default_builds`,
+lists builds (`default_roster = true` for the lab's reference pool, `bots::config::default_builds`,
 plus `[[build]]` entries with personality, difficulty and knob overrides),
 setups (rider count, `[setup.match]` rules, arena, optional `tier` pin) and a
 seed count. Each setup plays every lineup of builds over every seed, with each
@@ -437,14 +438,31 @@ wins more rounds than each lower one. The report says whether the ladder is
 monotonic; the roster is written either way.
 
 ```
-cargo run --release -p tron-zero-lab -- ladder crates/lab/tuning/rounds4.ladder.toml --out ladder.toml
+cargo run --release -p tron-zero-lab -- ladder crates/lab/tuning/duel.ladder.toml --out ladder.toml
 ```
+
+`strength = "duels"` (what the game's ladder uses) needs no pool: every
+candidate plays every other head to head in 1v1 rounds and its strength is its
+share of decided rounds. A pool metric such as `win_rate` against the presets
+barely separates builds (most rounds end on the time limit, and the budget
+knobs move survival more than winning), `-name` flips a metric where lower is
+better. `duel.ladder.toml` also degrades past the presets (`[degrade]`), because
+rungs close to each other do not separate in a quick check.
 
 The output is a roster file (`bots::roster`: `[[build]]` entries with
 personality, every knob and every weight). The lab reads it with
-`roster = "ladder.toml"` in a suite or a pool. The server does not load it yet;
-its roster is still `default_builds()` (see `crates/server/src/bot/mod.rs`,
-`setup_bots`).
+`roster = "ladder.toml"` in a suite or a pool.
+
+The server's roster is `crates/bots/rosters/default.toml`: the five rungs of the
+last `duel.ladder.toml` run, weakest first (`Wisp (Novice)`, `Drifter (Easy)`,
+`Warden (Medium)`, `Raptor (Hard)`, `Apex (Expert)`; names carry a difficulty
+label and are at most 16 characters), renamed by hand. `bots::roster::builtin`
+embeds it, so the binary needs no file; `BOT_ROSTER=path` loads another one.
+`tests/roster.rs` checks that each rung beats the one below. After a brain
+change that moves strengths, regenerate the rungs and rename them.
+`default_builds()` (preset personalities at preset difficulties) stays as the
+lab's reference pool (`default_roster = true`), and `difficulty = N` stays the
+authoring vocabulary of scenarios and suites.
 
 Tests: `cargo nextest run -p tron-zero-shared` (unit, property and rollback tests) and
 `cargo nextest run -p tron-zero-lab` (mechanics assertions + golden traces for every

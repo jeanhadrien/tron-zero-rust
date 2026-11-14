@@ -106,6 +106,11 @@ fn main() {
     // Bots: staggered decisions (one epoch per reaction period). The brain
     // writes input after respawns and before the shared simulation; spawning
     // follows it. The debug gate is read once from the environment.
+    let roster = bot::roster_from_env(&|key| std::env::var(key).ok()).unwrap_or_else(|e| {
+        tracing::error!("Invalid configuration: BOT_ROSTER: {e}");
+        std::process::exit(2);
+    });
+    app.insert_resource(roster);
     app.init_resource::<bot::SchedulerConfig>();
     app.insert_resource(bot::BotDebugConfig::from_env());
     app.add_systems(
