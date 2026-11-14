@@ -9,7 +9,7 @@
 
 [[build]]
 name = "Wisp (Novice)"
-personality = "Trapper"
+personality = "trapper"
 [build.knobs]
 horizon_ticks = 8
 noise = 0.95
@@ -32,7 +32,7 @@ turn = 0.12
 
 [[build]]
 name = "Drifter (Easy)"
-personality = "Trapper"
+personality = "trapper"
 [build.knobs]
 horizon_ticks = 14
 noise = 0.855
@@ -55,7 +55,7 @@ turn = 0.12
 
 [[build]]
 name = "Warden (Medium)"
-personality = "Trapper"
+personality = "trapper"
 [build.knobs]
 horizon_ticks = 30
 noise = 0.57
@@ -78,7 +78,7 @@ turn = 0.12
 
 [[build]]
 name = "Raptor (Hard)"
-personality = "Trapper"
+personality = "trapper"
 [build.knobs]
 horizon_ticks = 47
 noise = 0.285
@@ -101,7 +101,7 @@ turn = 0.12
 
 [[build]]
 name = "Apex (Expert)"
-personality = "Trapper"
+personality = "trapper"
 [build.knobs]
 horizon_ticks = 64
 noise = 0.0
@@ -124,7 +124,7 @@ turn = 0.12
 
 [[build]]
 name = "Escher (Artist)"
-personality = "Artist"
+personality = "artist"
 [build.knobs]
 horizon_ticks = 55
 noise = 0.07

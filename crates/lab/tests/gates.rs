@@ -9,6 +9,7 @@
 
 use std::path::{Path, PathBuf};
 
+use bots::config::Personality;
 use tron_zero_lab::tournament::{self, Suite};
 use tron_zero_lab::{Lab, Scenario, trace};
 
@@ -61,7 +62,12 @@ fn the_same_seed_plays_the_same_game() {
 
 /// A hunting puzzle: the rider is `prey`, the bot is `bot`. `personality`
 /// replaces the bot's own. Returns how the prey died and whether the bot lives.
-fn hunt(name: &str, personality: &str, difficulty: u32, seed: u64) -> (Option<String>, bool) {
+fn hunt(
+    name: &str,
+    personality: Personality,
+    difficulty: u32,
+    seed: u64,
+) -> (Option<String>, bool) {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("puzzles")
         .join(format!("{name}.toml"));
@@ -71,7 +77,7 @@ fn hunt(name: &str, personality: &str, difficulty: u32, seed: u64) -> (Option<St
         .iter_mut()
         .find(|r| r.name == "bot")
         .unwrap();
-    bot.bot = Some(personality.into());
+    bot.bot = Some(personality);
     bot.difficulty = difficulty;
     let mut lab = Lab::with_seed(&scenario, seed);
     lab.run(scenario.until, 0);
@@ -88,11 +94,11 @@ fn hunt(name: &str, personality: &str, difficulty: u32, seed: u64) -> (Option<St
 #[test]
 fn fighters_cut_off_a_rider_and_passive_bots_do_not() {
     for difficulty in [2500, 4000] {
-        let (cause, alive) = hunt("intercept", "duelist", difficulty, 1);
+        let (cause, alive) = hunt("intercept", Personality::Duelist, difficulty, 1);
         assert_eq!(cause.as_deref(), Some("trail:bot"), "D{difficulty}");
         assert!(alive, "D{difficulty}: the bot died");
     }
-    let (cause, _) = hunt("intercept", "passive", 4000, 1);
+    let (cause, _) = hunt("intercept", Personality::Passive, 4000, 1);
     assert_ne!(cause.as_deref(), Some("trail:bot"));
 }
 
@@ -104,11 +110,11 @@ fn a_bot_builds_speed_to_run_a_rider_down() {
     // Only the duelist at its best does it; the other personalities and levels
     // do not hunt down a rider that fast (see the fight suite).
     for seed in 1..=3 {
-        let (cause, alive) = hunt("hunt", "duelist", 4000, seed);
+        let (cause, alive) = hunt("hunt", Personality::Duelist, 4000, seed);
         assert_eq!(cause.as_deref(), Some("trail:bot"), "seed {seed}");
         assert!(alive, "seed {seed}: the bot died");
     }
-    let (cause, _) = hunt("hunt", "passive", 4000, 1);
+    let (cause, _) = hunt("hunt", Personality::Passive, 4000, 1);
     assert_ne!(cause.as_deref(), Some("trail:bot"));
 }
 

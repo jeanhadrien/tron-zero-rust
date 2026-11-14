@@ -26,8 +26,10 @@ const NOISE: [f32; 5] = [0.70, 0.40, 0.28, 0.10, 0.0];
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Difficulty(pub u32);
 
-/// What a bot wants; picks its [`Weights`].
+/// What a bot wants; picks its [`Weights`]. Spelled lowercase everywhere
+/// (roster, suite and scenario files, rating ids).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Personality {
     Survivalist,
     Trapper,
@@ -74,8 +76,9 @@ impl BotKnobs {
             .chain([weights.risk, weights.motif, weights.stride])
             .map(f32::to_bits)
             .collect::<Vec<u32>>();
-        personality
-            .label()
+        // The lowercase name keeps rating ids stable.
+        format!("{personality:?}")
+            .to_ascii_lowercase()
             .bytes()
             .chain(knobs.iter().flat_map(|word| word.to_le_bytes()))
             .chain(weights.iter().flat_map(|word| word.to_le_bytes()))
@@ -138,19 +141,6 @@ impl BotBuild {
 }
 
 impl Personality {
-    /// Lowercase name used in rating ids and logs.
-    pub fn label(self) -> &'static str {
-        match self {
-            Personality::Survivalist => "survivalist",
-            Personality::Trapper => "trapper",
-            Personality::Adaptive => "adaptive",
-            Personality::Territorialist => "territorialist",
-            Personality::Duelist => "duelist",
-            Personality::Artist => "artist",
-            Personality::Passive => "passive",
-        }
-    }
-
     /// The objective of this personality. Every one but `Passive` wants to
     /// fight; they differ in how much room and margin they want, how freely
     /// they turn, and how they fight: the survivalist keeps its distance, the

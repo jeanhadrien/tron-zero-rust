@@ -42,7 +42,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use bots::config::BotBuild;
+use bots::config::{BotBuild, Personality};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use shared::{MatchRules, RoundEnd, TICK_HZ};
@@ -256,7 +256,7 @@ fn play(suite: &Suite, game: &Game) -> GameResult {
             rubber: shared::BASE_RUBBER,
             trail: Vec::new(),
             script: Vec::new(),
-            bot: Some("tournament".into()),
+            bot: Some(Personality::Adaptive), // unused: `prebuilt` wins
             difficulty: 0,
             knobs: toml::Table::new(),
             weights: toml::Table::new(),

@@ -101,7 +101,7 @@ fn a_tuned_weight_changes_the_build_and_survives_a_roster() {
     let spec: BuildSpec = toml::from_str(
         r#"
 name = "W"
-bot = "Trapper"
+bot = "trapper"
 [knobs]
 noise = 0.05
 [weights]

@@ -56,7 +56,7 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use bots::config::BotBuild;
+use bots::config::{BotBuild, Personality};
 use bots::schedule::Tier;
 use glam::Vec2;
 use serde::Deserialize;
@@ -128,7 +128,7 @@ pub struct RiderSpec {
     pub script: Vec<String>,
     /// Bot personality; the rider is then driven by the bot brain.
     #[serde(default)]
-    pub bot: Option<String>,
+    pub bot: Option<Personality>,
     /// Authoring preset the bot's knobs start from (see `bots::config::Difficulty`).
     #[serde(default = "default_difficulty")]
     pub difficulty: u32,
@@ -258,7 +258,7 @@ impl RiderSpec {
         };
         let spec = BuildSpec {
             name: self.name.clone(),
-            bot: bot.clone(),
+            bot: *bot,
             difficulty: self.difficulty,
             knobs: self.knobs.clone(),
             weights: self.weights.clone(),

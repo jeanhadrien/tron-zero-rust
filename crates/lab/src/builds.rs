@@ -6,7 +6,7 @@
 //! ```toml
 //! [[build]]                  # or [[pool]] / [base], by file
 //! name = "Tuned"
-//! bot = "trapper"            # personality, any case; `personality` also works
+//! bot = "trapper"            # personality, lowercase; `personality` also works
 //! difficulty = 2500          # optional: the authoring preset the knobs start from
 //! [build.knobs]              # optional: any knob of `bots::config::BotKnobs`
 //! noise = 0.0
@@ -33,7 +33,7 @@ use toml::{Table, Value};
 pub struct BuildSpec {
     pub name: String,
     #[serde(alias = "personality")]
-    pub bot: String,
+    pub bot: Personality,
     #[serde(default = "default_difficulty")]
     pub difficulty: u32,
     #[serde(default)]
@@ -47,20 +47,6 @@ const BUILTIN: &str = "builtin";
 
 fn default_difficulty() -> u32 {
     1500
-}
-
-/// Personality by file name (any case).
-pub fn personality(name: &str) -> Result<Personality, String> {
-    Ok(match name.to_ascii_lowercase().as_str() {
-        "survivalist" => Personality::Survivalist,
-        "trapper" => Personality::Trapper,
-        "adaptive" => Personality::Adaptive,
-        "territorialist" => Personality::Territorialist,
-        "duelist" => Personality::Duelist,
-        "passive" => Personality::Passive,
-        "artist" => Personality::Artist,
-        other => return Err(format!("unknown bot {other:?}")),
-    })
 }
 
 /// `base` with the entries of `over` replacing same-named fields. Unknown
@@ -85,11 +71,10 @@ fn merged<T: Serialize + DeserializeOwned>(
 
 impl BuildSpec {
     pub fn build(&self) -> Result<BotBuild, String> {
-        let personality = personality(&self.bot).map_err(|e| format!("{}: {e}", self.name))?;
         let mut knobs: BotKnobs = merged(&Difficulty(self.difficulty).knobs(), &self.knobs, "knob")
             .map_err(|e| format!("{}: {e}", self.name))?;
         knobs.clamp();
-        let mut build = BotBuild::new(&self.name, personality, knobs);
+        let mut build = BotBuild::new(&self.name, self.bot, knobs);
         build.weights = merged(&build.weights, &self.weights, "weight")
             .map_err(|e| format!("{}: {e}", self.name))?;
         Ok(build)
@@ -222,9 +207,9 @@ fn number(value: &Value) -> String {
 pub fn roster_entry(build: &BotBuild) -> Result<String, String> {
     let (knobs, weights) = tables(build)?;
     let mut out = format!(
-        "[[build]]\nname = {}\npersonality = {:?}\n",
+        "[[build]]\nname = {}\npersonality = {}\n",
         Value::String(build.name.clone()),
-        format!("{:?}", build.personality)
+        Value::try_from(build.personality).map_err(|e| e.to_string())?
     );
     for (title, table) in [("knobs", knobs), ("weights", weights)] {
         out += &format!("[build.{title}]\n");

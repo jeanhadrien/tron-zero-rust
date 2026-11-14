@@ -4,7 +4,7 @@
 //! ```toml
 //! [[build]]
 //! name = "Rung 1"
-//! personality = "Trapper"
+//! personality = "trapper"
 //! [build.knobs]
 //! reaction_ticks = 7
 //! horizon_ticks = 40

@@ -341,7 +341,7 @@ the most room gets the kill. A rider coiling alone has no opponent trail in its
 pocket and stays a self-kill; `lab <scenario>` prints each such death and who
 forced it, to check against `--frames`.
 
-A suite build is `name`, `bot` (personality, any case), optional `difficulty`
+A suite build is `name`, `bot` (personality, lowercase: `trapper`, `duelist`, ...), optional `difficulty`
 (the authoring preset its knobs start from), `[build.knobs]` (any knob of
 `bots::config::BotKnobs`) and `[build.weights]` (any weight of
 `bots::objective::Weights`). Knobs and weights are matched by name against the
