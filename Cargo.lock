@@ -7876,7 +7876,7 @@ dependencies = [
 
 [[package]]
 name = "tron-zero-client"
-version = "0.16.0"
+version = "1.0.0"
 dependencies = [
  "base64 0.22.1",
  "bevy",
@@ -7912,7 +7912,7 @@ dependencies = [
 
 [[package]]
 name = "tron-zero-nettest"
-version = "0.0.13"
+version = "0.0.14"
 dependencies = [
  "bevy",
  "glam 0.32.1",
@@ -7925,7 +7925,7 @@ dependencies = [
 
 [[package]]
 name = "tron-zero-server"
-version = "0.16.0"
+version = "1.0.0"
 dependencies = [
  "aeronet_io",
  "aeronet_webtransport",
@@ -7951,7 +7951,7 @@ dependencies = [
 
 [[package]]
 name = "tron-zero-shared"
-version = "0.16.0"
+version = "1.0.0"
 dependencies = [
  "bevy_app",
  "bevy_ecs",
