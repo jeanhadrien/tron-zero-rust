@@ -72,10 +72,11 @@ Death leaves the same owned rider entity disabled with zero speed, velocity,
 target speed and rubber, no sliding/collision/death-cleanup flags, and an empty
 trail. A red crossed-out rider and **YOU DIED** screen prompt make this visible.
 **Space** requests manual respawn (Enter opens the chat box); there is no
-client-authoritative or automatic human respawn. (In the server's rounds mode
-nobody respawns during a match; riders are placed at each round start, see
-`rounds-mode.md`. Manual respawn is the rule of the free-for-all and of a rounds
-server that waits for a second rider.)
+client-authoritative or automatic human respawn. Whether a request is accepted
+now depends on the server's match rules (`match-rules.md`): during a round with
+`respawn = "anytime"` and while waiting for players, yes; with
+`respawn = "next_round"` the rider waits and is placed at the next round start.
+Bots never ride while no human is connected.
 
 The server accepts a request only for the sending connection's single dead human
 and matching life generation. It resets position, cardinal heading, base speed,
