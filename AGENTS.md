@@ -2,8 +2,8 @@
 
 Status: updated 2026-11-14.
 
-Rust rewrite of **Tron Zero**, a multiplayer Lightcycle (Tron/Armagetron-style)
-arena game. Players ride continuously-moving lightcycles on a 2D arena, leave
+**Tron Zero** is a multiplayer Lightcycle (Tron-style) arena game. Players ride
+continuously-moving lightcycles on a 2D arena, leave
 collidable trails behind them, boost by grinding close to *other* riders'
 trails, and survive via a "rubber" buffer that drains when stuck facing an
 obstacle and regenerates in open space. Death clears the trail; humans respawn
@@ -70,16 +70,13 @@ Code style is enforced by `cargo fmt -- --check` and `cargo clippy --workspace -
 
 # Agent (you)
 
-## Original JavaScript Codebase
+## Armagetron
 
-The original repo is cloned alongside this Rust rewrite at `..\tron-zero-js`
-(`C:\dev\tron-zero-js` when this repository is at `C:\dev\tron-zero-rust`).
-Consult it for existing gameplay behavior and porting details.
-Keep changes to the Rust repository unless explicitly asked to edit the JS code.
-
-## Base Game Armagetron
-
-The base game is available at https://github.com/ArmagetronAd/armagetronad
+[Armagetron Advanced](https://github.com/ArmagetronAd/armagetronad) is design
+inspiration for the genre (lightcycles, rubber, grinding), not a parent
+codebase and not a source to port. It is GPL-2.0-or-later; this repository is
+Apache-2.0. Take the ideas, never the source. Rules of this game live in
+`docs/specs/core-gameplay-mechanics.md`.
 
 ## Project Development
 
