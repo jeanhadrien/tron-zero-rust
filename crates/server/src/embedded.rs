@@ -63,11 +63,15 @@ pub struct HostConfig {
 pub enum HostMode {
     /// A match with the local-play rules, the built-in bots if `bots`.
     Play { bots: bool },
-    /// The tutorial for one player; its status is [`HostHandle::tutorial`].
-    Tutorial,
+    /// The tutorial for one player, from the step file `text` (format:
+    /// `scene::step`); its status is [`HostHandle::tutorial`]. A bad file is
+    /// `HostStatus::Failed`.
+    Tutorial { text: String },
 }
 
 pub use crate::tutorial::{Fail, Phase, TutorialStatus};
+/// The shipped step file.
+pub use scene::step::BUILTIN as TUTORIAL;
 
 /// Where a hosted server is in its life.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -244,15 +248,15 @@ fn build(config: &HostConfig, bind: SocketAddr, tutorial: &StatusCell) -> Result
     let mut app = crate::new_app();
     // A failed bind is an `Err` in an observer: log it, `listening` sees it.
     app.set_error_handler(bevy::ecs::error::warn);
-    match config.mode {
-        HostMode::Play { bots } => {
+    match &config.mode {
+        &HostMode::Play { bots } => {
             let server = ServerConfig::local()?;
             let roster = if bots { server.roster()? } else { Vec::new() };
             let debug = crate::bot::BotDebugConfig::default();
             crate::add_game(&mut app, &server, bind, roster, debug)?;
         }
-        HostMode::Tutorial => {
-            let steps = crate::tutorial::builtin_steps()?;
+        HostMode::Tutorial { text } => {
+            let steps = crate::tutorial::load(text).map_err(|e| format!("tutorial: {e}"))?;
             let director = crate::tutorial::Tutorial::new(steps, Arc::clone(tutorial));
             app.insert_resource(crate::admission::MaxPlayers(1));
             crate::add_core(&mut app, bind, crate::Director::Tutorial(director));

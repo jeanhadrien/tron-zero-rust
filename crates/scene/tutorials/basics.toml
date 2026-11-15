@@ -1,0 +1,15 @@
+# The tutorial the desktop client ships. Format: `crates/scene/src/step.rs`.
+# Times are in seconds. Every step's `solution` must pass in the lab
+# (`cargo nextest run -p tron-zero-lab tutorial`).
+
+[[step]]
+prompt = "Reach the marked square. Turn with your left and right keys."
+timeout = 20
+solution = ["2.9 left"]
+goal = { kind = "reach", area = [300, 200, 600, 500] }
+
+[step.scene]
+[[step.scene.rider]]
+name = "player"
+at = [-600, -600]
+heading = "+x"

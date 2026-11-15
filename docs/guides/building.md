@@ -46,7 +46,7 @@ The official config plays five 90-second last-standing rounds. Other files there
 
 Client (`tron-zero-client`): `MANAGER_URL` (runtime) / `TRONZERO_MANAGER_URL`
 (build time; the release workflow bakes in the production lobby),
-`TRON_CONFIG_FILE`, `TRON_AUTOCONNECT=host:port`, `TRON_SIM_LATENCY_MS`,
+`TRON_CONFIG_FILE`, `TRON_TUTORIAL`, `TRON_AUTOCONNECT=host:port`, `TRON_SIM_LATENCY_MS`,
 `TRON_SIM_JITTER_MS`, `TRON_SIM_LOSS_PCT`, `TRON_BOT_DEBUG`. Semantics are in
 `docs/guides/dev.md`. Settings live in `client.json` under the platform config dir.
 

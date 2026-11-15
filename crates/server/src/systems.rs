@@ -357,6 +357,7 @@ mod tests {
     fn setup() -> (World, Entity, Entity) {
         let mut world = World::new();
         world.init_resource::<PendingRespawns>();
+        world.insert_resource(crate::game::Respawns::ByMatch);
         world.insert_resource(crate::game::MatchState::new(MatchRules::default()));
         world.spawn((Arena, WallSegments(arena_walls(ARENA_WIDTH, ARENA_HEIGHT))));
         let owner = world.spawn((RemoteId(PeerId::Local(1)), Connected)).id();

@@ -14,9 +14,14 @@ use std::sync::{Arc, Mutex};
 use bevy::math::Rect;
 use bevy::prelude::*;
 use lightyear::prelude::*;
-use scene::Scene;
+use scene::step::{Area, Judge, RiderState, Step};
 use shared::spawn::{SpawnField, placed_at};
-use shared::{IsAlive, LifeGeneration, MatchPhase, MatchStatus, Player, Position, TICK_HZ};
+use shared::{
+    IsAlive, IsColliding, LifeGeneration, MatchPhase, MatchStatus, Player, Position, Rubber,
+    SpeedMult, TICK_HZ,
+};
+
+pub use scene::step::Fail;
 
 use crate::systems::{Human, InitialSpawn};
 
@@ -24,39 +29,22 @@ use crate::systems::{Human, InitialSpawn};
 pub const COUNTDOWN_TICKS: u32 = 2 * TICK_HZ as u32;
 /// How long a pass or a fail is shown before the next attempt.
 pub const RESULT_TICKS: u32 = TICK_HZ as u32;
-/// The scene rider the human plays.
-pub const PLAYER: &str = "player";
 
-/// One lesson: a scene, what to do in it, and in how long.
-#[derive(Clone, Debug)]
-pub struct Step {
-    pub prompt: String,
-    pub scene: Scene,
-    pub goal: Goal,
-    /// Ticks the player has, counted from placement.
-    pub timeout: u32,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub enum Goal {
-    /// The player's head inside `area`.
-    Reach { area: Rect },
-}
-
-/// Why an attempt failed.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Fail {
-    Death,
-    Timeout,
-}
-
-impl Fail {
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Death => "You crashed.",
-            Self::Timeout => "Out of time.",
+/// Parse a step file and check it is playable here. On top of
+/// `scene::step::parse`: no walls and no riders but the player, until the
+/// server applies whole scenes (walls replicated, scripted riders and bots
+/// seated), so a step never plays differently here than in the lab.
+pub fn load(text: &str) -> Result<Vec<Step>, String> {
+    let steps = scene::step::parse(text)?;
+    for (i, step) in steps.iter().enumerate() {
+        if !step.scene.walls.is_empty() || step.scene.riders.len() != 1 {
+            return Err(format!(
+                "step {}: walls and riders other than the player are not hosted yet",
+                i + 1
+            ));
         }
     }
+    Ok(steps)
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -84,6 +72,7 @@ pub struct TutorialStatus {
     /// Ticks left in the countdown, the attempt or the result.
     pub ticks_left: u32,
     pub prompt: String,
+    /// The area the goal marks, if any.
     pub goal_area: Option<Rect>,
     pub fail: Option<Fail>,
 }
@@ -100,14 +89,18 @@ pub struct Tutorial {
     /// Ticks spent in the current phase.
     ticks: u32,
     fail: Option<Fail>,
+    /// Decides the attempt while `Playing`; a new one at each placement.
+    judge: Judge,
     out: StatusCell,
     /// The replicated status entity, spawned on first use.
     status: Option<Entity>,
 }
 
 impl Tutorial {
+    /// `steps` must not be empty (`load` checks it).
     pub fn new(steps: Vec<Step>, out: StatusCell) -> Self {
         Self {
+            judge: Judge::new(&steps[0]),
             steps,
             step: 0,
             attempt: 0,
@@ -130,38 +123,27 @@ impl Tutorial {
 
     fn view(&self) -> TutorialStatus {
         let step = self.current();
-        let length = match self.phase {
-            Phase::Countdown => COUNTDOWN_TICKS,
-            Phase::Playing => step.timeout,
-            Phase::Passed | Phase::Failed => RESULT_TICKS,
+        let ticks_left = match self.phase {
+            Phase::Playing => self.judge.ticks_left(),
+            Phase::Countdown => COUNTDOWN_TICKS.saturating_sub(self.ticks),
+            Phase::Passed | Phase::Failed => RESULT_TICKS.saturating_sub(self.ticks),
             Phase::Waiting | Phase::Done => 0,
         };
-        let Goal::Reach { area } = step.goal;
         TutorialStatus {
             step: self.step,
             steps: self.steps.len(),
             attempt: self.attempt,
             phase: self.phase,
-            ticks_left: length.saturating_sub(self.ticks),
+            ticks_left,
             prompt: step.prompt.clone(),
-            goal_area: Some(area),
-            fail: self.fail,
+            goal_area: step.goal.area().map(rect),
+            fail: self.fail.clone(),
         }
     }
 }
 
-/// The first tutorial, until steps are read from a file: reach a square that
-/// needs a turn.
-pub fn builtin_steps() -> Result<Vec<Step>, String> {
-    let scene = Scene::parse("[[rider]]\nname = \"player\"\nat = [-600, -600]\nheading = \"+x\"")?;
-    Ok(vec![Step {
-        prompt: "Reach the marked square. Turn with your left and right keys.".into(),
-        scene,
-        goal: Goal::Reach {
-            area: Rect::new(300.0, 200.0, 600.0, 500.0),
-        },
-        timeout: 20 * TICK_HZ as u32,
-    }])
+fn rect(area: Area) -> Rect {
+    Rect::from_corners(area.min, area.max)
 }
 
 /// Run the tutorial one tick. Runs where `advance_match` runs on a match
@@ -224,20 +206,11 @@ fn start_attempt(world: &mut World) {
 }
 
 /// Put the player at the step's start in a new life, so turns sent for an
-/// earlier attempt are stale.
+/// earlier attempt are stale, and start judging.
 fn place_player(world: &mut World, entity: Entity) {
-    let tutorial = world.resource::<Tutorial>();
-    let Some(rider) = tutorial
-        .current()
-        .scene
-        .riders
-        .iter()
-        .find(|rider| rider.name == PLAYER)
-        .cloned()
-    else {
-        warn!("Tutorial: the step has no {PLAYER:?} rider");
-        return;
-    };
+    let mut tutorial = world.resource_mut::<Tutorial>();
+    tutorial.judge = Judge::new(tutorial.current());
+    let rider = tutorial.current().player().clone();
     let seed = u64::from(tutorial.attempt);
     let spawn = match rider.at {
         Some(at) => Some(at),
@@ -257,16 +230,17 @@ fn place_player(world: &mut World, entity: Entity) {
 
 /// Pass or fail the attempt on this tick's state.
 fn judge(world: &mut World, entity: Entity, alive: bool) {
-    let head = world.get::<Position>(entity).map(|p| p.0);
+    let player = world.entity(entity);
+    let state = RiderState {
+        alive,
+        position: player.get::<Position>().map_or(Vec2::ZERO, |p| p.0),
+        speed: player.get::<SpeedMult>().map_or(0.0, |s| s.0),
+        colliding: player.get::<IsColliding>().is_some_and(|c| c.0),
+        rubber: player.get::<Rubber>().map_or(0.0, |r| r.0),
+    };
     let mut tutorial = world.resource_mut::<Tutorial>();
-    let Goal::Reach { area } = tutorial.current().goal;
-    let outcome = if alive && head.is_some_and(|head| area.contains(head)) {
-        Ok(())
-    } else if !alive {
-        Err(Fail::Death)
-    } else if tutorial.ticks >= tutorial.current().timeout {
-        Err(Fail::Timeout)
-    } else {
+    // Only the player rides yet (`load`), so no other death can matter.
+    let Some(outcome) = tutorial.judge.observe(&state, &[]) else {
         return;
     };
     match outcome {
@@ -316,7 +290,10 @@ mod tests {
     fn setup() -> (World, Entity, StatusCell) {
         let mut world = World::new();
         let out = StatusCell::default();
-        world.insert_resource(Tutorial::new(builtin_steps().unwrap(), out.clone()));
+        world.insert_resource(Tutorial::new(
+            load(scene::step::BUILTIN).unwrap(),
+            out.clone(),
+        ));
         world.spawn((
             shared::Arena,
             shared::ArenaSize::default(),
@@ -398,16 +375,19 @@ mod tests {
         let (mut world, _, out) = setup();
         run(
             &mut world,
-            1 + COUNTDOWN_TICKS + builtin_steps().unwrap()[0].timeout,
+            1 + COUNTDOWN_TICKS + load(scene::step::BUILTIN).unwrap()[0].timeout,
         );
         assert_eq!(status(&out).fail, Some(Fail::Timeout));
     }
 
     #[test]
-    fn the_match_lets_nobody_respawn_in_a_tutorial() {
-        let (mut world, _, _) = setup();
-        let riders = crate::game::Riders::of(&mut world);
-        assert!(!crate::game::may_spawn(&world, true, &riders));
-        assert!(!crate::game::may_spawn(&world, false, &riders));
+    fn the_shipped_tutorial_loads_here_and_unhosted_scenes_do_not() {
+        assert!(!load(scene::step::BUILTIN).unwrap().is_empty());
+        let walled = scene::step::BUILTIN.replace(
+            "[step.scene]",
+            "[step.scene]
+walls = [[0, 0, 0, 100]]",
+        );
+        assert!(load(&walled).unwrap_err().contains("not hosted yet"));
     }
 }

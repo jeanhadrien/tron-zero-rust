@@ -72,12 +72,20 @@ impl MatchState {
     }
 }
 
-/// Whether a dead rider may be placed now. Only a match lets riders respawn;
-/// another director (the tutorial) places them itself, so the answer is no.
+/// Whether respawns happen, set by `add_core` from its director: a match lets
+/// riders respawn by its flow; the tutorial places riders itself.
+#[derive(Resource, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Respawns {
+    ByMatch,
+    Never,
+}
+
+/// Whether a dead rider may be placed now (see [`Respawns`]).
 pub fn may_spawn(world: &World, human: bool, riders: &Riders) -> bool {
-    world
-        .get_resource::<MatchState>()
-        .is_some_and(|state| state.may_spawn(human, riders))
+    match world.resource::<Respawns>() {
+        Respawns::ByMatch => world.resource::<MatchState>().may_spawn(human, riders),
+        Respawns::Never => false,
+    }
 }
 
 /// Every rider in the arena, sorted so placement is stable: what the flow
@@ -292,6 +300,7 @@ mod tests {
     /// state in `rules`.
     fn world_with(rules: MatchRules, n: usize) -> (World, Vec<Entity>) {
         let mut world = World::new();
+        world.insert_resource(Respawns::ByMatch);
         world.insert_resource(MatchState::new(rules));
         world.spawn((
             shared::Arena,

@@ -74,7 +74,9 @@ fn a_tutorial_host_places_its_one_player_after_the_countdown() {
     let port = free_port();
     let host = spawn(HostConfig {
         transport: Transport::udp_loopback([port]),
-        mode: HostMode::Tutorial,
+        mode: HostMode::Tutorial {
+            text: tron_zero_server::embedded::TUTORIAL.into(),
+        },
     });
     assert_eq!(settled(&host), HostStatus::Running { port });
 

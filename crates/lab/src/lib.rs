@@ -19,6 +19,7 @@ pub mod sim;
 pub mod stats;
 pub mod tournament;
 pub mod tune;
+pub mod tutorial;
 
 pub use render::{PALETTE, View, render};
 pub use scenario::Scenario;

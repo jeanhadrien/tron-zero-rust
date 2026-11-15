@@ -12,7 +12,7 @@
 //! speed = 1.0                      # optional starting cruise speed
 //! rubber = 120                     # optional starting rubber
 //! trail = [[-1000, -300]]          # optional corners laid already, oldest first
-//! script = ["40 left", "100 right"] # "<tick> left|right|respawn", tick 0 = placement
+//! script = ["40 left", "100 right"] # "<time> left|right|respawn", 0 = placement
 //!
 //! [[rider]]
 //! name = "trapper"
@@ -22,10 +22,17 @@
 //! reaction_ticks = 4
 //! ```
 //!
+//! Script times are in the [`Time`] unit the file's reader chooses: ticks for
+//! lab scenarios (exact turns for goldens), seconds for tutorial steps.
+//!
 //! [`Scene::from_table`] checks what any runner needs (names, starts, scripts,
 //! builds). [`Scene::check_limits`] adds what a hosted scene must also hold:
 //! caps, in-bounds poses and walls, trails the game could have laid, no
 //! respawn.
+//!
+//! [`step`] is the tutorial's step file, built on scenes.
+
+pub mod step;
 
 use std::collections::{BTreeMap, HashSet};
 
@@ -42,6 +49,29 @@ pub const MAX_WALLS: usize = 64;
 pub const MAX_RIDERS: usize = 8;
 pub const MAX_TRAIL_CORNERS: usize = 64;
 pub const MAX_SCRIPT_ENTRIES: usize = 256;
+
+/// The unit of times written in a file.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Time {
+    Ticks,
+    Seconds,
+}
+
+impl Time {
+    /// `value` in this unit as a whole number of sim ticks, rounded to the
+    /// nearest one.
+    pub fn ticks(self, value: f64) -> Result<u32, String> {
+        let ticks = match self {
+            Self::Ticks => value,
+            Self::Seconds => value * shared::TICK_HZ,
+        }
+        .round();
+        if !(ticks.is_finite() && ticks >= 0.0 && ticks <= f64::from(u32::MAX)) {
+            return Err(format!("bad time {value}"));
+        }
+        Ok(ticks as u32)
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct Scene {
@@ -155,12 +185,13 @@ fn default_difficulty() -> u32 {
 }
 
 impl Scene {
-    pub fn parse(text: &str) -> Result<Self, String> {
-        Self::from_table(toml::from_str(text).map_err(|e| e.to_string())?)
+    pub fn parse(text: &str, time: Time) -> Result<Self, String> {
+        Self::from_table(toml::from_str(text).map_err(|e| e.to_string())?, time)
     }
 
-    /// A scene from its TOML table: every key must be a scene key.
-    pub fn from_table(table: Table) -> Result<Self, String> {
+    /// A scene from its TOML table: every key must be a scene key. Script
+    /// times are in `time`.
+    pub fn from_table(table: Table, time: Time) -> Result<Self, String> {
         let raw: RawScene = Value::Table(table)
             .try_into()
             .map_err(|e: toml::de::Error| e.to_string())?;
@@ -172,7 +203,7 @@ impl Scene {
                 if !names.insert(rider.name.clone()) {
                     return Err(format!("duplicate rider name {:?}", rider.name));
                 }
-                rider.resolve()
+                rider.resolve(time)
             })
             .collect::<Result<_, _>>()?;
         Ok(Self {
@@ -255,7 +286,7 @@ impl Rider {
 }
 
 impl RawRider {
-    fn resolve(self) -> Result<Rider, String> {
+    fn resolve(self, time: Time) -> Result<Rider, String> {
         let name = self.name;
         let at = match (self.at, self.heading) {
             (Some(at), Some(heading)) => Some(SafeSpawn {
@@ -268,7 +299,7 @@ impl RawRider {
         if at.is_none() && !self.trail.is_empty() {
             return Err(format!("{name}: a trail needs a fixed `at`"));
         }
-        let script = parse_script(&name, &self.script)?;
+        let script = parse_script(&name, &self.script, time)?;
         let bot = match self.bot {
             Some(bot) => {
                 if script.values().any(|a| *a != Action::Respawn) {
@@ -297,20 +328,30 @@ impl RawRider {
     }
 }
 
-/// Parse `"<tick> <action>"` entries into one action per tick. The sim
-/// applies at most one turn per tick, so two entries on a tick is an error.
-fn parse_script(name: &str, entries: &[String]) -> Result<BTreeMap<u32, Action>, String> {
+/// Parse `"<time> <action>"` entries, times in `time`, into one action per
+/// tick. The sim applies at most one turn per tick, so two entries on a tick
+/// (after rounding) is an error.
+pub fn parse_script(
+    name: &str,
+    entries: &[String],
+    time: Time,
+) -> Result<BTreeMap<u32, Action>, String> {
     let mut script = BTreeMap::new();
     for entry in entries {
         let mut parts = entry.split_whitespace();
-        let (Some(tick), Some(action), None) = (parts.next(), parts.next(), parts.next()) else {
+        let (Some(at), Some(action), None) = (parts.next(), parts.next(), parts.next()) else {
             return Err(format!(
-                "{name}: expected \"<tick> <action>\", got {entry:?}"
+                "{name}: expected \"<time> <action>\", got {entry:?}"
             ));
         };
-        let tick: u32 = tick
-            .parse()
-            .map_err(|_| format!("{name}: bad tick in {entry:?}"))?;
+        let bad = || format!("{name}: bad time in {entry:?}");
+        let tick = match time {
+            // Ticks stay whole numbers: "1.5" is a typo there, not a time.
+            Time::Ticks => at.parse::<u32>().map_err(|_| bad())?,
+            Time::Seconds => time
+                .ticks(at.parse().map_err(|_| bad())?)
+                .map_err(|_| bad())?,
+        };
         let action = match action.to_ascii_lowercase().as_str() {
             "l" | "left" => Action::Left,
             "r" | "right" => Action::Right,
@@ -318,7 +359,7 @@ fn parse_script(name: &str, entries: &[String]) -> Result<BTreeMap<u32, Action>,
             other => return Err(format!("{name}: unknown action {other:?}")),
         };
         if script.insert(tick, action).is_some() {
-            return Err(format!("{name}: two actions on tick {tick}"));
+            return Err(format!("{name}: two actions on the same tick ({entry:?})"));
         }
     }
     Ok(script)
@@ -328,26 +369,28 @@ fn parse_script(name: &str, entries: &[String]) -> Result<BTreeMap<u32, Action>,
 mod tests {
     use super::*;
 
+    fn parse(text: &str) -> Result<Scene, String> {
+        Scene::parse(text, Time::Ticks)
+    }
+
     fn hosted(text: &str) -> Result<(), String> {
-        Scene::parse(text)?.check_limits(ArenaSize::default())
+        parse(text)?.check_limits(ArenaSize::default())
     }
 
     #[test]
     fn a_rider_needs_both_pose_fields_or_none() {
         let half = "[[rider]]\nname = \"a\"\nat = [0, 0]";
-        assert!(Scene::parse(half).unwrap_err().contains("both"));
-        let safe = Scene::parse("[[rider]]\nname = \"a\"").unwrap();
+        assert!(parse(half).unwrap_err().contains("both"));
+        let safe = parse("[[rider]]\nname = \"a\"").unwrap();
         assert!(safe.riders[0].at.is_none());
     }
 
     #[test]
     fn unknown_keys_and_bad_scripts_fail() {
-        assert!(Scene::parse("[[rider]]\nname = \"a\"\nsped = 2.0").is_err());
-        assert!(
-            Scene::parse("[[rider]]\nname = \"a\"\nscript = [\"5 left\", \"5 right\"]").is_err()
-        );
+        assert!(parse("[[rider]]\nname = \"a\"\nsped = 2.0").is_err());
+        assert!(parse("[[rider]]\nname = \"a\"\nscript = [\"5 left\", \"5 right\"]").is_err());
         let bot = "[[rider]]\nname = \"a\"\nbot = \"duelist\"\nscript = [\"5 left\"]";
-        assert!(Scene::parse(bot).unwrap_err().contains("only respawn"));
+        assert!(parse(bot).unwrap_err().contains("only respawn"));
     }
 
     #[test]
@@ -369,11 +412,29 @@ mod tests {
     #[test]
     fn hosted_scenes_never_respawn_and_stay_capped() {
         let respawn = "[[rider]]\nname = \"a\"\nscript = [\"5 respawn\"]";
-        assert!(Scene::parse(respawn).is_ok());
+        assert!(parse(respawn).is_ok());
         assert!(hosted(respawn).is_err());
         let many: String = (0..=MAX_RIDERS)
             .map(|i| format!("[[rider]]\nname = \"r{i}\"\n"))
             .collect();
         assert!(hosted(&many).is_err());
+    }
+
+    #[test]
+    fn script_times_follow_the_unit() {
+        let text = "[[rider]]
+name = \"a\"
+script = [\"0.5 left\", \"1 right\"]";
+        let scene = Scene::parse(text, Time::Seconds).unwrap();
+        let ticks: Vec<u32> = scene.riders[0].script.keys().copied().collect();
+        assert_eq!(ticks, [60, 120]);
+        assert!(parse(text).is_err(), "ticks are whole numbers");
+        let close = "[[rider]]
+name = \"a\"
+script = [\"0.001 left\", \"0.004 right\"]";
+        assert!(
+            Scene::parse(close, Time::Seconds).is_err(),
+            "same tick once rounded"
+        );
     }
 }

@@ -111,6 +111,7 @@ Environment variables (all opt-in, read by the client; `TRON_BOT_DEBUG=1` is rea
 | `TRON_SIM_LOSS_PCT` | Packet loss percentage applied to each direction. |
 | `TRON_AUTOCONNECT` | `host:port` to join at startup; retries every 1.5 s until the server is up. Any menu action by hand (Cancel, Disconnect, Quit) turns it off, as does reaching play once. |
 | `TRON_CONFIG_FILE` | Use this settings file instead of the platform one. |
+| `TRON_TUTORIAL` | Play this step file instead of the shipped tutorial (`docs/guides/run.md` § 1c). |
 | `MANAGER_URL` | Lobby base URL for the server browser (see Settings file for precedence). |
 
 Server game settings (room name and capacity, match rules, bot roster) come

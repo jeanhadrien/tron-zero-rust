@@ -150,7 +150,7 @@ impl Scenario {
             seed: keys.seed,
             rules: keys.rules,
             tier: keys.tier,
-            scene: Scene::from_table(table)?,
+            scene: Scene::from_table(table, scene::Time::Ticks)?,
             respawn_after,
         };
         scenario.validate()?;

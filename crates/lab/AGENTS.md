@@ -32,6 +32,7 @@ from tick 0, read the trace and the PNG. It also measures bots.
 - `sim.rs` (the `Lab`), `scenario.rs` (lab keys around a `scene::Scene`: `until`, `arena`, `seed`, `[match]`, `tier`, per rider `respawn_after`), `render.rs` (PNG), `builds.rs` (resolving builds and parameters by name, for suites, tune and ladder files; the build format is `bots::spec`).
 - `tournament.rs`, `bench.rs` (a candidate against a pool), `tune.rs`, `ladder.rs`.
 - `stats.rs`, `forced.rs` (forced kills), `pattern.rs` (pattern score).
+- `tutorial.rs` — plays a tutorial step with a player script and the step's `scene::step::Judge` (`tests/tutorial.rs`: every shipped step passes with its solution, not idle).
 - Data: `scenarios/` (+ `*.golden.jsonl`), `puzzles/` (pass/fail bot situations), `suites/`, `tuning/`.
 
 ## Tests

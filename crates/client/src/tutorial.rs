@@ -15,6 +15,8 @@ use bevy::prelude::*;
 /// Ports the tutorial server tries, outside the local-scan range so it never
 /// shows up as a server to join.
 pub const TUTORIAL_PORTS: RangeInclusive<u16> = 5010..=5013;
+/// A step file to play instead of the shipped one (authoring and tests).
+pub const TUTORIAL_FILE_ENV: &str = "TRON_TUTORIAL";
 
 /// The tutorial server, if one runs, and what the client knows of it.
 #[derive(Resource, Default)]
@@ -58,10 +60,28 @@ impl TutorialState {
         self.error = None;
         self.joined = false;
         self.status = None;
+        let text = match steps_text() {
+            Ok(text) => text,
+            Err(err) => {
+                self.error = Some(err);
+                return;
+            }
+        };
         self.handle = Some(server::embedded::spawn(server::embedded::HostConfig {
             transport: server::embedded::Transport::udp_loopback(TUTORIAL_PORTS),
-            mode: server::embedded::HostMode::Tutorial,
+            mode: server::embedded::HostMode::Tutorial { text },
         }));
+    }
+}
+
+/// The step file: `TRON_TUTORIAL` if set, else the shipped one. The server
+/// checks it.
+#[cfg(not(target_family = "wasm"))]
+fn steps_text() -> Result<String, String> {
+    match std::env::var_os(TUTORIAL_FILE_ENV).filter(|p| !p.is_empty()) {
+        Some(path) => std::fs::read_to_string(&path)
+            .map_err(|e| format!("{}: {e}", std::path::Path::new(&path).display())),
+        None => Ok(server::embedded::TUTORIAL.to_owned()),
     }
 }
 
@@ -180,7 +200,10 @@ mod native {
                 step,
                 format!(
                     "{} Try again.",
-                    status.fail.map_or("Failed.", |fail| fail.label())
+                    status
+                        .fail
+                        .as_ref()
+                        .map_or("Failed.".into(), |fail| fail.label())
                 ),
             ),
             Phase::Done => (

@@ -200,6 +200,7 @@ mod tests {
     /// An arena and one dead bot due at once, in a round with respawns.
     fn arena_with_bot() -> (World, Entity) {
         let mut world = World::new();
+        world.insert_resource(crate::game::Respawns::ByMatch);
         world.insert_resource(crate::game::MatchState::in_round(shared::MatchRules {
             respawn: shared::Respawn::After(RESPAWN_DELAY_TICKS),
             ..shared::MatchRules::default()

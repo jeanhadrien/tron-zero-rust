@@ -155,6 +155,7 @@ pub fn add_core(app: &mut App, bind: core::net::SocketAddr, director: Director) 
     // The director judges this tick's deaths, then places riders for the next.
     match director {
         Director::Match(rules) => {
+            app.insert_resource(game::Respawns::ByMatch);
             app.insert_resource(game::MatchState::new(rules));
             app.add_systems(
                 FixedUpdate,
@@ -164,6 +165,7 @@ pub fn add_core(app: &mut App, bind: core::net::SocketAddr, director: Director) 
             );
         }
         Director::Tutorial(tutorial) => {
+            app.insert_resource(game::Respawns::Never);
             app.insert_resource(tutorial);
             app.add_systems(
                 FixedUpdate,

@@ -64,7 +64,13 @@ simulator.
 Menu, **Tutorial**: the client runs a tutorial server on its own thread, on
 `127.0.0.1` only (first free UDP port of 5010-5013), and joins it at once. The
 server judges each step and restarts it on a failure. Leave with **Disconnect**
-in the menu; that also stops the server.
+in the menu; that also stops the server. The next start begins at step 1.
+
+Steps come from `crates/scene/tutorials/basics.toml` (format in
+`crates/scene/src/step.rs`, times in seconds). To try another file without a
+rebuild, set `TRON_TUTORIAL=path` before starting the client; a bad file shows
+"Tutorial failed: ..." in the menu. Check that every step's `solution` passes:
+`cargo nextest run -p tron-zero-lab --test tutorial`.
 
 ### 2. Web client against a local server
 
