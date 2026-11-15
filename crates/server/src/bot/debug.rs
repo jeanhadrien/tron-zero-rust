@@ -45,13 +45,6 @@ pub fn is_truthy(raw: &str) -> bool {
     )
 }
 
-/// Direct env probe for entity spawn paths that run without resource access.
-pub fn enabled_from_env() -> bool {
-    std::env::var(BOT_DEBUG_ENV)
-        .map(|v| is_truthy(&v))
-        .unwrap_or(false)
-}
-
 /// Distance at which an enemy stops counting as a threat.
 const THREAT_RANGE: f32 = 600.0;
 /// Range of the "converging" flag.

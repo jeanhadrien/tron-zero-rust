@@ -127,6 +127,13 @@ impl ServerConfig {
             .map_err(|e| format!("official config: {e}"))
     }
 
+    /// The local-play config (`config/local.toml`: five last-standing rounds
+    /// with the built-in bots), used by the sidecar the client hosts.
+    pub fn local() -> Result<Self, String> {
+        Self::parse(include_str!("../config/local.toml"), Path::new(""))
+            .map_err(|e| format!("local config: {e}"))
+    }
+
     pub fn load(path: &Path) -> Result<Self, String> {
         let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
         let dir = path.parent().unwrap_or(Path::new(""));

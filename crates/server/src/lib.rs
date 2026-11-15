@@ -26,6 +26,43 @@ use lightyear::prelude::server::*;
 use lightyear::prelude::{LinkSystems, MessageSystems};
 use lightyear_transport::plugin::TransportSystems;
 
+/// Pause between main-loop iterations. Packets are read (and replies sent)
+/// only once per iteration, so this bounds the polling latency added to every
+/// message: 1 ms is 0.12 of a tick, in exchange for an idle cost of about 1-2%
+/// of a core, where the flat-out loop burned 100%+ (measured in
+/// `docs/specs/netcode-design.md`). Waiting a full tick (8.3 ms) saves nothing
+/// measurable and adds up to a tick of latency each way.
+const LOOP_WAIT: Duration = Duration::from_millis(1);
+
+/// A headless app that paces its main loop (`LOOP_WAIT`; the default runner
+/// spins flat out and burns a whole core doing nothing). Add logging to it
+/// before [`add_game`] when the caller owns the process.
+pub fn new_app() -> App {
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins.set(bevy::app::ScheduleRunnerPlugin::run_loop(LOOP_WAIT)));
+    app
+}
+
+/// The game a config describes, listening on `bind` over UDP: [`add_core`]
+/// with the config's rules and player cap, and `roster` (empty: no bots) driven
+/// by [`bot::add_bots`]. Shared by the server binary and the hosted server of
+/// the client; each adds what only it has (announce, ranked, web, signals).
+pub fn add_game(
+    app: &mut App,
+    config: &config::ServerConfig,
+    bind: core::net::SocketAddr,
+    roster: Vec<bots::config::BotBuild>,
+    debug: bot::BotDebugConfig,
+) -> Result<(), String> {
+    let rules = config.rules()?;
+    tracing::info!(?rules, "Match rules");
+    app.insert_resource(admission::MaxPlayers(config.server.max_players));
+    add_core(app, bind, rules);
+    tracing::info!(roster = %config.bots.roster, bots = roster.len(), "Bot roster");
+    bot::add_bots(app, roster, debug);
+    Ok(())
+}
+
 /// Everything a server needs except bots, the manager announcer and logging:
 /// Lightyear, protocol, connection lifecycle, the match played by `rules`,
 /// respawns, turns and simulation. Expects `MinimalPlugins` to be present;
@@ -46,7 +83,7 @@ pub fn add_core(app: &mut App, bind: core::net::SocketAddr, rules: shared::Match
     // Disconnect observer — cleans up zombie player entities.
     app.add_observer(systems::on_client_disconnected);
     app.init_resource::<systems::PendingRespawns>();
-    // main.rs inserts the configured cap first; the default only serves tests.
+    // `add_game` inserts the configured cap first; the default only serves tests.
     app.init_resource::<admission::MaxPlayers>();
     // Discovery probes are answered before the transport parses them as packets.
     app.add_systems(

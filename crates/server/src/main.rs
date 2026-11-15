@@ -2,24 +2,13 @@
 
 use bevy::prelude::*;
 use std::sync::Arc;
-use tron_zero_server::{add_core, add_web, admission, announce, bot, config, ranked, systems, web};
-
-/// Pause between main-loop iterations. Packets are read (and replies sent)
-/// only once per iteration, so this bounds the polling latency added to every
-/// message: 1 ms is 0.12 of a tick, in exchange for an idle cost of about 1-2%
-/// of a core, where the flat-out loop burned 100%+ (measured in
-/// `docs/specs/netcode-design.md`). Waiting a full tick (8.3 ms) saves nothing
-/// measurable and adds up to a tick of latency each way.
-const LOOP_WAIT: std::time::Duration = std::time::Duration::from_millis(1);
+use tron_zero_server::{add_game, add_web, announce, bot, config, new_app, ranked, web};
 
 fn main() {
-    let mut app = App::new();
+    let mut app = new_app();
 
-    // Headless: no window. Pace the main loop (`LOOP_WAIT`); the default
-    // runner spins flat out and burns a whole core doing nothing. Logging
-    // goes in first: it installs the global subscriber, and every config
-    // warning below would otherwise be dropped silently.
-    app.add_plugins(MinimalPlugins.set(bevy::app::ScheduleRunnerPlugin::run_loop(LOOP_WAIT)));
+    // Logging goes in first: it installs the global subscriber, and every
+    // config warning below would otherwise be dropped silently.
     app.add_plugins(bevy::log::LogPlugin::default());
 
     // Game settings from the config file (SERVER_CONFIG, else the official
@@ -80,13 +69,17 @@ fn main() {
     if let Some(state) = ranked_state {
         app.insert_resource(ranked::RankedMode(state));
     }
-    app.insert_resource(admission::MaxPlayers(announce_cfg.max_players));
-    let rules = config.rules().unwrap_or_else(|e| {
+    let roster = config.roster().unwrap_or_else(|e| {
+        tracing::error!("Invalid configuration: bots.roster: {e}");
+        std::process::exit(2);
+    });
+    // The bot debug gate is read once from the environment.
+    let debug = bot::BotDebugConfig::from_env();
+    let bind = ([0, 0, 0, 0], announce_cfg.port).into();
+    add_game(&mut app, &config, bind, roster, debug).unwrap_or_else(|e| {
         tracing::error!("Invalid configuration: {e}");
         std::process::exit(2);
     });
-    tracing::info!(?rules, "Match rules");
-    add_core(&mut app, ([0, 0, 0, 0], announce_cfg.port).into(), rules);
     if let Some(endpoint) = web_endpoint {
         // Self-signed certificates expire within 14 days: exit before that
         // (when idle, else at the hard limit) and let the service supervisor
@@ -101,31 +94,6 @@ fn main() {
     // Human/bot counts published for the announcer heartbeat.
     app.insert_resource(announce::PlayerCountProbe(counts));
     app.add_systems(Update, announce::publish_player_count);
-
-    // Bots: staggered decisions (one epoch per reaction period). Dead bots are
-    // placed after the humans' respawns, so both see each other; the brain
-    // then writes input before the shared simulation. The debug gate is read
-    // once from the environment.
-    let roster = config.roster().unwrap_or_else(|e| {
-        tracing::error!("Invalid configuration: bots.roster: {e}");
-        std::process::exit(2);
-    });
-    tracing::info!(roster = %config.bots.roster, bots = roster.len(), "Bot roster");
-    app.insert_resource(bot::BotRoster(roster));
-    app.init_resource::<bot::SchedulerConfig>();
-    app.insert_resource(bot::BotDebugConfig::from_env());
-    app.add_systems(
-        FixedUpdate,
-        (
-            bot::respawn_bots
-                .after(systems::handle_respawns)
-                .before(bot::bot_brain_input),
-            bot::bot_brain_input
-                .after(systems::handle_respawns)
-                .before(shared::simulate_players),
-        ),
-    );
-    app.add_systems(Startup, bot::setup_bots);
 
     app.run();
 

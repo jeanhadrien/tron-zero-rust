@@ -19,7 +19,7 @@ seat bots, announce to the lobby. Lib + bin: logic stays in the lib so
 
 ## Map
 
-- `lib.rs` — `add_core` wires Lightyear and the chain `handle_respawns → apply_turn_commands → simulate_players → count_scores → resolve_deaths → advance_match`. `main.rs` — bots, logging, announcer.
+- `lib.rs` — `new_app` (paced headless app) and `add_game` (rules, player cap, `add_core`, bots) are the one way to build a server, used by `main.rs` and the hosted server; `add_core` wires Lightyear and the chain `handle_respawns → apply_turn_commands → simulate_players → count_scores → resolve_deaths → advance_match`. `main.rs` — logging, env, announcer, web, ranked, signals.
 - `admission` (hello, capacity), `session` (heartbeat, leave, lease), `turns` (sequenced commands, acks), `budget` (per-link abuse limits).
 - `systems` (connect/disconnect, arena, respawn queue), `game` (runs `shared::MatchFlow` on every server: scores, placement, bots off while no human is here, replicated `MatchStatus`; respawns ask `MatchState::may_spawn`).
 - `config` — the server config file (room, `[match]` and `[round]` rules, bots); `config/official.toml` is embedded, `config/local.toml` (`just play`) and `dev-cloud.toml` (`just dev-cloud`) are the local configs.

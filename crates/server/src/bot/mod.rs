@@ -40,9 +40,35 @@ struct RespawnIn(u32);
 #[derive(Resource)]
 pub struct BotRoster(pub Vec<BotBuild>);
 
+/// Seat `roster` (may be empty) and drive it: staggered decisions (one epoch
+/// per reaction period). Dead bots are placed after the humans' respawns, so
+/// both see each other; the brain then writes input before the shared
+/// simulation. Call after `add_core`.
+pub fn add_bots(app: &mut App, roster: Vec<BotBuild>, debug: BotDebugConfig) {
+    app.insert_resource(BotRoster(roster));
+    app.init_resource::<SchedulerConfig>();
+    app.insert_resource(debug);
+    app.add_systems(
+        FixedUpdate,
+        (
+            respawn_bots
+                .after(crate::systems::handle_respawns)
+                .before(bot_brain_input),
+            bot_brain_input
+                .after(crate::systems::handle_respawns)
+                .before(shared::simulate_players),
+        ),
+    );
+    app.add_systems(Startup, setup_bots);
+}
+
 /// Spawn one bot per build of the roster, dead and due at once: `respawn_bots`
 /// places them on the first fixed tick, like any later respawn.
-pub fn setup_bots(mut commands: Commands, roster: Res<BotRoster>) {
+pub fn setup_bots(
+    mut commands: Commands,
+    roster: Res<BotRoster>,
+    debug_cfg: Res<BotDebugConfig>,
+) {
     for (slot, build) in roster.0.iter().enumerate() {
         let entity = commands
             .spawn((
@@ -60,9 +86,9 @@ pub fn setup_bots(mut commands: Commands, roster: Res<BotRoster>) {
                 InterpolationTarget::to_clients(NetworkTarget::All),
             ))
             .id();
-        // Inserts a default `shared::BotDebug` only when `TRON_BOT_DEBUG` is
-        // truthy; the writer overwrites it on the next planning round.
-        if debug::enabled_from_env() {
+        // Inserts a default `shared::BotDebug` only when the debug gate is on;
+        // the writer overwrites it on the next planning round.
+        if debug_cfg.enabled {
             commands.entity(entity).insert(shared::BotDebug::default());
         }
     }
