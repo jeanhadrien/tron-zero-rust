@@ -75,6 +75,7 @@ Tasks live in the root `justfile` (`just` lists them; Windows recipes run in `pw
 - `crates/server/config/official.toml` — the official server config (room, match rules: five 90-second last-standing rounds, bots), embedded in the server; `SERVER_CONFIG=path` loads another one. Game settings live in config files, deployment settings and secrets in env vars.
 - `EXPLORATION.md` (Armagetron ideas), `BOT-AI-EXPLORATION.md` (bot research) — not committed work.
 - `TODO.md` — things to do later, per scope (bot ideas, audio, spectator mode).
+- `plans/telemetry.md` — observability plan (OTLP from servers and clients; draft, not implemented).
 
 # Agent (you)
 
