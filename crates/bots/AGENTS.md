@@ -1,6 +1,6 @@
 # `bots/` — the bot brain
 
-Root rules: `../../AGENTS.md`. Design intent and settled decisions: `BOT-AI-SPECS.md`.
+Root rules: `../../AGENTS.md`. Open bot ideas: `../../TODO.md`.
 
 ## Purpose
 
