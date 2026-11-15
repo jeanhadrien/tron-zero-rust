@@ -1,7 +1,7 @@
 //! Server systems: arena setup, connection lifecycle, respawns.
 
 use bevy::prelude::*;
-use core::net::{IpAddr, Ipv4Addr, SocketAddr};
+use core::net::SocketAddr;
 use lightyear::prelude::server::*;
 use lightyear::prelude::*;
 use shared::protocol::{RespawnChannel, RespawnOutcome, RespawnReply, RespawnRequest};
@@ -15,6 +15,10 @@ use crate::session::SessionLease;
 #[derive(Component)]
 #[require(shared::LifeGeneration)]
 pub struct Human;
+
+/// Address the game's UDP listener binds.
+#[derive(Resource, Debug, Clone, Copy)]
+pub struct UdpBind(pub SocketAddr);
 
 /// A human rider that has not been placed yet (placed on the next fixed tick
 /// when the match allows it, else when the next round starts).
@@ -58,7 +62,7 @@ pub fn collect_respawn_requests(
 /// Spawn the arena entity with replication, then start the server listener
 /// (and the WebTransport one, when configured).
 pub fn spawn_server_arena_and_start(
-    port: Res<crate::announce::UdpPort>,
+    bind: Res<UdpBind>,
     web: Option<Res<crate::web::WebEndpoint>>,
     mut commands: Commands,
 ) {
@@ -76,10 +80,7 @@ pub fn spawn_server_arena_and_start(
         .spawn((
             RawServer,
             ServerUdpIo::default(),
-            LocalAddr(SocketAddr::new(
-                IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)),
-                port.0,
-            )),
+            LocalAddr(bind.0),
         ))
         .id();
     commands.trigger(Start { entity: server });

@@ -29,8 +29,8 @@ use lightyear_transport::plugin::TransportSystems;
 /// Everything a server needs except bots, the manager announcer and logging:
 /// Lightyear, protocol, connection lifecycle, the match played by `rules`,
 /// respawns, turns and simulation. Expects `MinimalPlugins` to be present;
-/// `port` is the UDP port to bind. Browser players need [`add_web`] on top.
-pub fn add_core(app: &mut App, port: u16, rules: shared::MatchRules) {
+/// `bind` is the UDP address to listen on. Browser players need [`add_web`] on top.
+pub fn add_core(app: &mut App, bind: core::net::SocketAddr, rules: shared::MatchRules) {
     app.insert_resource(game::MatchState::new(rules));
     // Required by lightyear replication internals.
     app.add_plugins(bevy::state::app::StatesPlugin);
@@ -40,7 +40,7 @@ pub fn add_core(app: &mut App, port: u16, rules: shared::MatchRules) {
     // Register components + input type so protocol checksums match.
     shared::protocol::register_protocol(app);
 
-    app.insert_resource(announce::UdpPort(port));
+    app.insert_resource(systems::UdpBind(bind));
     // New client observer — runs after RawConnectionPlugin sets up Connected + ClientOf.
     app.add_observer(systems::on_client_connected);
     // Disconnect observer — cleans up zombie player entities.

@@ -33,10 +33,6 @@ pub const EVICTION_BUDGET: Duration = Duration::from_secs(40);
 const WEB_OPEN_WAIT_STEP: Duration = Duration::from_millis(100);
 const WEB_OPEN_WAIT_STEPS: u32 = 50;
 
-/// UDP port the game listener binds (also the register default).
-#[derive(Resource, Debug, Clone, Copy)]
-pub struct UdpPort(pub u16);
-
 /// Handle to the live counts, written by Bevy and read by the announcer thread.
 #[derive(Resource, Debug, Clone)]
 pub struct PlayerCountProbe(pub Arc<LiveCounts>);

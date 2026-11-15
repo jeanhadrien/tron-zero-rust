@@ -86,7 +86,7 @@ fn main() {
         std::process::exit(2);
     });
     tracing::info!(?rules, "Match rules");
-    add_core(&mut app, announce_cfg.port, rules);
+    add_core(&mut app, ([0, 0, 0, 0], announce_cfg.port).into(), rules);
     if let Some(endpoint) = web_endpoint {
         // Self-signed certificates expire within 14 days: exit before that
         // (when idle, else at the hard limit) and let the service supervisor
