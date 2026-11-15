@@ -53,5 +53,8 @@ The lab wraps a scene in its scenario files; the tutorial's step file
 ## Test
 
 `cargo nextest run -p tron-zero-scene` (parsing, limits, the judge). Behaviour of
-a scene is checked in the lab; every shipped step's `solution` passes in
-`cargo nextest run -p tron-zero-lab --test tutorial`.
+a scene is checked in the lab; every shipped step's `solution` passes, and
+idling and its `must_fail` near misses do not, in
+`cargo nextest run -p tron-zero-lab --test tutorial`. A new step: sweep the
+turn time in the lab to find the pass window, put `solution` mid-window and a
+`must_fail` just before it.

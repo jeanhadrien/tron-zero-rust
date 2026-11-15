@@ -459,13 +459,13 @@ mod tests {
 
     const RIDERS: &str = include_str!("../../scene/fixtures/riders.toml");
 
+    /// A tutorial of the first shipped step only (reach), a human not placed.
     fn setup() -> (World, Entity, StatusCell) {
         let mut world = World::new();
         let out = StatusCell::default();
-        world.insert_resource(Tutorial::new(
-            load(scene::step::BUILTIN).unwrap(),
-            out.clone(),
-        ));
+        let mut steps = load(scene::step::BUILTIN).unwrap();
+        steps.truncate(1);
+        world.insert_resource(Tutorial::new(steps, out.clone()));
         world.init_resource::<DriveTick>();
         world.init_resource::<TickDeaths>();
         world.spawn((
@@ -666,8 +666,11 @@ mod tests {
 
     #[test]
     fn an_attempt_sets_the_steps_walls_on_the_arena() {
-        let text = scene::step::BUILTIN
-            .replace("[step.scene]", "[step.scene]\nwalls = [[0, -100, 0, 100]]");
+        let text = scene::step::BUILTIN.replacen(
+            "[step.scene]",
+            "[step.scene]\nwalls = [[0, -100, 0, 100]]",
+            1,
+        );
         let (mut world, _, _) = setup();
         world.insert_resource(Tutorial::new(load(&text).unwrap(), StatusCell::default()));
         run(&mut world, 1);

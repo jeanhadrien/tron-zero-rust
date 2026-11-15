@@ -13,3 +13,41 @@ goal = { kind = "reach", area = [300, 200, 600, 500] }
 name = "player"
 at = [-600, -600]
 heading = "+x"
+
+# Rubber: the edge ahead stops the player; a turn before rubber runs out
+# saves them. Turning before the contact costs nothing and does not pass.
+[[step]]
+prompt = "Ride into the edge. It stops you and drains your rubber: turn away before it runs out, then stay alive."
+timeout = 20
+solution = ["1.75 left"]
+must_fail = [["1.40 left"]]
+goal = { kind = "rubber_spent_then_alive" }
+
+[step.scene]
+[[step.scene.rider]]
+name = "player"
+at = [400, 0]
+heading = "+x"
+
+# Grind: riding against another rider's trail speeds you up. The guide's
+# laid trail crosses the player's path; the guide rides away along the edge.
+[[step]]
+prompt = "Ride into the guide's trail, let it stop you, then turn along it. Stay against it to speed up."
+timeout = 10
+solution = ["1.20 right"]
+must_fail = [["0.95 right"]]
+goal = { kind = "speed_at_least", speed = 1.5 }
+fail = { rider_dead = ["guide"] }
+
+[step.scene]
+[[step.scene.rider]]
+name = "player"
+at = [0, -400]
+heading = "+y"
+
+[[step.scene.rider]]
+name = "guide"
+at = [850, 0]
+heading = "+x"
+trail = [[-850, 0]]
+script = ["0.15 left", "2.65 left", "7.65 left"]

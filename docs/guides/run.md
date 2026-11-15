@@ -69,7 +69,8 @@ in the menu; that also stops the server. The next start begins at step 1.
 Steps come from `crates/scene/tutorials/basics.toml` (format in
 `crates/scene/src/step.rs`, times in seconds). To try another file without a
 rebuild, set `TRON_TUTORIAL=path` before starting the client; a bad file shows
-"Tutorial failed: ..." in the menu. Check that every step's `solution` passes:
+"Tutorial failed: ..." in the menu. Check that every step's `solution` passes
+and its `must_fail` scripts do not:
 `cargo nextest run -p tron-zero-lab --test tutorial`.
 
 ### 2. Web client against a local server

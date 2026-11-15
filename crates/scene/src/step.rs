@@ -6,6 +6,7 @@
 //! prompt = "Reach the marked square."
 //! timeout = 20                      # seconds from placement
 //! solution = ["2.9 left"]           # the player's turns that pass (lab check)
+//! must_fail = [["1.5 left"]]        # optional: near misses that must not pass
 //! goal = { kind = "reach", area = [300, 200, 600, 500] }
 //! # or { kind = "rubber_spent_then_alive" }, { kind = "speed_at_least", speed = 1.5 },
 //! #    { kind = "kill", rider = "bot" }
@@ -38,6 +39,12 @@ pub const SEED: u64 = 0;
 /// How long the player must stay alive after a wall contact ends.
 pub const SURVIVE_SECS: f64 = 1.5;
 const SURVIVE_TICKS: u32 = (SURVIVE_SECS * shared::TICK_HZ) as u32;
+
+/// The cruise speed grinding one wall at contact settles at (spec §4:
+/// `1 + GRIND_ACCEL_PER_SEC / SPEED_DECAY_PER_SEC * grind`). A speed goal
+/// must be above it, or riding along the arena edge passes.
+const WALL_TERMINAL_SPEED: f32 =
+    1.0 + shared::GRIND_ACCEL_PER_SEC / shared::SPEED_DECAY_PER_SEC * shared::ARENA_WALL_GRIND;
 
 /// The tutorial the client ships.
 pub const BUILTIN: &str = include_str!("../tutorials/basics.toml");
@@ -73,6 +80,8 @@ pub struct Step {
     pub fails: Fails,
     /// The player's script that passes, counted from placement.
     pub solution: BTreeMap<u32, Action>,
+    /// Near misses: player scripts that must not pass (lab check).
+    pub must_fail: Vec<BTreeMap<u32, Action>>,
     pub scene: Scene,
     /// Index of the [`PLAYER`] rider in `scene.riders`.
     pub player: usize,
@@ -247,6 +256,8 @@ struct RawStep {
     #[serde(default)]
     fail: RawFails,
     solution: Vec<String>,
+    #[serde(default)]
+    must_fail: Vec<Vec<String>>,
     scene: Table,
 }
 
@@ -326,9 +337,10 @@ impl RawStep {
             },
             RawGoal::RubberSpentThenAlive {} => Goal::RubberSpentThenAlive,
             RawGoal::SpeedAtLeast { speed } => {
-                if !(speed > player.speed && speed <= shared::MAX_SPEED_MULT) {
+                let floor = player.speed.max(WALL_TERMINAL_SPEED);
+                if !(speed > floor && speed <= shared::MAX_SPEED_MULT) {
                     return Err(format!(
-                        "speed {speed} must be above the start speed and at most {}",
+                        "speed {speed} must be above {floor} (start speed, one wall's grind)                          and at most {}",
                         shared::MAX_SPEED_MULT
                     ));
                 }
@@ -355,6 +367,11 @@ impl RawStep {
             goal,
             fails,
             solution: parse_script(PLAYER, &self.solution, Time::Seconds)?,
+            must_fail: self
+                .must_fail
+                .iter()
+                .map(|script| parse_script(PLAYER, script, Time::Seconds))
+                .collect::<Result<_, _>>()?,
             scene,
             player: index,
         })
@@ -409,6 +426,8 @@ mod tests {
         assert!(step("{ kind = \"reach\", area = [900, 900, 1100, 1100] }", "").is_err());
         assert!(step("{ kind = \"speed_at_least\", speed = 1.0 }", "").is_err());
         assert!(step("{ kind = \"speed_at_least\", speed = 9.0 }", "").is_err());
+        assert!(step("{ kind = \"speed_at_least\", speed = 1.4 }", "").is_err());
+        assert!(step("{ kind = \"speed_at_least\", speed = 1.5 }", "").is_ok());
         assert!(step("{ kind = \"kill\", rider = \"player\" }", "").is_err());
         assert!(step(reach, "fail = { rider_dead = [\"ghost\"] }\n").is_err());
         assert!(step("{ kind = \"fly\" }", "").is_err());

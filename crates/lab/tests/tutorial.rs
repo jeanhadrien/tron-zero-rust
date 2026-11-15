@@ -1,4 +1,5 @@
-//! Every step of the shipped tutorial is solvable and not trivial; steps with
+//! Every step of the shipped tutorial is solvable and not trivial (idling and
+//! its near misses do not pass); steps with
 //! other riders play the same in every run, as the hosted server plays them
 //! (`crates/scene/fixtures/riders.toml`, also run by `server::tutorial`).
 
@@ -16,6 +17,9 @@ fn every_shipped_step_passes_with_its_solution_and_not_idle() {
         let n = i + 1;
         assert_eq!(play(step, &step.solution), Ok(()), "step {n}: the solution");
         assert!(play(step, &BTreeMap::new()).is_err(), "step {n}: idling");
+        for (k, script) in step.must_fail.iter().enumerate() {
+            assert!(play(step, script).is_err(), "step {n}: near miss {}", k + 1);
+        }
     }
 }
 
