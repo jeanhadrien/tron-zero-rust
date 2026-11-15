@@ -1,0 +1,40 @@
+# Inner walls stop riders from both sides, whatever their winding. Wall w1
+# winds +x, w2 winds -x; one rider meets each wall from below, one from above.
+# The `*_back` riders stop at a wall, step aside and turn back into it.
+until = 400
+walls = [
+  [-700, 0, -100, 0],
+  [700, 0, 100, 0],
+]
+
+[[rider]]
+name = "w1_below"
+at = [-550, -300]
+heading = "+y"
+
+[[rider]]
+name = "w1_above"
+at = [-250, 300]
+heading = "-y"
+
+[[rider]]
+name = "w2_below"
+at = [250, -300]
+heading = "+y"
+
+[[rider]]
+name = "w2_above"
+at = [550, 300]
+heading = "-y"
+
+[[rider]]
+name = "w1_back"
+at = [-400, -600]
+heading = "+y"
+script = ["205 right", "208 left"]
+
+[[rider]]
+name = "w2_back"
+at = [400, 600]
+heading = "-y"
+script = ["205 right", "208 left"]

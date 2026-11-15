@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/shared", "crates/bots", "crates/server", "crates/client", "crates/lab", "crates/nettest"]
+members = ["crates/shared", "crates/bots", "crates/scene", "crates/server", "crates/client", "crates/lab", "crates/nettest"]
 resolver = "2"
 
 # Code style checked by `cargo clippy --workspace --all-targets -- -D warnings`

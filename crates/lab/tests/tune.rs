@@ -5,7 +5,8 @@
 
 use std::path::Path;
 
-use tron_zero_lab::builds::{self, BuildSpec};
+use bots::spec::BuildSpec;
+use tron_zero_lab::builds;
 use tron_zero_lab::ladder::Ladder;
 use tron_zero_lab::tune::Tune;
 

@@ -249,6 +249,31 @@ fn head_on_kills_both_on_each_others_trail() {
 }
 
 #[test]
+fn inner_walls_stop_riders_from_both_sides_in_both_windings() {
+    // `contacts` lets a rider at exact contact escape an owner-less segment
+    // on one side of its winding: a rider must never get that close.
+    let lab = run("inner_wall");
+    let check = |names: &[&str]| {
+        let died: Vec<Vec<u32>> = names
+            .iter()
+            .map(|name| ticks(&lab, name, |k| matches!(k, EventKind::Death { .. })))
+            .collect();
+        for (name, died) in names.iter().zip(&died) {
+            assert_eq!(death_causes(&lab, name), ["wall"], "{name}");
+            assert_eq!(died, &died[..1], "{name}");
+        }
+        assert!(died.windows(2).all(|d| d[0] == d[1]), "{died:?}");
+        for name in names {
+            let below = name.ends_with("below") || name.starts_with("w1_back");
+            let y = lab.rider(name).unwrap().deaths[0].y;
+            assert!(if below { y < 0.0 } else { y > 0.0 }, "{name} at {y}");
+        }
+    };
+    check(&["w1_below", "w1_above", "w2_below", "w2_above"]);
+    check(&["w1_back", "w2_back"]);
+}
+
+#[test]
 fn closing_a_loop_dies_on_own_trail() {
     let lab = run("own_trail");
     assert_eq!(death_causes(&lab, "a"), ["own_trail"]);

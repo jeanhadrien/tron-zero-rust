@@ -1,19 +1,18 @@
-//! Scenario files: a small TOML description of an arena, riders and their
-//! per-tick scripts. The sim is deterministic, so exploring a situation means
-//! editing the file and re-running from tick 0.
+//! Scenario files: a scene (`scene::Scene`: walls, riders, scripts, bots) plus
+//! what only the lab needs to run it. The sim is deterministic, so exploring a
+//! situation means editing the file and re-running from tick 0.
 //!
 //! ```toml
 //! until = 600                      # ticks to simulate (120 per second)
 //! arena = [2400, 2400]             # optional, defaults to the game arena
-//! walls = [[-200, 100, 200, 100]]  # optional extra segments x1 y1 x2 y2
+//! walls = [[-200, 100, 200, 100]]  # scene: optional extra segments x1 y1 x2 y2
 //!
-//! [[rider]]
+//! [[rider]]                        # scene riders, see the `scene` crate
 //! name = "a"
 //! at = [-1000, 0]
-//! heading = "+x"                   # +x | -x | +y | -y (y points up)
-//! speed = 1.0                      # optional starting target speed
-//! rubber = 120                     # optional starting rubber
+//! heading = "+x"
 //! script = ["40 left", "100 right", "300 respawn"]
+//! respawn_after = 240              # lab: optional, respawn N ticks after a death
 //! ```
 //!
 //! Bot arenas: a rider with `bot` is driven by the server's bot brain instead
@@ -25,15 +24,6 @@
 //! seed = 7
 //! tier = "full"                    # optional: pin the bots' level of detail
 //!                                  # (full | t1 | t2); default follows the rider count
-//!
-//! [[rider]]
-//! name = "trapper"
-//! bot = "trapper"                  # survivalist | trapper | adaptive |
-//! difficulty = 2500                # territorialist | duelist | artist | passive
-//! respawn_after = 240              # optional: respawn N ticks after a death
-//!
-//! [rider.knobs]                    # optional: override single knobs of the preset
-//! reaction_ticks = 4               # (also horizon_ticks, variety, noise)
 //! ```
 //!
 //! Matches: a `[match]` block (`shared::MatchRules`) plays rounds. The match
@@ -53,39 +43,50 @@
 //! time_limit = 1800                # and/or after this many ticks
 //! ```
 
-use std::collections::BTreeMap;
 use std::path::Path;
 
-use bots::config::{BotBuild, Personality};
 use bots::schedule::Tier;
-use glam::Vec2;
+use scene::Scene;
 use serde::Deserialize;
 use shared::MatchRules;
+use toml::{Table, Value};
 
-use crate::builds::BuildSpec;
+pub use scene::{Action, Heading};
 
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Debug)]
 pub struct Scenario {
-    #[serde(default = "default_until")]
     pub until: u32,
-    #[serde(default)]
     pub arena: Option<[f32; 2]>,
-    #[serde(default)]
-    pub walls: Vec<[f32; 4]>,
     /// Seeds spawn placement for riders without `at`, and every respawn.
-    #[serde(default)]
     pub seed: u64,
     /// Rounds, respawn policy and end condition; none keeps the free run.
-    #[serde(default, rename = "match")]
     pub rules: Option<MatchRules>,
     /// Pin the bots' level-of-detail tier instead of deriving it from the
     /// number of living riders.
-    #[serde(default)]
     pub tier: Option<TierPin>,
-    #[serde(rename = "rider")]
-    pub riders: Vec<RiderSpec>,
+    pub scene: Scene,
+    /// Per scene rider: respawn automatically this many ticks after each death.
+    pub respawn_after: Vec<Option<u32>>,
 }
+
+/// The keys of a scenario file that are not scene keys.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LabKeys {
+    #[serde(default = "default_until")]
+    until: u32,
+    #[serde(default)]
+    arena: Option<[f32; 2]>,
+    #[serde(default)]
+    seed: u64,
+    #[serde(default, rename = "match")]
+    rules: Option<MatchRules>,
+    #[serde(default)]
+    tier: Option<TierPin>,
+}
+
+const LAB_KEYS: [&str; 5] = ["until", "arena", "seed", "match", "tier"];
+const LAB_RIDER_KEY: &str = "respawn_after";
 
 /// `Tier` in scenario spelling.
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
@@ -106,104 +107,8 @@ impl TierPin {
     }
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct RiderSpec {
-    pub name: String,
-    /// With `heading`, a fixed start; without, a seeded safe spawn.
-    #[serde(default)]
-    pub at: Option<[f32; 2]>,
-    #[serde(default)]
-    pub heading: Option<Heading>,
-    #[serde(default = "default_speed")]
-    pub speed: f32,
-    #[serde(default = "default_rubber")]
-    pub rubber: f32,
-    /// Corners of a trail the rider already has, oldest first; the last leg
-    /// runs from the last corner to `at`. For puzzles: a trail to be closed in
-    /// by, without scripting the ride that lays it.
-    #[serde(default)]
-    pub trail: Vec<[f32; 2]>,
-    #[serde(default)]
-    pub script: Vec<String>,
-    /// Bot personality; the rider is then driven by the bot brain.
-    #[serde(default)]
-    pub bot: Option<Personality>,
-    /// Authoring preset the bot's knobs start from (see `bots::config::Difficulty`).
-    #[serde(default = "default_difficulty")]
-    pub difficulty: u32,
-    /// Knob overrides (any knob of `bots::config::BotKnobs`) on top of the preset.
-    #[serde(default)]
-    pub knobs: toml::Table,
-    /// Weight overrides (any weight of `bots::objective::Weights`) on top of
-    /// the personality's.
-    #[serde(default)]
-    pub weights: toml::Table,
-    /// Respawn automatically this many ticks after each death.
-    #[serde(default)]
-    pub respawn_after: Option<u32>,
-    /// A ready-made build (tournaments); wins over `bot`/`difficulty`/`knobs`.
-    #[serde(skip)]
-    pub prebuilt: Option<BotBuild>,
-}
-
-#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
-pub enum Heading {
-    #[serde(rename = "+x")]
-    PosX,
-    #[serde(rename = "-x")]
-    NegX,
-    #[serde(rename = "+y")]
-    PosY,
-    #[serde(rename = "-y")]
-    NegY,
-}
-
-impl Heading {
-    pub fn vector(self) -> Vec2 {
-        match self {
-            Self::PosX => Vec2::X,
-            Self::NegX => Vec2::NEG_X,
-            Self::PosY => Vec2::Y,
-            Self::NegY => Vec2::NEG_Y,
-        }
-    }
-
-    /// Scenario spelling of a cardinal sim heading (`"?"` if not cardinal).
-    pub fn label(direction: Vec2) -> &'static str {
-        [Self::PosX, Self::NegX, Self::PosY, Self::NegY]
-            .into_iter()
-            .find(|heading| heading.vector() == direction)
-            .map_or("?", |heading| match heading {
-                Self::PosX => "+x",
-                Self::NegX => "-x",
-                Self::PosY => "+y",
-                Self::NegY => "-y",
-            })
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Action {
-    Left,
-    Right,
-    Respawn,
-}
-
 fn default_until() -> u32 {
     600
-}
-
-fn default_speed() -> f32 {
-    1.0
-}
-
-fn default_rubber() -> f32 {
-    shared::BASE_RUBBER
-}
-
-fn default_difficulty() -> u32 {
-    1500
 }
 
 impl Scenario {
@@ -212,86 +117,69 @@ impl Scenario {
         Self::parse(&text).map_err(|e| format!("{}: {e}", path.display()))
     }
 
+    /// Split the file into lab keys and a scene, each checked for unknown
+    /// keys, then check what the TOML types cannot.
     pub fn parse(text: &str) -> Result<Self, String> {
-        let scenario: Self = toml::from_str(text).map_err(|e| e.to_string())?;
+        let mut table: Table = toml::from_str(text).map_err(|e| e.to_string())?;
+        let mut lab = Table::new();
+        for key in LAB_KEYS {
+            if let Some(value) = table.remove(key) {
+                lab.insert(key.into(), value);
+            }
+        }
+        let mut respawn_after = Vec::new();
+        if let Some(Value::Array(riders)) = table.get_mut("rider") {
+            for rider in riders {
+                let value = match rider {
+                    Value::Table(rider) => rider.remove(LAB_RIDER_KEY),
+                    _ => None,
+                };
+                let after = value
+                    .map(|v| v.try_into::<u32>())
+                    .transpose()
+                    .map_err(|e| format!("{LAB_RIDER_KEY}: {e}"))?;
+                respawn_after.push(after);
+            }
+        }
+        let keys: LabKeys = Value::Table(lab)
+            .try_into()
+            .map_err(|e: toml::de::Error| e.to_string())?;
+        let scenario = Self {
+            until: keys.until,
+            arena: keys.arena,
+            seed: keys.seed,
+            rules: keys.rules,
+            tier: keys.tier,
+            scene: Scene::from_table(table)?,
+            respawn_after,
+        };
         scenario.validate()?;
         Ok(scenario)
     }
 
-    /// Check what the TOML types cannot: names, placements, scripts, rules.
-    pub fn validate(&self) -> Result<(), String> {
+    fn validate(&self) -> Result<(), String> {
         if let Some(rules) = &self.rules {
             rules.validate()?;
-            if rules.end.last_standing && self.riders.len() < 2 {
+            if rules.end.last_standing && self.scene.riders.len() < 2 {
                 return Err("match: last_standing needs at least two riders".into());
             }
-        }
-        let mut names = std::collections::HashSet::new();
-        for rider in &self.riders {
-            if !names.insert(rider.name.as_str()) {
-                return Err(format!("duplicate rider name {:?}", rider.name));
-            }
-            if rider.at.is_some() != rider.heading.is_some() {
-                return Err(format!(
-                    "{}: give both `at` and `heading`, or neither",
-                    rider.name
-                ));
-            }
-            let commands = rider.commands()?;
-            if rider.bot.is_some() && commands.values().any(|a| *a != Action::Respawn) {
-                return Err(format!("{}: a bot's script may only respawn", rider.name));
-            }
-            rider.build()?;
         }
         Ok(())
     }
 }
 
-impl RiderSpec {
-    /// The bot build for a `bot` rider, `None` for a scripted one.
-    pub fn build(&self) -> Result<Option<BotBuild>, String> {
-        if let Some(build) = &self.prebuilt {
-            return Ok(Some(build.clone()));
-        }
-        let Some(bot) = &self.bot else {
-            return Ok(None);
-        };
-        let spec = BuildSpec {
-            name: self.name.clone(),
-            bot: *bot,
-            difficulty: self.difficulty,
-            knobs: self.knobs.clone(),
-            weights: self.weights.clone(),
-        };
-        Ok(Some(spec.build()?))
-    }
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-    /// Parse `"<tick> <action>"` entries into one action per tick. The sim
-    /// applies at most one turn per tick, so two entries on a tick is an error.
-    pub fn commands(&self) -> Result<BTreeMap<u32, Action>, String> {
-        let mut commands = BTreeMap::new();
-        for entry in &self.script {
-            let mut parts = entry.split_whitespace();
-            let (Some(tick), Some(action), None) = (parts.next(), parts.next(), parts.next())
-            else {
-                return Err(format!(
-                    "{}: expected \"<tick> <action>\", got {entry:?}",
-                    self.name
-                ));
-            };
-            let tick: u32 = tick
-                .parse()
-                .map_err(|_| format!("{}: bad tick in {entry:?}", self.name))?;
-            let action = match action.to_ascii_lowercase().as_str() {
-                "l" | "left" => Action::Left,
-                "r" | "right" => Action::Right,
-                "respawn" => Action::Respawn,
-                other => return Err(format!("{}: unknown action {other:?}", self.name)),
-            };
-            if commands.insert(tick, action).is_some() {
-                return Err(format!("{}: two actions on tick {tick}", self.name));
-            }
-        }
-        Ok(commands)
+    #[test]
+    fn lab_and_scene_keys_split_and_typos_still_fail() {
+        let text = "until = 10\nseed = 3\n[[rider]]\nname = \"a\"\nrespawn_after = 5\n[[rider]]\nname = \"b\"";
+        let scenario = Scenario::parse(text).unwrap();
+        assert_eq!((scenario.until, scenario.seed), (10, 3));
+        assert_eq!(scenario.respawn_after, [Some(5), None]);
+        assert_eq!(scenario.scene.riders.len(), 2);
+        assert!(Scenario::parse("unitl = 10\n[[rider]]\nname = \"a\"").is_err());
+        assert!(Scenario::parse("[[rider]]\nname = \"a\"\nrespawn_afer = 5").is_err());
     }
 }

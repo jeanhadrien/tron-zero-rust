@@ -24,6 +24,7 @@ one for the area you are about to work in, and keep it current in the same chang
 
 - **`crates/shared/`** — rules of the game (sim at 120 Hz, spawn, match flow) and wire protocol. Also holds the gameplay-invariant and wire-model summaries.
 - **`crates/bots/`** — the bot brain: one planner, difficulty = budget knobs, personality = weight vector, rosters.
+- **`crates/scene/`** — scenes: walls and riders (poses, trails, scripts, bot builds) set up on the arena, read from TOML. The lab's scenarios wrap one; the tutorial will too.
 - **`crates/server/`** — headless authoritative server: admission, turns, the match runner, bot seats, lobby announce.
 - **`crates/client/`** — desktop (UDP) and browser (wasm32, WebTransport) client: connection, input, render, UI.
 - **`crates/lab/`** — headless deterministic runner: scenarios, goldens, bot tournaments, tune, ladder. How an agent "plays" the game.
@@ -36,7 +37,7 @@ Lib + bin pairs keep logic in the lib so `nettest` can run the real apps.
 
 Code style is enforced by `cargo fmt -- --check` and `cargo clippy --workspace --all-targets -- -D warnings` (workspace lints in `Cargo.toml`, test exemptions in `clippy.toml`, CI on PRs to `main` in `.github/workflows/lint.yml`); run both before committing.
 
-- **Dependency direction:** `shared` <- `bots` <- (`server`, `lab`); `client` knows `shared`, and on desktop only `server::embedded` (the hosted server, `host.rs`; never in the wasm build). `shared/` knows nobody (no mention of a runner, even in comments). `server/` and `lab/` are two runners of the same game and never know each other. The test for each piece: is it a rule of the game that holds whoever runs it (rider reset, spawn search, match flow)? Then it lives in `shared/` (or `bots/` for bot logic) and the runners call it. Does it describe how one runner drives or observes the game (env vars, replication, sessions, ranked reports; traces, metrics, seeds, TOML files)? Then it stays in that runner. Never mirror one runner's logic in the other: move it down.
+- **Dependency direction:** `shared` <- `bots` <- `scene` <- (`server`, `lab`); `client` knows `shared`, and on desktop only `server::embedded` (the hosted server, `host.rs`; never in the wasm build). `shared/` knows nobody (no mention of a runner, even in comments). `server/` and `lab/` are two runners of the same game and never know each other. The test for each piece: is it a rule of the game that holds whoever runs it (rider reset, spawn search, match flow)? Then it lives in `shared/` (or `bots/` for bot logic) and the runners call it. Does it describe how one runner drives or observes the game (env vars, replication, sessions, ranked reports; traces, metrics, seeds, TOML files)? Then it stays in that runner. Never mirror one runner's logic in the other: move it down.
 - **Determinism:** the sim and the bots use no `rand`, no wall clock, no unsorted `HashMap` iteration. Randomness stays server-side outside the predicted state, or is seeded.
 - **Constants:** gameplay and tuning numbers are named consts, never inlined at call sites.
 - **Logging:** `tracing` only (never `println!` in `crates/` library code). `warn!` = denied/degraded, `info!` = lifecycle, `debug!` = per-tick noise.

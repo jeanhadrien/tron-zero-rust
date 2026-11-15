@@ -10,7 +10,7 @@ from tick 0, read the trace and the PNG. It also measures bots.
 
 ## Boundaries
 
-- Depends on `shared/` and `bots/`. Never on `server/` or `client/`.
+- Depends on `shared/`, `bots/` and `scene/`. Never on `server/` or `client/`.
 - The lab observes; it does not define the game. Never re-implement here
   something the server also does (round flow, rider reset, spawn inputs, bot
   driving): call the shared code, or move the logic down to `shared/` / `bots/`.
@@ -29,7 +29,7 @@ from tick 0, read the trace and the PNG. It also measures bots.
 
 ## Map
 
-- `sim.rs` (the `Lab`), `scenario.rs` (TOML), `render.rs` (PNG), `builds.rs` (builds by name, shared by suites, tune and ladder files).
+- `sim.rs` (the `Lab`), `scenario.rs` (lab keys around a `scene::Scene`: `until`, `arena`, `seed`, `[match]`, `tier`, per rider `respawn_after`), `render.rs` (PNG), `builds.rs` (resolving builds and parameters by name, for suites, tune and ladder files; the build format is `bots::spec`).
 - `tournament.rs`, `bench.rs` (a candidate against a pool), `tune.rs`, `ladder.rs`.
 - `stats.rs`, `forced.rs` (forced kills), `pattern.rs` (pattern score).
 - Data: `scenarios/` (+ `*.golden.jsonl`), `puzzles/` (pass/fail bot situations), `suites/`, `tuning/`.

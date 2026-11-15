@@ -12,7 +12,7 @@ use bots::schedule::{SchedulerConfig, Tier};
 use bots::world::WorldSnapshotBuilder;
 use glam::Vec2;
 use serde::Serialize;
-use shared::spawn::{SpawnField, placed};
+use shared::spawn::{SpawnField, placed, placed_at};
 use shared::*;
 
 use crate::forced;
@@ -199,7 +199,7 @@ impl Lab {
                 height,
             });
         let mut walls = arena_walls(size.width, size.height);
-        walls.extend(scenario.walls.iter().copied());
+        walls.extend(scenario.scene.walls.iter().copied());
 
         let mut world = World::new();
         world.insert_resource(SimulationRole::Server);
@@ -208,52 +208,37 @@ impl Lab {
         let mut schedule = Schedule::default();
         schedule.add_systems(simulate_players);
 
-        let mut riders: Vec<LabRider> = Vec::with_capacity(scenario.riders.len());
+        let specs = &scenario.scene.riders;
+        let mut riders: Vec<LabRider> = Vec::with_capacity(specs.len());
         let mut field = SpawnField::walls(&mut world).expect("the arena was just spawned");
         let mut slots = 0;
-        for spec in &scenario.riders {
+        for (spec, respawn_after) in specs.iter().zip(&scenario.respawn_after) {
             // Seed 0 keeps the plain name hash, so fixed-start goldens predate
             // seeding unchanged.
             let rider_seed =
                 fnv1a(&spec.name).wrapping_add(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15));
             let mut lives = 0;
-            let (position, direction) = match (spec.at, spec.heading) {
-                (Some(at), Some(heading)) => (Vec2::from(at), heading.vector()),
-                _ => {
-                    let spawn = field
-                        .place(rider_seed)
-                        .unwrap_or_else(|| panic!("{}: no safe spawn", spec.name));
+            let spawn = match spec.at {
+                Some(at) => {
+                    field.occupy(at.position);
+                    at
+                }
+                None => {
                     lives = 1;
-                    (spawn.position, spawn.direction)
+                    field
+                        .place(rider_seed)
+                        .unwrap_or_else(|| panic!("{}: no safe spawn", spec.name))
                 }
             };
-            if spec.at.is_some() {
-                field.occupy(position);
-            }
-            let entity = world
-                .spawn((
-                    Player,
-                    Position(position),
-                    Direction(direction),
-                    SpeedMult(spec.speed),
-                    TargetSpeedMult(spec.speed),
-                    Rubber(spec.rubber),
-                    IsAlive(true),
-                    ShouldHandleDeath(true),
-                    initial_trail(&spec.trail, position),
-                ))
-                .id();
-            let bot = spec
-                .build()
-                .expect("validated by Scenario::parse")
-                .map(|build| {
-                    slots += 1;
-                    Brain::new(build, brain_seed(rider_seed, lives), slots - 1)
-                });
+            let entity = world.spawn((Player, placed_at(&spec.start(spawn)))).id();
+            let bot = spec.bot.clone().map(|build| {
+                slots += 1;
+                Brain::new(build, brain_seed(rider_seed, lives), slots - 1)
+            });
             riders.push(LabRider {
                 name: spec.name.clone(),
                 entity,
-                commands: spec.commands().expect("validated by Scenario::parse"),
+                commands: spec.script.clone(),
                 seed: rider_seed,
                 lives,
                 deaths: Vec::new(),
@@ -265,7 +250,7 @@ impl Lab {
                 bot,
                 respawn_after: scenario
                     .rules
-                    .map_or(spec.respawn_after, |rules| rules.respawn.delay()),
+                    .map_or(*respawn_after, |rules| rules.respawn.delay()),
                 respawn_at: None,
                 life_start: Some(0),
                 prev_nearest: None,
@@ -810,12 +795,4 @@ fn fnv1a(text: &str) -> u64 {
     text.bytes().fold(0xcbf29ce484222325, |hash, byte| {
         (hash ^ byte as u64).wrapping_mul(0x100000001b3)
     })
-}
-
-/// A rider's trail at tick 0: the scenario's corners, or just the head.
-fn initial_trail(corners: &[[f32; 2]], head: Vec2) -> Trail {
-    if corners.is_empty() {
-        return Trail::new(head);
-    }
-    Trail(corners.iter().map(|&c| Vec2::from(c)).collect())
 }

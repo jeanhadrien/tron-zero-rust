@@ -7908,6 +7908,7 @@ dependencies = [
  "tiny-skia",
  "toml",
  "tron-zero-bots",
+ "tron-zero-scene",
  "tron-zero-shared",
 ]
 
@@ -7921,6 +7922,17 @@ dependencies = [
  "lightyear_transport",
  "tron-zero-client",
  "tron-zero-server",
+ "tron-zero-shared",
+]
+
+[[package]]
+name = "tron-zero-scene"
+version = "0.0.0"
+dependencies = [
+ "glam 0.32.1",
+ "serde",
+ "toml",
+ "tron-zero-bots",
  "tron-zero-shared",
 ]
 

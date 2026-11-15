@@ -47,7 +47,9 @@ use bots::config::BotBuild;
 use serde::{Deserialize, Serialize};
 
 use crate::bench::{Bench, Fitness, mean_metrics};
-use crate::builds::{self, BuildSpec};
+use bots::spec::BuildSpec;
+
+use crate::builds;
 use crate::scenario::TierPin;
 use crate::tournament::{METRICS, SetupSpec, thread_pool};
 

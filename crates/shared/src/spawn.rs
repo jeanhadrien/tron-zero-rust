@@ -134,22 +134,57 @@ pub fn find_safe_spawn(
     None
 }
 
-/// Components of a rider placed at `spawn`: alive, fresh trail, speed and
-/// rubber reset, no pending input. For respawns and round starts alike.
-pub fn placed(spawn: &SafeSpawn) -> impl Bundle {
+/// How a rider begins a life: a pose, a cruise speed, a rubber level and the
+/// corners of a trail already laid behind it (oldest first; the last leg runs
+/// to the head). [`Start::fresh`] is the ordinary start.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Start {
+    pub spawn: SafeSpawn,
+    pub speed: f32,
+    pub rubber: f32,
+    pub trail: Vec<Vec2>,
+}
+
+impl Start {
+    /// Base speed, full rubber, no trail yet.
+    pub fn fresh(spawn: SafeSpawn) -> Self {
+        Self {
+            spawn,
+            speed: SpeedMult::base().0,
+            rubber: Rubber::default().0,
+            trail: Vec::new(),
+        }
+    }
+}
+
+/// Components of a rider placed at `start`: alive, no pending input, speed,
+/// rubber and trail as `start` says.
+pub fn placed_at(start: &Start) -> impl Bundle + use<> {
+    let head = start.spawn.position;
+    let trail = if start.trail.is_empty() {
+        Trail::new(head)
+    } else {
+        Trail(start.trail.clone())
+    };
     (
-        Position(spawn.position),
-        Direction(spawn.direction),
-        SpeedMult::base(),
-        TargetSpeedMult::default(),
-        Rubber::default(),
+        Position(head),
+        Direction(start.spawn.direction),
+        SpeedMult(start.speed),
+        TargetSpeedMult(start.speed),
+        Rubber(start.rubber),
         IsAlive(true),
-        Trail::new(spawn.position),
+        trail,
         ShouldHandleDeath(true),
         IsSliding(false),
         IsColliding(false),
         crate::ActionState(PlayerInput::None),
     )
+}
+
+/// Components of a rider placed at `spawn` for a fresh life. For respawns and
+/// round starts alike.
+pub fn placed(spawn: &SafeSpawn) -> impl Bundle + use<> {
+    placed_at(&Start::fresh(*spawn))
 }
 
 /// What a new spawn must stay clear of, gathered from the world.

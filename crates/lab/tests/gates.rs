@@ -9,16 +9,31 @@
 
 use std::path::{Path, PathBuf};
 
-use bots::config::Personality;
+use bots::config::{BotBuild, Personality};
+use bots::spec::BuildSpec;
 use tron_zero_lab::tournament::{self, Suite};
 use tron_zero_lab::{Lab, Scenario, trace};
+
+/// A plain build of `personality` at the `difficulty` preset.
+fn build(name: &str, personality: Personality, difficulty: u32) -> BotBuild {
+    let spec = BuildSpec {
+        name: name.into(),
+        bot: personality,
+        difficulty,
+        knobs: toml::Table::new(),
+        weights: toml::Table::new(),
+    };
+    spec.build().unwrap()
+}
 
 fn puzzle(name: &str, difficulty: u32, seed: u64) -> Lab {
     let path: PathBuf = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("puzzles")
         .join(format!("{name}.toml"));
     let mut scenario = Scenario::load(&path).unwrap();
-    scenario.riders[0].difficulty = difficulty;
+    let bot = &mut scenario.scene.riders[0];
+    let personality = bot.bot.as_ref().unwrap().personality;
+    bot.bot = Some(build(&bot.name, personality, difficulty));
     let mut lab = Lab::with_seed(&scenario, seed);
     lab.run(scenario.until, 0);
     lab
@@ -73,12 +88,12 @@ fn hunt(
         .join(format!("{name}.toml"));
     let mut scenario = Scenario::load(&path).unwrap();
     let bot = scenario
+        .scene
         .riders
         .iter_mut()
         .find(|r| r.name == "bot")
         .unwrap();
-    bot.bot = Some(personality);
-    bot.difficulty = difficulty;
+    bot.bot = Some(build(&bot.name, personality, difficulty));
     let mut lab = Lab::with_seed(&scenario, seed);
     lab.run(scenario.until, 0);
     let cause = lab

@@ -35,7 +35,9 @@ use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::bench::{Bench, mean_metrics};
-use crate::builds::{self, BuildSpec, Param};
+use bots::spec::BuildSpec;
+
+use crate::builds::{self, Param};
 use crate::scenario::TierPin;
 use crate::tournament::{METRICS, SetupSpec, thread_pool};
 

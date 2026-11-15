@@ -20,6 +20,7 @@ pub mod race;
 pub mod roster;
 pub mod schedule;
 pub mod space;
+pub mod spec;
 pub mod style;
 pub mod tuning;
 pub mod world;

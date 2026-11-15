@@ -23,7 +23,7 @@ build on it.
 - `systems/` — `simulate_players` at 120 Hz (`TICK_HZ`): turn → sense → move → rubber. The order is load-bearing.
 - `physics.rs` — `step_rider`, pure. `constants.rs` — every gameplay number.
 - `components/` — incl. `trail.rs` (the rollbackable trail of corners) and `round.rs` (replicated `MatchStatus`, `Score` and its credits from the death log).
-- `spawn.rs` — safe-spawn search, `SpawnField` (spawn inputs), `placed` (the fresh-life bundle). `math.rs` — rotations, arena walls, seeded spawn.
+- `spawn.rs` — safe-spawn search, `SpawnField` (spawn inputs), `placed_at` (a rider placed with a `Start`: pose, speed, rubber, laid trail) and `placed` (its fresh-life case). `math.rs` — rotations, arena walls, seeded spawn.
 - `match_rules.rs` — `MatchRules` (respawn, end conditions, rounds, start condition), `Roster` (what the flow sees) and `MatchFlow`, the pure match state machine, incl. `may_spawn`. Outside the sim: not read by `simulate_players`, not in `PROTOCOL_ID`.
 - `elimination.rs` — rated elimination events from the death log.
 - `protocol.rs` — components, messages, channels, `PROTOCOL_ID`, turn constants. `probe.rs` — UDP discovery datagram. `polyline.rs` — render-only helpers.

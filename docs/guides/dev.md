@@ -194,8 +194,9 @@ in `docs/specs/netcode-design.md`.
 
 The sim is deterministic and tick-stepped, so situations can be scripted and
 replayed exactly instead of played at 120 Hz. A scenario places riders and
-schedules their actions per tick (format documented in
-`crates/lab/src/scenario.rs`):
+schedules their actions per tick. The walls and riders are a scene
+(`crates/scene/src/lib.rs`); the lab keys around it are in
+`crates/lab/src/scenario.rs`:
 
 ```toml
 until = 300

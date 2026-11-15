@@ -39,6 +39,7 @@ serves every bot. Used by the server (real games) and the lab (measurement).
 - `objective.rs` — `Terms`, `Weights`, round heat. `config.rs` — knobs, personalities, the `difficulty = N` authoring curve.
 - `space.rs` — timed flood fill of reachable room. `race.rs` — who reaches which territory first. `grind.rs` — speed earned beside trails and walls.
 - `forecast.rs` — the best candidates verified with the real `step_riders`. `style.rs` — the artist's figure.
+- `spec.rs` — `BuildSpec`, a build in file vocabulary (personality, difficulty preset, knob and weight overrides by name), and `merged`.
 - `drive.rs` — one tick of decisions for a set of brains. `schedule.rs` — decision cadence and level-of-detail `Tier` (thresholds and limits in `tuning.rs`). `noise.rs` — seeded misjudgment. `world.rs` — the snapshot.
 
 ## Known limits (do not rediscover)

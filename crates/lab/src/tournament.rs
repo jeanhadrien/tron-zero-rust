@@ -42,14 +42,16 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use bots::config::{BotBuild, Personality};
+use bots::config::BotBuild;
+use bots::spec::BuildSpec;
 use rayon::prelude::*;
+use scene::{Rider, Scene};
 use serde::{Deserialize, Serialize};
 use shared::{MatchRules, RoundEnd, TICK_HZ};
 
-use crate::builds::{self, BuildSpec};
+use crate::builds;
 use crate::pattern;
-use crate::scenario::{RiderSpec, Scenario, TierPin};
+use crate::scenario::{Scenario, TierPin};
 use crate::sim::{EventKind, Lab};
 
 #[derive(Debug, Deserialize)]
@@ -248,30 +250,27 @@ fn play(suite: &Suite, game: &Game) -> GameResult {
         .seats
         .iter()
         .enumerate()
-        .map(|(seat, &build)| RiderSpec {
+        .map(|(seat, &build)| Rider {
             name: seat_name(seat),
             at: None,
-            heading: None,
             speed: 1.0,
             rubber: shared::BASE_RUBBER,
             trail: Vec::new(),
-            script: Vec::new(),
-            bot: Some(Personality::Adaptive), // unused: `prebuilt` wins
-            difficulty: 0,
-            knobs: toml::Table::new(),
-            weights: toml::Table::new(),
-            respawn_after: None,
-            prebuilt: Some(suite.builds[build].clone()),
+            script: BTreeMap::new(),
+            bot: Some(suite.builds[build].clone()),
         })
-        .collect();
+        .collect::<Vec<_>>();
     let scenario = Scenario {
         until: rules.rounds * time_limit,
         arena: setup.arena,
-        walls: Vec::new(),
         seed: game.seed,
         rules: Some(rules),
         tier: setup.tier.or(suite.tier),
-        riders,
+        respawn_after: vec![None; riders.len()],
+        scene: Scene {
+            walls: Vec::new(),
+            riders,
+        },
     };
     let mut lab = Lab::with_seed(&scenario, game.seed);
     lab.run(scenario.until, 0);
