@@ -128,15 +128,21 @@ pub fn spawn(config: HostConfig) -> HostHandle {
 fn run(config: HostConfig, status: Arc<Mutex<HostStatus>>, stop: Arc<AtomicBool>) {
     let _span = info_span!("host").entered();
     let result = catch_unwind(AssertUnwindSafe(|| serve(&config, &status, &stop)));
-    let end = match result {
-        Ok(Ok(())) => HostStatus::Stopped,
-        Ok(Err(reason)) => HostStatus::Failed(reason),
-        Err(panic) => HostStatus::Failed(panic_message(panic.as_ref())),
-    };
+    let result = result.unwrap_or_else(|panic| Err(panic_message(panic.as_ref())));
+    let end = final_status(result, stop.load(Ordering::Relaxed));
     if let HostStatus::Failed(reason) = &end {
         warn!("Hosted server failed: {reason}");
     }
     *lock(&status) = end;
+}
+
+/// How the thread ended. A stop that was asked for wins over any outcome.
+fn final_status(result: Result<(), String>, stopped: bool) -> HostStatus {
+    match result {
+        _ if stopped => HostStatus::Stopped,
+        Ok(()) => HostStatus::Stopped,
+        Err(reason) => HostStatus::Failed(reason),
+    }
 }
 
 fn panic_message(panic: &(dyn std::any::Any + Send)) -> String {
@@ -152,7 +158,7 @@ fn serve(
     status: &Mutex<HostStatus>,
     stop: &Arc<AtomicBool>,
 ) -> Result<(), String> {
-    let (mut app, port) = start(config)?;
+    let (mut app, port) = start(config, stop)?;
     app.insert_resource(StopFlag(Arc::clone(stop)));
     app.add_systems(Last, exit_on_stop);
     {
@@ -169,10 +175,13 @@ fn serve(
 }
 
 /// Build the app on the first usable port and check its listener opened.
-fn start(config: &HostConfig) -> Result<(App, u16), String> {
+fn start(config: &HostConfig, stop: &AtomicBool) -> Result<(App, u16), String> {
     let Transport::Udp { ip, ports } = &config.transport;
     let mut last = "no port to try".to_owned();
     for &port in ports {
+        if stop.load(Ordering::Relaxed) {
+            return Err("stopped while starting".into());
+        }
         if answers_probe(port) {
             last = format!("port {port} is taken by a game server");
             continue;
@@ -246,9 +255,12 @@ fn answers_probe(port: u16) -> bool {
     let started = Instant::now();
     let mut buf = [0u8; 64];
     while started.elapsed() < PROBE_WAIT {
-        if let Ok(len) = socket.recv(&mut buf)
-            && shared::probe::decode_reply(&buf[..len], nonce).is_some()
-        {
+        // Any error (timeout, or ConnectionReset from a closed Windows port,
+        // which fails at once) means nobody answers.
+        let Ok(len) = socket.recv(&mut buf) else {
+            return false;
+        };
+        if shared::probe::decode_reply(&buf[..len], nonce).is_some() {
             return true;
         }
     }
@@ -261,5 +273,30 @@ struct StopFlag(Arc<AtomicBool>);
 fn exit_on_stop(flag: Res<StopFlag>, mut exit: MessageWriter<AppExit>) {
     if flag.0.load(Ordering::Relaxed) {
         exit.write(AppExit::Success);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stop_wins_over_the_outcome() {
+        assert_eq!(final_status(Ok(()), false), HostStatus::Stopped);
+        assert_eq!(
+            final_status(Err("x".into()), false),
+            HostStatus::Failed("x".into())
+        );
+        assert_eq!(final_status(Err("x".into()), true), HostStatus::Stopped);
+    }
+
+    #[test]
+    fn closed_port_does_not_answer_the_probe() {
+        let socket = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let port = socket.local_addr().unwrap().port();
+        drop(socket);
+        let started = Instant::now();
+        assert!(!answers_probe(port));
+        assert!(started.elapsed() < Duration::from_secs(1));
     }
 }
