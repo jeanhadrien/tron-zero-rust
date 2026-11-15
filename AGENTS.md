@@ -48,6 +48,7 @@ Code style is enforced by `cargo fmt -- --check` and `cargo clippy --workspace -
 - `cargo nextest run -p tron-zero-lab` — mechanics + golden traces; bless intended changes with `LAB_BLESS=1`.
 - `cargo nextest run -p tron-zero-nettest` — netcode over real UDP (about 1-2 min; serialized by `.config/nextest.toml`).
 - `scripts/play-local.bat [release]` (`scripts/play-local.sh` on Linux/macOS) — server + bots + auto-joining client with simulated 20 ms RTT (`TRON_SIM_*`, `TRON_AUTOCONNECT`).
+- `scripts\profile.ps1 server|client|lab` — samply CPU profile on the `profiling` cargo profile, saved under `target/profiles/`; text reading with `profiler-cli` (`docs/guides/dev.md` § Profiling).
 - `bacon` (`bacon.toml`) — clippy watch loop by default; `bacon server` / `bacon client` restart on save.
 - `scripts/dev-cloud.bat [config]` — local server (room from `crates/server/config/dev-cloud.toml` by default) announcing to the Cloud Run manager (`ALLOW_LOOPBACK_ANNOUNCE=1`, so it advertises 127.0.0.1 on a public list).
 - `cd server-manager && bun run dev` — local lobby on `:3001`.

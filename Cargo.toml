@@ -45,6 +45,13 @@ debug = "line-tables-only"
 opt-level = 3
 debug = false
 
+# CPU profiling (`--profile profiling`, docs/guides/dev.md § Profiling): the
+# release build plus full debug info (what samply's README asks for), so
+# samply shows function names and inlined frames. Own `target/profiling/`; `release` is untouched.
+[profile.profiling]
+inherits = "release"
+debug = true
+
 # Browser build (`web/build.ps1`): speed over size, single codegen unit for
 # the best inlining. Not for native builds.
 [profile.wasm-release]

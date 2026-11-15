@@ -1,6 +1,6 @@
 # Dev Build
 
-Status: updated 2026-11-08.
+Status: updated 2026-11-15.
 
 Day-to-day development on Windows. Builds run natively on Windows for fast iteration and a visible game window. Which commands to start for which setup (web client, prod lobby, GCP): `docs/guides/run.md`.
 
@@ -501,6 +501,68 @@ Tests: `cargo nextest run -p tron-zero-shared` (unit, property and rollback test
 `cargo nextest run -p tron-zero-lab` (mechanics assertions + golden traces for every
 scenario; a scenario without a golden fails). After an intended behaviour change, regenerate goldens with
 `LAB_BLESS=1 cargo nextest run -p tron-zero-lab` and review the diff.
+
+## Profiling (samply)
+
+CPU flamegraphs of the server with its bots, the client, or the lab, recorded
+with [samply](https://github.com/mstange/samply) on the `profiling` cargo
+profile (release + debug info, `target/profiling/`; the real `release` build is
+untouched).
+
+One-time setup (Windows):
+
+- `cargo install --locked samply`
+- The Windows Performance Toolkit (samply drives `xperf`): download the ADK
+  installer (`https://go.microsoft.com/fwlink/?linkid=2243390`) and tick only
+  "Windows Performance Toolkit", or run it silently as administrator with
+  `adksetup.exe /features OptionId.WindowsPerformanceToolkit /quiet`.
+- For text reports: `npm install -g @firefox-devtools/profiler-cli`.
+
+Record (builds first; first build in the profile is a full rebuild):
+
+```
+scripts\profile.ps1 server [-Secs 40]      # server + 6 bots, one idle headless human joined
+scripts\profile.ps1 client                 # client window with a local server; close the window to stop
+scripts\profile.ps1 lab [lab args...]      # default: tournament ffa8.toml --quick
+```
+
+The profile lands in `target\profiles\<target>-<time>.json.gz` (+ a
+`.syms.json` with the symbols; keep both together; `target/` is not
+committed). The server needs a connected human or its bots stay off, so the
+`server` target starts `idle_human` (`crates/nettest/examples/`), and uses the
+official config (one long round, respawns), like the deployed server;
+`SERVER_CONFIG` overrides. Samply records the whole machine's kernel trace
+(about 1 GB per minute, written next to the profile and removed after) and
+needs an elevation (UAC) each time: keep recordings to a minute or two.
+
+Read in the browser (flame graph, call tree, inlined frames):
+
+```
+samply load target\profiles\server-<time>.json.gz
+```
+
+Read as text (for an agent or a terminal):
+
+```
+profiler-cli load target\profiles\server-<time>.json.gz --with-samply   # symbolicates through samply
+profiler-cli thread list                                  # threads by CPU
+profiler-cli thread samples                               # hot functions, self and total time
+profiler-cli thread functions --search tron_zero --limit 30
+profiler-cli thread samples-top-down --max-lines 60       # call tree
+profiler-cli stop --all                                   # always: the daemon locks target\profiles
+```
+
+Samples include time spent waiting: on the server, drop the sleeping main loop
+with `--excludes-function <f-N>` (the handle of `NtWaitForSingleObject` in the
+first listing) so the percentages are of the CPU time used. The first
+unfiltered listing also shows the thread to select (`thread select t-N`).
+
+Pitfalls: samply only finds our `.pdb` when started from the folder that holds
+it, which `profile.ps1` does (so relative paths given to the profiled program
+must exist and are made absolute for you); started by hand elsewhere, every
+frame of our code is a bare `fun_<address>`. Linux and macOS: the same
+`samply record --save-only` and `samply load` work with `--profile profiling`
+binaries; `profile.ps1` is Windows only.
 
 ## Gameplay smoke check
 
