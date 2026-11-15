@@ -19,6 +19,7 @@ use lightyear::prelude::Linked;
 use lightyear::prelude::server::RawServer;
 
 use crate::config::ServerConfig;
+use crate::tutorial::StatusCell;
 
 /// How long a port is given to answer a discovery probe before it counts as free.
 const PROBE_WAIT: Duration = Duration::from_millis(50);
@@ -41,15 +42,32 @@ impl Transport {
             ports: ports.into_iter().collect(),
         }
     }
+
+    /// This machine only: nobody else can join.
+    pub fn udp_loopback(ports: impl IntoIterator<Item = u16>) -> Self {
+        Self::Udp {
+            ip: Ipv4Addr::LOCALHOST.into(),
+            ports: ports.into_iter().collect(),
+        }
+    }
 }
 
-/// What to host. Game rules are the local-play defaults.
+/// What to host.
 #[derive(Clone, Debug)]
 pub struct HostConfig {
     pub transport: Transport,
-    /// Seat the built-in bots.
-    pub bots: bool,
+    pub mode: HostMode,
 }
+
+#[derive(Clone, Debug)]
+pub enum HostMode {
+    /// A match with the local-play rules, the built-in bots if `bots`.
+    Play { bots: bool },
+    /// The tutorial for one player; its status is [`HostHandle::tutorial`].
+    Tutorial,
+}
+
+pub use crate::tutorial::{Fail, Phase, TutorialStatus};
 
 /// Where a hosted server is in its life.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -65,12 +83,19 @@ pub enum HostStatus {
 pub struct HostHandle {
     status: Arc<Mutex<HostStatus>>,
     stop: Arc<AtomicBool>,
+    tutorial: StatusCell,
     thread: Option<JoinHandle<()>>,
 }
 
 impl HostHandle {
     pub fn status(&self) -> HostStatus {
         lock(&self.status).clone()
+    }
+
+    /// The tutorial's state as of its last tick; `None` before the first one
+    /// and for a match.
+    pub fn tutorial(&self) -> Option<TutorialStatus> {
+        lock(&self.tutorial).clone()
     }
 
     /// Ask the server to stop; returns at once. The status turns `Stopped`
@@ -98,21 +123,24 @@ impl Drop for HostHandle {
     }
 }
 
-fn lock(status: &Mutex<HostStatus>) -> std::sync::MutexGuard<'_, HostStatus> {
-    status
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
+fn lock<T>(cell: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    cell.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 /// Start a server on a thread named `tron-host`.
 pub fn spawn(config: HostConfig) -> HostHandle {
     let status = Arc::new(Mutex::new(HostStatus::Starting));
     let stop = Arc::new(AtomicBool::new(false));
+    let tutorial = StatusCell::default();
     let spawned = {
-        let (status, stop) = (Arc::clone(&status), Arc::clone(&stop));
+        let (status, stop, tutorial) = (
+            Arc::clone(&status),
+            Arc::clone(&stop),
+            Arc::clone(&tutorial),
+        );
         std::thread::Builder::new()
             .name("tron-host".into())
-            .spawn(move || run(config, status, stop))
+            .spawn(move || run(config, status, stop, tutorial))
     };
     let thread = spawned
         .inspect_err(|e| *lock(&status) = HostStatus::Failed(format!("thread: {e}")))
@@ -120,14 +148,22 @@ pub fn spawn(config: HostConfig) -> HostHandle {
     HostHandle {
         status,
         stop,
+        tutorial,
         thread,
     }
 }
 
 /// The thread body: start, serve until asked to stop, report how it ended.
-fn run(config: HostConfig, status: Arc<Mutex<HostStatus>>, stop: Arc<AtomicBool>) {
+fn run(
+    config: HostConfig,
+    status: Arc<Mutex<HostStatus>>,
+    stop: Arc<AtomicBool>,
+    tutorial: StatusCell,
+) {
     let _span = info_span!("host").entered();
-    let result = catch_unwind(AssertUnwindSafe(|| serve(&config, &status, &stop)));
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        serve(&config, &status, &stop, &tutorial)
+    }));
     let result = result.unwrap_or_else(|panic| Err(panic_message(panic.as_ref())));
     let end = final_status(result, stop.load(Ordering::Relaxed));
     if let HostStatus::Failed(reason) = &end {
@@ -157,8 +193,9 @@ fn serve(
     config: &HostConfig,
     status: &Mutex<HostStatus>,
     stop: &Arc<AtomicBool>,
+    tutorial: &StatusCell,
 ) -> Result<(), String> {
-    let (mut app, port) = start(config, stop)?;
+    let (mut app, port) = start(config, stop, tutorial)?;
     app.insert_resource(StopFlag(Arc::clone(stop)));
     app.add_systems(Last, exit_on_stop);
     {
@@ -175,7 +212,11 @@ fn serve(
 }
 
 /// Build the app on the first usable port and check its listener opened.
-fn start(config: &HostConfig, stop: &AtomicBool) -> Result<(App, u16), String> {
+fn start(
+    config: &HostConfig,
+    stop: &AtomicBool,
+    tutorial: &StatusCell,
+) -> Result<(App, u16), String> {
     let Transport::Udp { ip, ports } = &config.transport;
     let mut last = "no port to try".to_owned();
     for &port in ports {
@@ -190,7 +231,7 @@ fn start(config: &HostConfig, stop: &AtomicBool) -> Result<(App, u16), String> {
             last = format!("port {port}: {e}");
             continue;
         }
-        let mut app = build(config, SocketAddr::new(*ip, port))?;
+        let mut app = build(config, SocketAddr::new(*ip, port), tutorial)?;
         if listening(&mut app) {
             return Ok((app, port));
         }
@@ -199,18 +240,24 @@ fn start(config: &HostConfig, stop: &AtomicBool) -> Result<(App, u16), String> {
     Err(last)
 }
 
-fn build(config: &HostConfig, bind: SocketAddr) -> Result<App, String> {
-    let server = ServerConfig::local()?;
-    let roster = if config.bots {
-        server.roster()?
-    } else {
-        Vec::new()
-    };
+fn build(config: &HostConfig, bind: SocketAddr, tutorial: &StatusCell) -> Result<App, String> {
     let mut app = crate::new_app();
     // A failed bind is an `Err` in an observer: log it, `listening` sees it.
     app.set_error_handler(bevy::ecs::error::warn);
-    let debug = crate::bot::BotDebugConfig::default();
-    crate::add_game(&mut app, &server, bind, roster, debug)?;
+    match config.mode {
+        HostMode::Play { bots } => {
+            let server = ServerConfig::local()?;
+            let roster = if bots { server.roster()? } else { Vec::new() };
+            let debug = crate::bot::BotDebugConfig::default();
+            crate::add_game(&mut app, &server, bind, roster, debug)?;
+        }
+        HostMode::Tutorial => {
+            let steps = crate::tutorial::builtin_steps()?;
+            let director = crate::tutorial::Tutorial::new(steps, Arc::clone(tutorial));
+            app.insert_resource(crate::admission::MaxPlayers(1));
+            crate::add_core(&mut app, bind, crate::Director::Tutorial(director));
+        }
+    }
     // Share the client's task pools without competing for its cores: like the
     // binary, run every schedule on this thread.
     for (_, schedule) in app.world_mut().resource_mut::<Schedules>().iter_mut() {

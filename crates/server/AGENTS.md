@@ -10,7 +10,7 @@ seat bots, announce to the lobby. Lib + bin: logic stays in the lib so
 
 ## Boundaries
 
-- Depends on `shared/` and `bots/`. Never on `lab/` or `client/`. The client runs `embedded` (a server on its own thread, local-play rules, no announce/ranked/web): keep it free of process-wide parts (`exit`, signals, env vars, logger).
+- Depends on `shared/`, `bots/` and `scene/`. Never on `lab/` or `client/`. The client runs `embedded` (a server on its own thread, local-play rules, no announce/ranked/web): keep it free of process-wide parts (`exit`, signals, env vars, logger).
 - The only place with secrets, manager HTTP, admission and ranked reporting.
 - Game rules do not live here. If the lab would need the same logic (rider
   reset, spawn inputs, round flow, bot driving), it belongs in `shared/` or
@@ -19,9 +19,10 @@ seat bots, announce to the lobby. Lib + bin: logic stays in the lib so
 
 ## Map
 
-- `lib.rs` — `new_app` (paced headless app) and `add_game` (rules, player cap, `add_core`, bots) are the one way to build a server, used by `main.rs` and the hosted server; `add_core` wires Lightyear and the chain `handle_respawns → apply_turn_commands → simulate_players → count_scores → resolve_deaths → advance_match`. `main.rs` — logging, env, announcer, web, ranked, signals.
+- `lib.rs` — `new_app` (paced headless app) and `add_game` (rules, player cap, `add_core`, bots) are the one way to build a server, used by `main.rs` and the hosted server; `add_core` wires Lightyear, the chain `handle_respawns → apply_turn_commands → simulate_players → count_scores → resolve_deaths`, and after it the `Director`: `game::advance_match` (a match) or `tutorial::advance_tutorial`. `main.rs` — logging, env, announcer, web, ranked, signals.
 - `admission` (hello, capacity), `session` (heartbeat, leave, lease), `turns` (sequenced commands, acks), `budget` (per-link abuse limits).
-- `systems` (connect/disconnect, arena, respawn queue), `game` (runs `shared::MatchFlow` on every server: scores, placement, bots off while no human is here, replicated `MatchStatus`; respawns ask `MatchState::may_spawn`).
+- `systems` (connect/disconnect, arena, respawn queue), `game` (runs `shared::MatchFlow` on every server: scores, placement, bots off while no human is here, replicated `MatchStatus`; respawns ask `game::may_spawn`, never true without a match).
+- `tutorial` — the tutorial director: steps of a `scene::Scene` with a goal, attempts (countdown, placement in a new life, judge, result), a constant replicated `MatchStatus`; status out through `embedded::HostHandle::tutorial`, never on the wire. Hosted only (`HostMode::Tutorial`, loopback, one player).
 - `config` — the server config file (room, `[match]` and `[round]` rules, bots); `config/official.toml` is embedded, `config/local.toml` (`just play`) and `dev-cloud.toml` (`just dev-cloud`) are the local configs.
 - `bot/` — seats the roster named by the config, drives brains through `bots::drive`, respawns a dead bot as the same entity on a safe spot, debug overlay.
 - `embedded` (`spawn` -> `HostHandle`, the server a client hosts), `look`, `chat`, `probe`, `web` (WebTransport, certificate rotation), `announce` (manager HTTP), `ranked` and `elimination` (results reporting).

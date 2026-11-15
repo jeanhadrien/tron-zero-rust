@@ -12,6 +12,7 @@ use crate::connection::{ConnectionPhase, Session};
 use crate::input::RespawnUi;
 use crate::menu::MenuState;
 use crate::theme::Theme;
+use crate::tutorial::TutorialState;
 
 // Pure text logic; unchanged from the Bevy-UI version.
 pub fn prompt(alive: bool, respawn: &RespawnUi) -> &'static str {
@@ -87,9 +88,11 @@ pub fn death_ui(
     respawn: Res<RespawnUi>,
     round: Option<Single<&MatchStatus>>,
     scoreboard: Res<ScoreboardShown>,
+    tutorial: Res<TutorialState>,
 ) {
-    // The scoreboard takes the middle of the screen while it is up.
-    if scoreboard.0 {
+    // The scoreboard takes the middle of the screen while it is up; in a
+    // tutorial the server restarts the step, nobody respawns.
+    if scoreboard.0 || tutorial.active() {
         return;
     }
     let round = round.as_deref().copied();

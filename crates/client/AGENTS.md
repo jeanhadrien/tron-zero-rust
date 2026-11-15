@@ -14,12 +14,12 @@ same code. Lib + bin: logic stays in the lib so `nettest` can run the real app.
 - The only place with rendering, `egui`, key bindings and persisted preferences.
 - The client decides nothing about the game: it predicts its own rider with the
   shared sim and shows what the server replicates (match status, scores, bots).
-- Target splits live in `platform.rs` and `host.rs` (the only native-only dependency, the server); other modules stay target-neutral.
+- Target splits live in `platform.rs`, `host.rs` and `tutorial.rs` (the server is the only native-only dependency); other modules stay target-neutral.
 
 ## Map
 
 - `connection` (lifecycle, readiness, autoconnect, quit), `input/` (keyboard queue, `TurnOutbox` redundant delivery), `look` (rider color/shape, sent as `SetLook`).
-- `menu`, `settings`, `browser`, `config` (UI, bindings, room list, preferences), `chat`, `account` (manager account, ranked tickets, rating), `local_scan`, `host` (the "Host a server" button: the server on its own thread, stopped at quit).
+- `menu`, `settings`, `browser`, `config` (UI, bindings, room list, preferences), `chat`, `account` (manager account, ranked tickets, rating), `local_scan`, `host` (the "Host a server" button: the server on its own thread, stopped at quit), `tutorial` (the "Tutorial" button: a tutorial server on loopback, joined at once; shows the server's status and goal area, hides the round bar and death panel; never judges).
 - `theme` — design tokens; new UI uses them.
 - `render/` — arena, trails, riders, `shape`, `smooth` (render pose), `fx`, `layers`, camera, HUD, `death`, `round` (round bar and banners), `scoreboard` (held Tab, end screen), bot `debug`.
 - `sim` — latency simulator (`TRON_SIM_*`), the only `rand` user besides the first-launch look.

@@ -7958,6 +7958,7 @@ dependencies = [
  "toml",
  "tracing",
  "tron-zero-bots",
+ "tron-zero-scene",
  "tron-zero-shared",
  "ureq",
 ]

@@ -189,9 +189,7 @@ pub fn handle_respawns(world: &mut World) {
     // The match decides whether a human may be placed now; when not, the
     // round start places late joiners and the dead.
     let riders = crate::game::Riders::of(world);
-    let allowed = world
-        .resource::<crate::game::MatchState>()
-        .may_spawn(true, &riders);
+    let allowed = crate::game::may_spawn(world, true, &riders);
     let initial: Vec<_> = if allowed {
         world
             .query_filtered::<(Entity, &ControlledBy, &shared::LifeGeneration), (With<Human>, With<InitialSpawn>)>()

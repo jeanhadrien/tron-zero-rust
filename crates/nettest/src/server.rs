@@ -73,7 +73,11 @@ impl TestServer {
     ) -> Self {
         let mut app = App::new();
         app.add_plugins(MinimalPlugins);
-        ts::add_core(&mut app, ([0, 0, 0, 0], port).into(), rules);
+        ts::add_core(
+            &mut app,
+            ([0, 0, 0, 0], port).into(),
+            ts::Director::Match(rules),
+        );
         if let Some(web) = web {
             ts::add_web(&mut app, web);
         }

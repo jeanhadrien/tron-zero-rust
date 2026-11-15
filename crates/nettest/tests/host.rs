@@ -14,14 +14,16 @@ use std::net::UdpSocket;
 use std::time::{Duration, Instant};
 
 use tron_zero_nettest::{Impairment, TestClient, free_port, serial};
-use tron_zero_server::embedded::{HostConfig, HostHandle, HostStatus, Transport, spawn};
+use tron_zero_server::embedded::{
+    HostConfig, HostHandle, HostMode, HostStatus, Phase, Transport, spawn,
+};
 
 const WAIT: Duration = Duration::from_secs(15);
 
 fn host(ports: &[u16]) -> HostHandle {
     spawn(HostConfig {
         transport: Transport::udp_any(ports.iter().copied()),
-        bots: true,
+        mode: HostMode::Play { bots: true },
     })
 }
 
@@ -64,6 +66,32 @@ fn hosted_server_start_stop() {
     assert!(host.is_finished());
     drop(host);
     UdpSocket::bind(("0.0.0.0", port)).expect("the port is free again");
+}
+
+#[test]
+fn a_tutorial_host_places_its_one_player_after_the_countdown() {
+    let _guard = serial();
+    let port = free_port();
+    let host = spawn(HostConfig {
+        transport: Transport::udp_loopback([port]),
+        mode: HostMode::Tutorial,
+    });
+    assert_eq!(settled(&host), HostStatus::Running { port });
+
+    let mut client = TestClient::new(Impairment::NONE);
+    client.connect(port);
+    let end = Instant::now() + WAIT;
+    let playing = |host: &HostHandle| host.tutorial().is_some_and(|s| s.phase == Phase::Playing);
+    while !playing(&host) && Instant::now() < end {
+        client.update();
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    let status = host.tutorial().expect("the tutorial reports");
+    assert_eq!(
+        (status.phase, status.attempt, status.step),
+        (Phase::Playing, 1, 0)
+    );
+    assert!(!status.prompt.is_empty());
 }
 
 #[test]

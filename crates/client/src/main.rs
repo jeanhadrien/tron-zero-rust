@@ -8,7 +8,7 @@ use bevy::window::WindowCloseRequested;
 use bevy_egui::{EguiPlugin, EguiPrimaryContextPass};
 use tron_zero_client::{
     account, add_input_and_prediction, add_network, browser, chat, config, connection, host, input,
-    local_scan, menu, render, settings, sim, theme,
+    local_scan, menu, render, settings, sim, theme, tutorial,
 };
 
 fn main() {
@@ -67,6 +67,7 @@ fn main() {
     app.init_resource::<browser::BrowserState>();
     app.init_resource::<local_scan::LocalServers>();
     host::add_host(&mut app);
+    tutorial::add_tutorial(&mut app);
     app.init_resource::<account::RankedJoin>();
     app.init_resource::<account::Standing>();
     app.add_systems(Startup, account::initial_standing);

@@ -59,6 +59,13 @@ server** dials it; **Stop server** or quitting the client stops it. It does not
 announce to a lobby. Use `just play` instead for separate logs or the latency
 simulator.
 
+### 1c. Tutorial (desktop)
+
+Menu, **Tutorial**: the client runs a tutorial server on its own thread, on
+`127.0.0.1` only (first free UDP port of 5010-5013), and joins it at once. The
+server judges each step and restarts it on a failure. Leave with **Disconnect**
+in the menu; that also stops the server.
+
 ### 2. Web client against a local server
 
 ```

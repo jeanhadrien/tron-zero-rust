@@ -19,6 +19,7 @@ pub mod ranked;
 pub mod session;
 pub mod systems;
 pub mod turns;
+pub mod tutorial;
 pub mod web;
 
 use bevy::prelude::*;
@@ -58,18 +59,23 @@ pub fn add_game(
     let rules = config.rules()?;
     tracing::info!(?rules, "Match rules");
     app.insert_resource(admission::MaxPlayers(config.server.max_players));
-    add_core(app, bind, rules);
+    add_core(app, bind, Director::Match(rules));
     tracing::info!(roster = %config.bots.roster, bots = roster.len(), "Bot roster");
     bot::add_bots(app, roster, debug);
     Ok(())
 }
 
+/// What decides who rides when: a match of rounds, or the tutorial's steps.
+pub enum Director {
+    Match(shared::MatchRules),
+    Tutorial(tutorial::Tutorial),
+}
+
 /// Everything a server needs except bots, the manager announcer and logging:
-/// Lightyear, protocol, connection lifecycle, the match played by `rules`,
-/// respawns, turns and simulation. Expects `MinimalPlugins` to be present;
-/// `bind` is the UDP address to listen on. Browser players need [`add_web`] on top.
-pub fn add_core(app: &mut App, bind: core::net::SocketAddr, rules: shared::MatchRules) {
-    app.insert_resource(game::MatchState::new(rules));
+/// Lightyear, protocol, connection lifecycle, the `director`, respawns, turns
+/// and simulation. Expects `MinimalPlugins` to be present; `bind` is the UDP
+/// address to listen on. Browser players need [`add_web`] on top.
+pub fn add_core(app: &mut App, bind: core::net::SocketAddr, director: Director) {
     // Required by lightyear replication internals.
     app.add_plugins(bevy::state::app::StatesPlugin);
     app.add_plugins(ServerPlugins {
@@ -141,13 +147,32 @@ pub fn add_core(app: &mut App, bind: core::net::SocketAddr, rules: shared::Match
             game::count_scores,
             // Reads the end-of-tick state before anything is despawned.
             elimination::resolve_deaths,
-            // Ends the round on this tick's deaths, then places the next one.
-            game::advance_match,
             // Only ranked servers report results (see `ranked`).
             ranked::forward_eliminations.run_if(resource_exists::<ranked::RankedMode>),
         )
             .chain(),
     );
+    // The director judges this tick's deaths, then places riders for the next.
+    match director {
+        Director::Match(rules) => {
+            app.insert_resource(game::MatchState::new(rules));
+            app.add_systems(
+                FixedUpdate,
+                game::advance_match
+                    .after(elimination::resolve_deaths)
+                    .before(ranked::forward_eliminations),
+            );
+        }
+        Director::Tutorial(tutorial) => {
+            app.insert_resource(tutorial);
+            app.add_systems(
+                FixedUpdate,
+                tutorial::advance_tutorial
+                    .after(elimination::resolve_deaths)
+                    .before(ranked::forward_eliminations),
+            );
+        }
+    }
     app.add_systems(
         Update,
         (

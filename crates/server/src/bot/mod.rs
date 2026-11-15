@@ -155,9 +155,11 @@ pub fn bot_brain_input(
 /// spawn must see the riders placed a moment ago, humans' included.
 pub fn respawn_bots(world: &mut World) {
     let riders = crate::game::Riders::of(world);
-    let state = world.resource::<crate::game::MatchState>();
-    let allowed = state.may_spawn(false, &riders);
-    let delay = state.rules().respawn.delay().unwrap_or(RESPAWN_DELAY_TICKS);
+    let allowed = crate::game::may_spawn(world, false, &riders);
+    let delay = world
+        .get_resource::<crate::game::MatchState>()
+        .and_then(|state| state.rules().respawn.delay())
+        .unwrap_or(RESPAWN_DELAY_TICKS);
     let bots: Vec<(Entity, bool, Option<u32>)> = world
         .query_filtered::<(Entity, &IsAlive, Option<&RespawnIn>), (With<BotBrain>, With<Player>)>()
         .iter(world)

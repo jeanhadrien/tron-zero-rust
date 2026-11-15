@@ -72,6 +72,14 @@ impl MatchState {
     }
 }
 
+/// Whether a dead rider may be placed now. Only a match lets riders respawn;
+/// another director (the tutorial) places them itself, so the answer is no.
+pub fn may_spawn(world: &World, human: bool, riders: &Riders) -> bool {
+    world
+        .get_resource::<MatchState>()
+        .is_some_and(|state| state.may_spawn(human, riders))
+}
+
 /// Every rider in the arena, sorted so placement is stable: what the flow
 /// sees of the world.
 #[derive(Debug)]
@@ -178,7 +186,7 @@ fn scores(world: &mut World) -> Vec<(Entity, Score)> {
 /// Stop riders where they are: dead, trail gone, as after a crash. Used on the
 /// round's survivors, who would otherwise keep riding through the break (and
 /// could die in it, which would reach the ranked reports).
-fn retire(world: &mut World, riders: &[Entity]) {
+pub(crate) fn retire(world: &mut World, riders: &[Entity]) {
     for &entity in riders {
         world.entity_mut(entity).insert((
             IsAlive(false),

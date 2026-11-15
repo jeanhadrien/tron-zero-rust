@@ -19,7 +19,7 @@ the only test of the netcode end to end.
 
 - `src/server.rs`, `src/client.rs` — app harnesses, scripted key presses. `src/analysis.rs` — trace helpers.
 - `examples/idle_human.rs` — a headless human that joins a running server and idles (keeps the bots on while profiling the server binary, `scripts/profile.ps1`).
-- `tests/turns.rs`, `session.rs`, `chat.rs`, `look.rs`, `ownership.rs`, `web.rs`, `rounds.rs`, `host.rs` (the client-hosted server) — behaviour.
+- `tests/turns.rs`, `session.rs`, `chat.rs`, `look.rs`, `ownership.rs`, `web.rs`, `rounds.rs`, `host.rs` (the client-hosted server, and the tutorial host) — behaviour.
 - `tests/measure.rs` — arrival and bandwidth measurements (`--ignored --nocapture`).
 
 ## Rules

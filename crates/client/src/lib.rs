@@ -19,6 +19,7 @@ pub mod render;
 pub mod settings;
 pub mod sim;
 pub mod theme;
+pub mod tutorial;
 
 use bevy::prelude::*;
 use lightyear::prelude::client::*;

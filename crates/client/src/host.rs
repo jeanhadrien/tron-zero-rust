@@ -108,7 +108,7 @@ impl HostState {
         self.stop_when_offline = false;
         self.handle = Some(server::embedded::spawn(server::embedded::HostConfig {
             transport: server::embedded::Transport::udp_any(crate::local_scan::LOCAL_PORTS),
-            bots: true,
+            mode: server::embedded::HostMode::Play { bots: true },
         }));
     }
 

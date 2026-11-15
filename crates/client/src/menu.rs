@@ -18,6 +18,7 @@ use crate::settings::{
     MAX_KEYS_PER_SIDE, PlayerName, RebindState, TurnBindings, TurnSide, key_label,
 };
 use crate::theme::{self, Rgb, Theme, ThemeId};
+use crate::tutorial::TutorialState;
 use shared::RiderShape;
 use shared::protocol::{MAX_NAME_CHARS, sanitize_name};
 
@@ -117,6 +118,8 @@ enum UiAction {
     Host(HostAction),
     /// Join the server this client hosts, on its port.
     JoinMine(u16),
+    /// Start the tutorial (its own server, joined at once).
+    Tutorial,
     /// A ranked room: sign in and fetch a join ticket first.
     ConnectRanked(Endpoint, String),
     StartCapture(TurnSide, usize),
@@ -167,6 +170,7 @@ fn main_screen(
     status: &str,
     name_edit: &mut String,
     host: &HostPanel,
+    tutorial_error: Option<&str>,
     action: &mut UiAction,
 ) {
     heading(ui, theme, "TRON ZERO", 34.0);
@@ -204,6 +208,12 @@ fn main_screen(
         action.set_once(UiAction::GotoRooms);
     }
     if crate::platform::CAN_HOST {
+        if phase == ConnectionPhase::Offline && theme::action_button(ui, "Tutorial").clicked() {
+            action.set_once(UiAction::Tutorial);
+        }
+        if let Some(error) = tutorial_error {
+            ui.colored_label(theme.danger.egui(), format!("Tutorial failed: {error}"));
+        }
         host_buttons(ui, theme, phase, host, action);
     }
     if theme::action_button(ui, "Settings").clicked() {
@@ -632,6 +642,14 @@ fn leaderboard_panel(
         });
 }
 
+/// The servers this client runs itself: the hosted one and the tutorial
+/// (grouped to stay under Bevy's system parameter limit).
+#[derive(SystemParam)]
+pub struct Hosting<'w> {
+    host: ResMut<'w, HostState>,
+    tutorial: ResMut<'w, TutorialState>,
+}
+
 /// The ranked-play resources the menu reads and starts joins with (grouped to
 /// stay under Bevy's system parameter limit).
 #[derive(SystemParam)]
@@ -665,12 +683,16 @@ pub fn menu_ui(
     ranked_ui: RankedUi,
     config: Res<ManagerConfig>,
     servers: Res<LocalServers>,
-    mut host: ResMut<HostState>,
+    hosting: Hosting,
     time: Res<Time<Real>>,
 ) {
     if !menu.open {
         return;
     }
+    let Hosting {
+        mut host,
+        mut tutorial,
+    } = hosting;
     let Appearance {
         mut theme,
         mut fx,
@@ -727,6 +749,7 @@ pub fn menu_ui(
                             &status,
                             &mut name_edit,
                             &host_panel,
+                            tutorial.error(),
                             &mut action,
                         );
                         if !side_panel {
@@ -813,6 +836,13 @@ pub fn menu_ui(
                 host.joined_own();
                 let addr = std::net::SocketAddr::from((std::net::Ipv4Addr::LOCALHOST, port));
                 session.connect(addr, &join_name, now, &mut commands);
+            }
+        }
+        UiAction::Tutorial => {
+            if session.phase() == ConnectionPhase::Offline {
+                menu.block_this_frame = true;
+                session.status = "Starting the tutorial...".into();
+                tutorial.start();
             }
         }
         UiAction::ConnectRanked(endpoint, room_id) => {

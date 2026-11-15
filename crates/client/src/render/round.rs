@@ -9,6 +9,7 @@ use shared::{MatchPhase, MatchStatus};
 use crate::connection::{ConnectionPhase, Session};
 use crate::menu::MenuState;
 use crate::theme::Theme;
+use crate::tutorial::TutorialState;
 
 // The bar is drawn translucent like the rest of the HUD.
 const HUD_ALPHA: f32 = 0.7;
@@ -80,8 +81,10 @@ pub fn round_ui(
     menu: Res<MenuState>,
     theme: Res<Theme>,
     status: Option<Single<&MatchStatus>>,
+    tutorial: Res<TutorialState>,
 ) {
-    if session.phase() != ConnectionPhase::Playing || menu.open {
+    // A tutorial has no rounds: its own panel takes the top of the screen.
+    if session.phase() != ConnectionPhase::Playing || menu.open || tutorial.active() {
         return;
     }
     let Some(status) = status else {
