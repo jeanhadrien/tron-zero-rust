@@ -56,7 +56,7 @@ own thread (local-play rules, `crates/server/config/local.toml`). It listens on
 all interfaces, on the first free UDP port of 5000-5003, so friends on the LAN
 can join (Windows asks for a firewall permission the first time). **Join my
 server** dials it; **Stop server** or quitting the client stops it. It does not
-announce to a lobby. Use `play-local` instead for separate logs or the latency
+announce to a lobby. Use `just play` instead for separate logs or the latency
 simulator.
 
 ### 2. Web client against a local server
