@@ -1,16 +1,17 @@
 # Ways to Run It
 
-Status: updated 2026-11-08. One page per question: "I want to …, what do I
-start?" Details live in the linked docs; this page only routes.
+Status: updated 2026-11-15. One page per question: "I want to …, what do I
+start?" Details live in the linked docs; this page only routes. Most entry
+points are `just` tasks (`justfile` at the root; `just` lists them).
 
 ## The pieces
 
 | Piece | Local | Production |
 |-------|-------|------------|
 | Game server | `cargo run -p tron-zero-server` (UDP 5000 desktop, UDP 5001 browser) | GCE VM `tron-zero-eu`, stopped by default (`deploy/gce/README.md`) |
-| Lobby (server-manager) | `cd server-manager && bun run dev` (:3001) | `https://server-manager.tronzero.dev` (Cloud Run) |
+| Lobby (server-manager) | `just lobby` (:3001) | `https://server-manager.tronzero.dev` (Cloud Run) |
 | Desktop client | `cargo run -p tron-zero-client` | Windows zip on each `client-v*` GitHub Release |
-| Web client | `web\build.ps1`, then any static server on `web/dist` | `https://play.tronzero.dev` (GitHub Pages) |
+| Web client | `just web`, then any static server on `web/dist` | `https://play.tronzero.dev` (GitHub Pages) |
 
 Two rules explain most surprises:
 
@@ -28,13 +29,13 @@ Two rules explain most surprises:
 ### 1. Play against bots, desktop (the everyday loop)
 
 ```
-scripts\play-local.bat            # or: scripts\play-local.bat release  (Linux/macOS: scripts/play-local.sh)
+just play            # or: just play release
 ```
 
 Server with bots + a client that joins by itself with a simulated 20 ms ping.
 The server plays **5 last-standing rounds** from
 `crates/server/config/local.toml` (see `docs/specs/match-rules.md`). Set
-`SERVER_CONFIG` to another config file before running the script, e.g. a
+`SERVER_CONFIG` to another config file before running it, e.g. a
 copy with `rounds = 1`, `respawn = "anytime"` and `last_standing = false` for
 one long round with respawns. The bots are
 the built-in roster (`Moth (Medium)`, four hard bots of different
@@ -42,8 +43,11 @@ personalities, and the artist `Escher (Artist)`; the old difficulty ladder is
 `crates/bots/rosters/ladder.toml`); `bots.roster` in a config file seats the
 builds of another roster file instead (`docs/guides/dev.md` § Ladder). A bare
 `cargo run -p tron-zero-server` runs the official config. If a last-standing round is already running when you join, you wait for the
-next one. Hold Tab for the scoreboard. No lobby involved. `set TRON_SIM_LATENCY_MS=0` first to remove the simulated
-ping. Restart on save instead: `bacon server` and `bacon client` (see `docs/guides/dev.md`).
+next one. Hold Tab for the scoreboard. No lobby involved. `just` reads
+`TRON_SIM_LATENCY_MS` when it starts (`0` removes the simulated ping): set
+`$env:TRON_SIM_LATENCY_MS = 0` in PowerShell, or `TRON_SIM_LATENCY_MS=0` in
+bash, before `just play`. Restart on save instead: `bacon server` and
+`bacon client` (see `docs/guides/dev.md`).
 
 ### 2. Web client against a local server
 
@@ -80,7 +84,7 @@ the desktop client and `https://play.tronzero.dev` on this PC both list it
 and can join it.
 
 ```
-scripts\dev-cloud.bat            # room "JH dev" (crates/server/config/dev-cloud.toml); or pass another config file
+just dev-cloud            # room "JH dev" (crates/server/config/dev-cloud.toml); or pass another config file
 ```
 
 To let **friends** join a server on your PC instead: forward UDP 5000 and

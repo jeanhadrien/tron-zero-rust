@@ -44,14 +44,17 @@ Code style is enforced by `cargo fmt -- --check` and `cargo clippy --workspace -
 
 ## Dev loops (details in `docs/guides/dev.md`)
 
-- `cargo nextest run -p tron-zero-shared` — sim core (unit, property, rollback); fast.
-- `cargo nextest run -p tron-zero-lab` — mechanics + golden traces; bless intended changes with `LAB_BLESS=1`.
-- `cargo nextest run -p tron-zero-nettest` — netcode over real UDP (about 1-2 min; serialized by `.config/nextest.toml`).
-- `scripts/play-local.bat [release]` (`scripts/play-local.sh` on Linux/macOS) — server + bots + auto-joining client with simulated 20 ms RTT (`TRON_SIM_*`, `TRON_AUTOCONNECT`).
-- `scripts\profile.ps1 server|client|lab` — samply CPU profile on the `profiling` cargo profile, saved under `target/profiles/`; text reading with `profiler-cli` (`docs/guides/dev.md` § Profiling).
+Tasks live in the root `justfile` (`just` lists them; Windows recipes run in `pwsh`). Add a recipe there rather than a new script in `scripts/`; keep a script only when a task needs real logic (`scripts/profile.ps1`).
+
+- `just lint` — `cargo fmt --all -- --check` and clippy `--locked`, the CI gate (`.github/workflows/lint.yml`).
+- `just test-sim` (`cargo nextest run -p tron-zero-shared`) — sim core (unit, property, rollback); fast.
+- `just test-lab` (`cargo nextest run -p tron-zero-lab`) — mechanics + golden traces; bless intended changes with `just bless` (`LAB_BLESS=1`).
+- `just test-net` (`cargo nextest run -p tron-zero-nettest`) — netcode over real UDP (about 1-2 min; serialized by `.config/nextest.toml`).
+- `just play [release]` — server + bots + auto-joining client with simulated 20 ms RTT (`TRON_SIM_*`, `TRON_AUTOCONNECT`).
+- `just profile server|client|lab` (`scripts\profile.ps1`) — samply CPU profile on the `profiling` cargo profile, saved under `target/profiles/`; text reading with `profiler-cli` (`docs/guides/dev.md` § Profiling).
 - `bacon` (`bacon.toml`) — clippy watch loop by default; `bacon server` / `bacon client` restart on save.
-- `scripts/dev-cloud.bat [config]` — local server (room from `crates/server/config/dev-cloud.toml` by default) announcing to the Cloud Run manager (`ALLOW_LOOPBACK_ANNOUNCE=1`, so it advertises 127.0.0.1 on a public list).
-- `cd server-manager && bun run dev` — local lobby on `:3001`.
+- `just dev-cloud [config]` — local server (room from `crates/server/config/dev-cloud.toml` by default) announcing to the Cloud Run manager (`ALLOW_LOOPBACK_ANNOUNCE=1`, so it advertises 127.0.0.1 on a public list).
+- `just lobby` (`cd server-manager && bun run dev`) — local lobby on `:3001`.
 
 ## Doc map
 
@@ -114,8 +117,16 @@ Builds, not edits, dominate iteration time here. Keep the loop tight:
   with the Edit tool rather than ad-hoc rewrite scripts.
 - Measure bots with `lab tournament <suite> --quick` on at most half the
   cores; full suites are for a rare final check. Chase big differences.
-- A new git worktree has its own `target/`: the first build is a full
-  rebuild. Parallel agents: only one may run `tron-zero-nettest` at a time.
+- Each git worktree keeps its own `target/` (no shared `CARGO_TARGET_DIR`,
+  so parallel worktrees don't wait on one cargo lock). Compiled dependencies
+  are shared through sccache (`rustc-wrapper` in the user's
+  `~/.cargo/config.toml`, cache capped by the user env var
+  `SCCACHE_CACHE_SIZE=100G`), so a new worktree's first build mostly reads
+  them from the cache; only the workspace crates compile. `sccache
+  --show-stats` shows the hit rate. Parallel agents: only one may run
+  `tron-zero-nettest` at a time.
+- `target/` grows with stale builds: `cargo sweep --time 8` (cargo-sweep)
+  removes artifacts older than 8 days; `cargo clean` wipes everything.
 
 ## Generic Rust Development
 

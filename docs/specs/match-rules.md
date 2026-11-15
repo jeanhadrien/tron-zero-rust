@@ -30,7 +30,7 @@ only with `anytime` respawns: with `next_round` and no end condition the dead
 would never come back, so the config is refused.
 
 Shipped configs (`crates/server/config/`): `official.toml`, `dev-cloud.toml`
-and `local.toml` (`scripts/play-local.*`) all play five 90 s last-standing
+and `local.toml` (`just play`) all play five 90 s last-standing
 rounds.
 
 ## Rules

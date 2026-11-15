@@ -9,6 +9,7 @@ Day-to-day development on Windows. Builds run natively on Windows for fast itera
 - **Windows Rust** — install via `https://win.rustup.rs/x86_64` (MSVC host). Pins to `stable` via `rust-toolchain.toml`.
 - **MSVC C++ build tools** — Visual Studio 2022 Build Tools with the `VC.Tools.x86.x64` workload. rustup detects it automatically.
 - **bacon** and **cargo-nextest** — `cargo install --locked bacon cargo-nextest` (watch loop and test runner).
+- **just** — `winget install Casey.Just` (or `cargo install --locked just`): the task runner. `just` in the repo lists the tasks of the root `justfile` (play, dev-cloud, lint, tests, lab, profile, web, lobby); on Windows they run in PowerShell 7 (`pwsh`).
 - Open a **new** shell after install so `%USERPROFILE%\.cargo\bin` is on PATH. Verify: `where cargo` prints `C:\Users\<you>\.cargo\bin\cargo.exe`.
 
 ## Repo location
@@ -28,6 +29,9 @@ cargo fmt -- --check
 cargo nextest run --workspace    # tests (config: .config/nextest.toml)
 cargo test --workspace --doc     # doctests (nextest skips them)
 ```
+
+The common ones are also `just` tasks: `just lint`, `just test`, `just test-sim`,
+`just test-lab`, `just bless`, `just test-net`, `just server`, `just client`.
 
 The client's `dev` feature links Bevy as a DLL (`bevy/dynamic_linking`), so an
 edit re-links only our code (about 2.7 s instead of 3.4 s for a client-only
@@ -57,7 +61,7 @@ Inside bacon, `?` lists the keys (`c` clippy, `t` test, `q` quit);
 with `Alt+Shift+D` / `Alt+Shift+-`.
 
 Typical setup: one pane on `bacon` (a clean pane means CI's lint gate passes),
-and `scripts\play-local.bat` when you want to play. Keep a single bacon
+and `just play` when you want to play. Keep a single bacon
 running: every cargo command shares `target/`, so a second one waits on
 "Blocking waiting for file lock". `bacon client` restarts the game window on
 every save (including `shared`), which suits visual tweaks, not long sessions.
@@ -83,14 +87,16 @@ If a build mysteriously rebuilds from scratch, you probably touched the repo fro
 
 The browser client (`wasm32-unknown-unknown`) is built with `web/build.ps1` / `web/build.sh`; see `web/README.md` and `docs/guides/building.md`.
 
-## One-click local test (`scripts\play-local.bat`, `scripts/play-local.sh`)
+## One-click local test (`just play`)
 
 ```
-scripts\play-local.bat            # dev profile
-scripts\play-local.bat release    # --release (longer first build, fastest game)
+just play            # dev profile
+just play release    # --release (longer first build, fastest game)
 ```
 
-Opens two windows: the server (with its bot roster) and the client, which
+Opens two windows on Windows (on Linux/macOS the server runs in the
+background of the same shell and stops with the client): the server (with
+its bot roster) and the client, which
 joins `127.0.0.1:5000` by itself and plays with a **simulated 20 ms round-trip
 ping**. The dev profile already builds dependencies at `opt-level = 3` and our
 crates at 1 (see `Cargo.toml`), so it is playable and shares `target/` with
@@ -100,7 +106,7 @@ Environment variables (all opt-in, read by the client; `TRON_BOT_DEBUG=1` is rea
 
 | Variable | Effect |
 |----------|--------|
-| `TRON_SIM_LATENCY_MS` | Simulated **round-trip** latency. The bat defaults it to 20; `0` or unset disables. |
+| `TRON_SIM_LATENCY_MS` | Simulated **round-trip** latency. `just play` reads it at startup and defaults it to 20; `0` disables. Unset disables only a bare `cargo run`. |
 | `TRON_SIM_JITTER_MS` | Uniform ± jitter applied to each direction. |
 | `TRON_SIM_LOSS_PCT` | Packet loss percentage applied to each direction. |
 | `TRON_AUTOCONNECT` | `host:port` to join at startup; retries every 1.5 s until the server is up. Any menu action by hand (Cancel, Disconnect, Quit) turns it off, as does reaching play once. |
@@ -110,7 +116,7 @@ Environment variables (all opt-in, read by the client; `TRON_BOT_DEBUG=1` is rea
 Server game settings (room name and capacity, match rules, bot roster) come
 from a config file: `SERVER_CONFIG=path`, else the official one built into the
 binary (`crates/server/config/official.toml`, five last-standing rounds).
-`scripts/play-local.*` uses `crates/server/config/local.toml` (five
+`just play` uses `crates/server/config/local.toml` (five
 last-standing rounds, `docs/specs/match-rules.md`). Keys and the server's env vars (`PORT`,
 `WEB_PORT`, the lobby ones) are in `docs/guides/building.md`. `bots.roster`
 names a roster file (see § Ladder) to seat instead of the built-in one,
@@ -159,7 +165,7 @@ client still lists any server it detects on this machine. Server env vars (`MANA
 `ADVERTISED_HOST`, `ALLOW_LOOPBACK_ANNOUNCE`, ...) are in `docs/guides/building.md`;
 the API and the announce protocol are in `server-manager/README.md`.
 
-`scripts/dev-cloud.bat [name]` starts a local server that announces itself to the
+`just dev-cloud [config]` starts a local server that announces itself to the
 Cloud Run manager (with `ALLOW_LOOPBACK_ANNOUNCE=1` and `ADVERTISED_HOST=127.0.0.1`,
 so it puts a loopback address on a **public** list; close the server window
 when done) and a client pointed at the same manager.
@@ -521,9 +527,9 @@ One-time setup (Windows):
 Record (builds first; first build in the profile is a full rebuild):
 
 ```
-scripts\profile.ps1 server [-Secs 40]      # server + 6 bots, one idle headless human joined
-scripts\profile.ps1 client                 # client window with a local server; close the window to stop
-scripts\profile.ps1 lab [lab args...]      # default: tournament ffa8.toml --quick
+just profile server [-Secs 40]      # server + 6 bots, one idle headless human joined
+just profile client                 # client window with a local server; close the window to stop
+just profile lab [lab args...]      # default: tournament ffa8.toml --quick
 ```
 
 The profile lands in `target\profiles\<target>-<time>.json.gz` (+ a

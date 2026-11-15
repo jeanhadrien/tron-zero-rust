@@ -1,4 +1,4 @@
-# Local play (`scripts/play-local.*`): five last-standing rounds with the
+# Local play (`just play`): five last-standing rounds with the
 # built-in bots. Copy this file to try other settings; keys: see `src/config.rs`.
 
 [server]

@@ -1,4 +1,4 @@
-# A local server listed on the Cloud Run lobby (`scripts/dev-cloud.bat`).
+# A local server listed on the Cloud Run lobby (`just dev-cloud`).
 # Same rules as the official server; keys: see `src/config.rs`.
 
 [server]
