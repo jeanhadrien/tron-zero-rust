@@ -28,20 +28,26 @@ pub struct Placement {
 
 impl Scene {
     /// Place every rider, in file order, on an arena whose walls are in
-    /// `field`. A fixed `at` is kept, and later spawns stay clear of it;
-    /// the other riders take a safe spawn seeded by their name and `seed`.
-    /// Bots get their brain, in planning slots by order among the bots.
+    /// `field`. A fixed `at` is kept; the other riders take a safe spawn
+    /// seeded by their name and `seed`, clear of every fixed start and laid
+    /// trail wherever it comes in the file. Bots get their brain, in planning
+    /// slots by order among the bots.
     pub fn place(&self, field: &mut SpawnField, seed: u64) -> Result<Vec<Placement>, String> {
+        for rider in &self.riders {
+            if let Some(at) = rider.at {
+                field.occupy(at.position);
+                let mut trail = rider.trail.clone();
+                trail.push(at.position);
+                field.occupy_trail(&trail);
+            }
+        }
         let mut slot = 0;
         self.riders
             .iter()
             .map(|rider| {
                 let rider_seed = rider_seed(&rider.name, seed);
                 let (spawn, lives) = match rider.at {
-                    Some(at) => {
-                        field.occupy(at.position);
-                        (at, 0)
-                    }
+                    Some(at) => (at, 0),
                     None => (
                         field
                             .place(rider_seed)

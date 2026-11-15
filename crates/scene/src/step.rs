@@ -87,12 +87,6 @@ pub struct Step {
     pub player: usize,
 }
 
-impl Step {
-    pub fn player(&self) -> &crate::Rider {
-        &self.scene.riders[self.player]
-    }
-}
-
 #[derive(Clone, Debug, PartialEq)]
 pub enum Goal {
     /// The player's head inside `area`.
@@ -222,9 +216,12 @@ impl Judge {
         let passed = match &self.goal {
             Goal::Reach { area } => area.contains(player.position),
             Goal::RubberSpentThenAlive => {
+                // Survival counts from the end of the contact.
                 if paid {
                     self.since_contact = Some(0);
-                } else if let Some(ticks) = &mut self.since_contact {
+                } else if let Some(ticks) = &mut self.since_contact
+                    && !player.colliding
+                {
                     *ticks += 1;
                 }
                 self.since_contact.is_some_and(|t| t >= SURVIVE_TICKS)
@@ -340,7 +337,8 @@ impl RawStep {
                 let floor = player.speed.max(WALL_TERMINAL_SPEED);
                 if !(speed > floor && speed <= shared::MAX_SPEED_MULT) {
                     return Err(format!(
-                        "speed {speed} must be above {floor} (start speed, one wall's grind)                          and at most {}",
+                        "speed {speed} must be above {floor} (start speed, one wall's grind) \
+                         and at most {}",
                         shared::MAX_SPEED_MULT
                     ));
                 }
@@ -492,6 +490,9 @@ mod tests {
             assert_eq!(j.observe(&free, &[]), None, "a contact that cost nothing");
         }
         assert_eq!(j.observe(&pressing, &[]), None);
+        for _ in 0..2 * SURVIVE_TICKS {
+            assert_eq!(j.observe(&grazing, &[]), None, "still in contact");
+        }
         for _ in 1..SURVIVE_TICKS {
             assert_eq!(j.observe(&free, &[]), None);
         }

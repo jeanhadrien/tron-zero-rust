@@ -23,6 +23,8 @@ pub const TUTORIAL_FILE_ENV: &str = "TRON_TUTORIAL";
 pub struct TutorialState {
     /// The client dialed the tutorial server.
     joined: bool,
+    /// The server was asked to stop; it is forgotten once its thread ends.
+    stopping: bool,
     /// Why the last start failed, for the menu.
     error: Option<String>,
     #[cfg(not(target_family = "wasm"))]
@@ -37,7 +39,7 @@ impl TutorialState {
     pub fn active(&self) -> bool {
         #[cfg(not(target_family = "wasm"))]
         {
-            self.joined && self.handle.is_some()
+            self.joined && !self.stopping && self.handle.is_some()
         }
         #[cfg(target_family = "wasm")]
         {
@@ -59,6 +61,7 @@ impl TutorialState {
         }
         self.error = None;
         self.joined = false;
+        self.stopping = false;
         self.status = None;
         let text = match steps_text() {
             Ok(text) => text,
@@ -137,15 +140,23 @@ fn poll_tutorial(
         HostStatus::Failed(reason) => {
             state.error = Some(reason);
             state.handle = None;
+            state.joined = false;
+            if offline {
+                session.status = crate::connection::IDLE_STATUS.into();
+            }
             return;
         }
         // Left the tutorial, or went to another server before joining it:
-        // stop its server, and forget it once the thread is done.
-        _ if (state.joined && offline) || (!state.joined && !offline) => {
+        // stop its server, and forget it once the thread is done, whatever
+        // the session does meanwhile.
+        _ if state.stopping || (state.joined && offline) || (!state.joined && !offline) => {
             handle.stop();
+            state.stopping = true;
             if handle.is_finished() {
                 state.handle = None;
                 state.status = None;
+                state.joined = false;
+                state.stopping = false;
                 return;
             }
         }

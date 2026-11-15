@@ -841,8 +841,10 @@ pub fn menu_ui(
         UiAction::Tutorial => {
             if session.phase() == ConnectionPhase::Offline {
                 menu.block_this_frame = true;
-                session.status = "Starting the tutorial...".into();
                 tutorial.start();
+                if tutorial.error().is_none() {
+                    session.status = "Starting the tutorial...".into();
+                }
             }
         }
         UiAction::ConnectRanked(endpoint, room_id) => {

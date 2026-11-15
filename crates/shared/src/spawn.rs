@@ -223,10 +223,7 @@ impl SpawnField {
         {
             if alive.0 {
                 field.heads.push(position.0);
-                let points = trail.points(position.0);
-                field
-                    .segments
-                    .extend(points.windows(2).map(|p| [p[0], p[1]]));
+                field.occupy_trail(&trail.points(position.0));
             }
         }
         Some(field)
@@ -235,6 +232,12 @@ impl SpawnField {
     /// Keep later spawns clear of a rider already standing at `head`.
     pub fn occupy(&mut self, head: Vec2) {
         self.heads.push(head);
+    }
+
+    /// Keep later spawns clear of a trail laid through `points`, in order.
+    pub fn occupy_trail(&mut self, points: &[Vec2]) {
+        self.segments
+            .extend(points.windows(2).map(|p| [p[0], p[1]]));
     }
 
     /// A safe spawn for `seed`. The spot is kept: the next one stays clear of it.
