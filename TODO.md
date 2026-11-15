@@ -41,12 +41,23 @@ Free-to-edit list of things to do or keep in mind. Agents may write here.
 
 ## Hosted server (sidecar), from the code review
 
-Plan: `plans/host-server-sidecar.md` (git-ignored). Code: `crates/server/src/embedded.rs`, `crates/client/src/host.rs`.
+Code: `crates/server/src/embedded.rs`, `crates/client/src/host.rs`.
 
 - AGENT: Error handler. `embedded.rs` sets `set_error_handler(warn)`, so ECS errors in the hosted server only log and the match runs on in a broken state (the server binary keeps the default). Fix: keep the default handler, detect the bind failure by the port pre-check or `catch_unwind` → `Failed`. Alternative: keep `warn` and show "server degraded" in the menu.
 - AGENT: Executor. `SingleThreadedExecutor` is set only on schedules that exist at build time; later ones may keep the multi-threaded executor and compete with the client's task pool. Unverified. Fix: list the schedules' executors after the first `update()` and set the rest. Alternative: build without the `multi_threaded` bevy feature for the server.
 - AGENT: Probe reach. The busy-port probe only reaches `127.0.0.1`; a server bound to one LAN IP on the same port is missed, and on Windows `bind(0.0.0.0:p)` can succeed next to it. Fix: document the limit and require our own probe reply after the bind before reporting `Running`. Alternative: probe every local interface and bind exclusively (`SO_EXCLUSIVEADDRUSE`).
 - AGENT: LAN exposure. "Host a server" opens an unauthenticated, unencrypted UDP server on all interfaces with no sign in the UI (the bind itself is JH's decision). Fix: show "Visible to your network" and the address next to `Running`. Alternative: a "LAN" toggle, default `127.0.0.1`, `0.0.0.0` only when on.
+
+## Hosted server: next steps
+
+- AGENT: Measure the cost of embedding the server: client binary size, client build time, frame time with the server and bots running. Check that the client's `multi_threaded` and the server's `webtransport` features don't leak into each other.
+- AGENT: Server lifetime independent of the client session (it keeps running when the client leaves its game). Today it stops when the client exits.
+- AGENT: Tag the hosted server's row "yours" in the local server list.
+- AGENT: `TRON_HOST=1` autostart in `just play`, to replace the server window.
+- AGENT: Web: sidecar on the client's own thread (feature split `net`, in-memory IO, one `update()` per frame). Measure bot cost first. Web Worker only if frame time suffers.
+- AGENT: Game mode presets in the host menu.
+- AGENT: Tutorial / play-vs-bots on top of the hosted server (scripted scenarios may reuse the lab's `Scenario`).
+- AGENT: Notice to remote players when the host stops (needs a protocol bump). Today they time out after `SESSION_TIMEOUT_SECS`.
 
 ## Audio (not implemented)
 
