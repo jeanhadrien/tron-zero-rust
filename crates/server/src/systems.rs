@@ -77,11 +77,7 @@ pub fn spawn_server_arena_and_start(
 
     // Server link entity.
     let server = commands
-        .spawn((
-            RawServer,
-            ServerUdpIo::default(),
-            LocalAddr(bind.0),
-        ))
+        .spawn((RawServer, ServerUdpIo::default(), LocalAddr(bind.0)))
         .id();
     commands.trigger(Start { entity: server });
     // Browser players join the same server entity over WebTransport.

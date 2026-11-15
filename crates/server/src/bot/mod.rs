@@ -64,11 +64,7 @@ pub fn add_bots(app: &mut App, roster: Vec<BotBuild>, debug: BotDebugConfig) {
 
 /// Spawn one bot per build of the roster, dead and due at once: `respawn_bots`
 /// places them on the first fixed tick, like any later respawn.
-pub fn setup_bots(
-    mut commands: Commands,
-    roster: Res<BotRoster>,
-    debug_cfg: Res<BotDebugConfig>,
-) {
+pub fn setup_bots(mut commands: Commands, roster: Res<BotRoster>, debug_cfg: Res<BotDebugConfig>) {
     for (slot, build) in roster.0.iter().enumerate() {
         let entity = commands
             .spawn((
