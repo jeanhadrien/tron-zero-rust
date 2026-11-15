@@ -167,6 +167,9 @@ pub fn add_core(app: &mut App, bind: core::net::SocketAddr, director: Director) 
         Director::Tutorial(tutorial) => {
             app.insert_resource(game::Respawns::Never);
             app.insert_resource(tutorial);
+            // The tutorial seats its own bots and scripted riders, per step.
+            bot::add_drive(app, bot::BotDebugConfig::default());
+            tutorial::add_systems(app);
             app.add_systems(
                 FixedUpdate,
                 tutorial::advance_tutorial

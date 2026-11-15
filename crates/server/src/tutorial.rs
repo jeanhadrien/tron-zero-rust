@@ -3,26 +3,37 @@
 //! director places riders itself, and the replicated `MatchStatus` is a
 //! constant so the client and the protocol stay as they are.
 //!
-//! An attempt: retire everyone, set the step's walls, hold a countdown, place
-//! the player in a new life (stale turns die), then judge every tick after the deaths are
-//! resolved: pass or fail, show the result for a moment, then the next step or
-//! the same step again. The status goes out through a shared [`TutorialStatus`]
-//! (the hosted server's handle), never on the wire.
+//! An attempt: retire everyone, set the step's walls and seat its other
+//! riders, hold a countdown, apply the scene (every rider placed where the
+//! scene says, the player in a new life so stale turns die, the bot and script
+//! clock back to 0), then judge every tick after the deaths are resolved: pass
+//! or fail, show the result for a moment, then the next step or the same step
+//! again. The status goes out through a shared [`TutorialStatus`] (the hosted
+//! server's handle), never on the wire.
+//!
+//! Scene riders play as in any runner of a step: the same placements
+//! (`scene::Scene::place`, seed `scene::step::SEED`), scripts and bot
+//! seeds from placement tick 0, and the same `scene::step::Judge` fed with
+//! scene names.
 
+use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
 use bevy::math::Rect;
 use bevy::prelude::*;
 use lightyear::prelude::*;
-use scene::step::{Area, Judge, RiderState, Step};
+use scene::Action;
+use scene::step::{Area, Death, Judge, PLAYER, RiderState, Step};
 use shared::spawn::{SpawnField, placed_at};
 use shared::{
-    Arena, ArenaSize, IsAlive, IsColliding, LifeGeneration, MatchPhase, MatchStatus, Player,
-    Position, Rubber, SpeedMult, TICK_HZ, WallSegments,
+    ActionState, Arena, ArenaSize, DeathCause, DeathLog, DeathRecord, IsAlive, IsColliding,
+    LifeGeneration, MatchPhase, MatchStatus, Player, PlayerInput, Position, Rubber, SpeedMult,
+    TICK_HZ, WallSegments,
 };
 
 pub use scene::step::Fail;
 
+use crate::bot::{BotBrain, DriveTick};
 use crate::systems::{Human, InitialSpawn};
 
 /// Hold before the player is placed: time to read the prompt.
@@ -30,21 +41,70 @@ pub const COUNTDOWN_TICKS: u32 = 2 * TICK_HZ as u32;
 /// How long a pass or a fail is shown before the next attempt.
 pub const RESULT_TICKS: u32 = TICK_HZ as u32;
 
-/// Parse a step file and check it is playable here. On top of
-/// `scene::step::parse`: no riders but the player, until the server seats
-/// scripted riders and bots, so a step never plays differently here than in
-/// the lab.
+/// Parse a step file and check it is playable here: on top of
+/// `scene::step::parse`, every step's riders can be placed on its arena.
 pub fn load(text: &str) -> Result<Vec<Step>, String> {
     let steps = scene::step::parse(text)?;
     for (i, step) in steps.iter().enumerate() {
-        if step.scene.riders.len() != 1 {
-            return Err(format!(
-                "step {}: riders other than the player are not hosted yet",
-                i + 1
-            ));
-        }
+        let mut world = World::new();
+        let size = ArenaSize::default();
+        world.spawn((Arena, size, WallSegments(step_walls(step, size))));
+        let mut field = SpawnField::walls(&mut world).ok_or("no arena")?;
+        step.scene
+            .place(&mut field, scene::step::SEED)
+            .map_err(|e| format!("step {}: {e}", i + 1))?;
     }
     Ok(steps)
+}
+
+/// A rider the scene seats besides the player, by its index in the step's
+/// scene. Lives for one attempt.
+#[derive(Component)]
+struct SceneRider(usize);
+
+/// A scripted rider's moves, by tick from placement ([`DriveTick`]).
+#[derive(Component)]
+struct Script(BTreeMap<u32, Action>);
+
+/// This tick's deaths, copied for the judge before `resolve_deaths` drains
+/// the log.
+#[derive(Resource, Default)]
+struct TickDeaths(Vec<DeathRecord>);
+
+/// The tutorial's systems around the shared simulation. Call after
+/// `add_core` and `bot::add_drive`.
+pub(crate) fn add_systems(app: &mut App) {
+    app.init_resource::<TickDeaths>();
+    app.add_systems(
+        FixedUpdate,
+        (
+            // Same tick as the bots, read before `bot_brain_input` moves it on.
+            script_input
+                .after(crate::systems::handle_respawns)
+                .before(crate::bot::bot_brain_input)
+                .before(shared::simulate_players),
+            // The sim fills the log; `resolve_deaths` drains it.
+            copy_deaths
+                .after(shared::simulate_players)
+                .before(crate::elimination::resolve_deaths),
+        ),
+    );
+}
+
+/// Each scripted rider's input for this tick: its move due now, else hold
+/// (inputs are one-shot, as in the lab).
+fn script_input(tick: Res<DriveTick>, mut riders: Query<(&Script, &mut ActionState<PlayerInput>)>) {
+    for (script, mut input) in &mut riders {
+        input.0 = match script.0.get(&tick.0) {
+            Some(Action::Left) => PlayerInput::TurnLeft,
+            Some(Action::Right) => PlayerInput::TurnRight,
+            _ => PlayerInput::None,
+        };
+    }
+}
+
+fn copy_deaths(log: Res<DeathLog>, mut out: ResMut<TickDeaths>) {
+    out.0.clone_from(&log.0);
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -162,10 +222,13 @@ pub fn advance_tutorial(world: &mut World) {
     match (human, phase) {
         (None, Phase::Waiting) => {}
         // The player left: wait for the next one, from the same step.
-        (None, _) => world.resource_mut::<Tutorial>().enter(Phase::Waiting),
+        (None, _) => {
+            clear_scene(world);
+            world.resource_mut::<Tutorial>().enter(Phase::Waiting);
+        }
         (Some(_), Phase::Waiting) => start_attempt(world),
         (Some((entity, _)), Phase::Countdown) if ticks >= COUNTDOWN_TICKS => {
-            place_player(world, entity);
+            apply_scene(world, entity);
             world.resource_mut::<Tutorial>().enter(Phase::Playing);
         }
         (Some((entity, alive)), Phase::Playing) => judge(world, entity, alive),
@@ -185,17 +248,24 @@ pub fn advance_tutorial(world: &mut World) {
     publish(world);
 }
 
-/// Retire every rider, set the step's walls and hold the countdown of a new
-/// attempt.
+/// Retire every rider, set the step's walls, seat its other riders (dead
+/// until placed) and hold the countdown of a new attempt. Seating them now
+/// gives their replicated entities the countdown to reach the client.
 fn start_attempt(world: &mut World) {
-    let alive: Vec<Entity> = world
-        .query_filtered::<(Entity, &IsAlive), With<Player>>()
-        .iter(world)
-        .filter(|(_, alive)| alive.0)
-        .map(|(entity, _)| entity)
-        .collect();
-    crate::game::retire(world, &alive);
+    clear_scene(world);
     set_walls(world);
+    let step = world.resource::<Tutorial>().current().clone();
+    for (index, rider) in step.scene.riders.iter().enumerate() {
+        if index == step.player {
+            continue;
+        }
+        let seat = crate::bot::seat(format!("scene-{index}"), rider.name.clone(), index);
+        let mut entity = world.spawn((seat, SceneRider(index)));
+        // A bot gets its brain when placed; any other rider rides its script.
+        if rider.bot.is_none() {
+            entity.insert(Script(rider.script.clone()));
+        }
+    }
     let mut tutorial = world.resource_mut::<Tutorial>();
     tutorial.attempt += 1;
     tutorial.fail = None;
@@ -214,38 +284,101 @@ fn start_attempt(world: &mut World) {
 /// again.
 fn set_walls(world: &mut World) {
     let tutorial = world.resource::<Tutorial>();
-    let extra = tutorial.current().scene.walls.clone();
+    let step = tutorial.current().clone();
     let mut arena = world.query_filtered::<(&ArenaSize, &mut WallSegments), With<Arena>>();
     let Ok((size, mut walls)) = arena.single_mut(world) else {
         warn!("Tutorial: no arena to set the walls on");
         return;
     };
-    let mut next = shared::arena_walls(size.width, size.height);
-    next.extend(extra);
+    let next = step_walls(&step, *size);
     walls.set_if_neq(WallSegments(next));
 }
 
-/// Put the player at the step's start in a new life, so turns sent for an
-/// earlier attempt are stale, and start judging.
-fn place_player(world: &mut World, entity: Entity) {
-    let mut tutorial = world.resource_mut::<Tutorial>();
-    tutorial.judge = Judge::new(tutorial.current());
-    let rider = tutorial.current().player().clone();
-    let seed = u64::from(tutorial.attempt);
-    let spawn = match rider.at {
-        Some(at) => Some(at),
-        None => SpawnField::walls(world).and_then(|mut field| field.place(seed)),
-    };
-    let Some(spawn) = spawn else {
-        warn!("Tutorial: no safe spawn for the player");
-        return;
-    };
-    let mut player = world.entity_mut(entity);
-    player.remove::<InitialSpawn>();
-    if let Some(life) = player.get::<LifeGeneration>().and_then(|g| g.next()) {
-        player.insert(life);
+/// The arena boundary of `size` plus the step's own walls.
+fn step_walls(step: &Step, size: ArenaSize) -> Vec<[f32; 4]> {
+    let mut walls = shared::arena_walls(size.width, size.height);
+    walls.extend(step.scene.walls.iter().copied());
+    walls
+}
+
+/// Retire every living rider and remove the riders the scene seated.
+fn clear_scene(world: &mut World) {
+    retire_all(world);
+    let seated: Vec<Entity> = world
+        .query_filtered::<Entity, With<SceneRider>>()
+        .iter(world)
+        .collect();
+    for entity in seated {
+        world.despawn(entity);
     }
-    player.insert(placed_at(&rider.start(spawn)));
+}
+
+fn retire_all(world: &mut World) {
+    let alive: Vec<Entity> = world
+        .query_filtered::<(Entity, &IsAlive), With<Player>>()
+        .iter(world)
+        .filter(|(_, alive)| alive.0)
+        .map(|(entity, _)| entity)
+        .collect();
+    crate::game::retire(world, &alive);
+}
+
+/// Place every rider of the step where the scene says: the player (`human`)
+/// in a new life, so turns sent for an earlier attempt are stale; the seated
+/// riders, bots with a fresh brain. Restart the bot and script clock and the
+/// judge. Runs at the end of a tick: the next tick is placement tick 0.
+fn apply_scene(world: &mut World, human: Entity) {
+    let step = world.resource::<Tutorial>().current().clone();
+    world.resource_mut::<Tutorial>().judge = Judge::new(&step);
+    world.resource_mut::<DriveTick>().0 = 0;
+    let placements = SpawnField::walls(world)
+        .ok_or_else(|| "no arena".to_owned())
+        .and_then(|mut field| step.scene.place(&mut field, scene::step::SEED));
+    let placements = match placements {
+        Ok(placements) => placements,
+        // `load` placed every step already: only a broken arena gets here.
+        Err(e) => {
+            warn!("Tutorial: cannot place the scene: {e}");
+            return;
+        }
+    };
+    let seated: Vec<(Entity, usize)> = world
+        .query::<(Entity, &SceneRider)>()
+        .iter(world)
+        .map(|(entity, rider)| (entity, rider.0))
+        .collect();
+    for (index, placement) in placements.into_iter().enumerate() {
+        let entity = if index == step.player {
+            Some(human)
+        } else {
+            seated.iter().find(|(_, i)| *i == index).map(|(e, _)| *e)
+        };
+        let Some(entity) = entity else {
+            warn!(index, "Tutorial: a scene rider was not seated");
+            continue;
+        };
+        let mut rider = world.entity_mut(entity);
+        if index == step.player {
+            rider.remove::<InitialSpawn>();
+            if let Some(life) = rider.get::<LifeGeneration>().and_then(|g| g.next()) {
+                rider.insert(life);
+            }
+        }
+        rider.insert(placed_at(&placement.start));
+        if let Some(brain) = placement.brain {
+            rider.insert(BotBrain { brain });
+        }
+    }
+}
+
+/// The scene name of `entity`: the player for `human`, a seated rider's own
+/// name, `None` for anything else.
+fn scene_name<'a>(world: &World, step: &'a Step, human: Entity, entity: Entity) -> Option<&'a str> {
+    if entity == human {
+        return Some(PLAYER);
+    }
+    let index = world.get::<SceneRider>(entity)?.0;
+    step.scene.riders.get(index).map(|r| r.name.as_str())
 }
 
 /// Pass or fail the attempt on this tick's state.
@@ -258,11 +391,28 @@ fn judge(world: &mut World, entity: Entity, alive: bool) {
         colliding: player.get::<IsColliding>().is_some_and(|c| c.0),
         rubber: player.get::<Rubber>().map_or(0.0, |r| r.0),
     };
-    let mut tutorial = world.resource_mut::<Tutorial>();
-    // Only the player rides yet (`load`), so no other death can matter.
-    let Some(outcome) = tutorial.judge.observe(&state, &[]) else {
+    let outcome = world.resource_scope(|world, mut tutorial: Mut<Tutorial>| {
+        let tutorial = &mut *tutorial;
+        let step = &tutorial.steps[tutorial.step];
+        let deaths: Vec<Death> = world
+            .resource::<TickDeaths>()
+            .0
+            .iter()
+            .filter_map(|death| {
+                let victim = scene_name(world, step, entity, death.victim)?;
+                let killer = match death.cause {
+                    DeathCause::Trail(owner) => scene_name(world, step, entity, owner),
+                    DeathCause::Wall | DeathCause::OwnTrail => None,
+                };
+                Some(Death { victim, killer })
+            })
+            .collect();
+        tutorial.judge.observe(&state, &deaths)
+    });
+    let Some(outcome) = outcome else {
         return;
     };
+    let mut tutorial = world.resource_mut::<Tutorial>();
     match outcome {
         Ok(()) => {
             info!(step = tutorial.step, "Tutorial: step passed");
@@ -275,7 +425,7 @@ fn judge(world: &mut World, entity: Entity, alive: bool) {
         }
     }
     // Nobody rides while the result is shown.
-    crate::game::retire(world, &[entity]);
+    retire_all(world);
 }
 
 /// Write the status for the handle, and keep the replicated `MatchStatus` a
@@ -307,6 +457,8 @@ fn publish(world: &mut World) {
 mod tests {
     use super::*;
 
+    const RIDERS: &str = include_str!("../../scene/fixtures/riders.toml");
+
     fn setup() -> (World, Entity, StatusCell) {
         let mut world = World::new();
         let out = StatusCell::default();
@@ -314,6 +466,8 @@ mod tests {
             load(scene::step::BUILTIN).unwrap(),
             out.clone(),
         ));
+        world.init_resource::<DriveTick>();
+        world.init_resource::<TickDeaths>();
         world.spawn((
             shared::Arena,
             shared::ArenaSize::default(),
@@ -401,13 +555,113 @@ mod tests {
     }
 
     #[test]
-    fn the_shipped_tutorial_loads_here_and_unhosted_scenes_do_not() {
+    fn the_shipped_tutorial_and_steps_with_riders_load_here() {
         assert!(!load(scene::step::BUILTIN).unwrap().is_empty());
-        let crowded = format!(
-            "{}\n[[step.scene.rider]]\nname = \"other\"\n",
-            scene::step::BUILTIN
+        assert_eq!(load(RIDERS).unwrap().len(), 4);
+    }
+
+    /// The server's tick as `add_core` orders it, without the network: scripts
+    /// and bots, the sim, the deaths for the judge, the director.
+    fn tick_schedule() -> Schedule {
+        let mut schedule = Schedule::default();
+        schedule.add_systems(
+            (
+                script_input,
+                crate::bot::bot_brain_input,
+                shared::simulate_players,
+                copy_deaths,
+                // `resolve_deaths` drains the log on a server.
+                |mut log: ResMut<DeathLog>| log.0.clear(),
+                advance_tutorial,
+            )
+                .chain(),
         );
-        assert!(load(&crowded).unwrap_err().contains("not hosted yet"));
+        schedule
+    }
+
+    /// The world of `setup` playing step `index` of the rider fixtures, run up
+    /// to the tick that places the scene. The next tick is placement tick 0.
+    fn placed(index: usize) -> (World, Schedule, Entity, StatusCell) {
+        let (mut world, human, out) = setup();
+        let mut tutorial = Tutorial::new(load(RIDERS).unwrap(), out.clone());
+        tutorial.step = index;
+        world.insert_resource(tutorial);
+        world.insert_resource(shared::SimulationRole::Server);
+        world.init_resource::<DeathLog>();
+        world.init_resource::<crate::bot::SchedulerConfig>();
+        world.init_resource::<crate::bot::BotDebugConfig>();
+        let mut schedule = tick_schedule();
+        while world.resource::<Tutorial>().phase != Phase::Playing {
+            schedule.run(&mut world);
+        }
+        (world, schedule, human, out)
+    }
+
+    fn rider(world: &mut World, name: &str) -> Entity {
+        world
+            .query::<(Entity, &shared::DisplayName)>()
+            .iter(world)
+            .find(|(_, n)| n.0 == name)
+            .map(|(e, _)| e)
+            .unwrap()
+    }
+
+    #[test]
+    fn a_scripted_rider_follows_its_script_from_the_placement_tick() {
+        let (mut world, mut schedule, _, _) = placed(0);
+        let guide = rider(&mut world, "guide");
+        assert_eq!(
+            world.get::<Position>(guide).unwrap().0,
+            Vec2::new(0.0, 600.0)
+        );
+        let mut turned = None;
+        for tick in 0..120 {
+            schedule.run(&mut world);
+            let heading = world.get::<shared::Direction>(guide).unwrap().0;
+            if heading != Vec2::X && turned.is_none() {
+                turned = Some((tick, heading));
+            }
+        }
+        // As in the lab (`crates/lab/tests/tutorial.rs`): tick 60, left of +x.
+        assert_eq!(turned, Some((60, Vec2::Y)));
+    }
+
+    #[test]
+    fn deaths_reach_the_judge_by_scene_name() {
+        let (mut world, mut schedule, _, out) = placed(1);
+        let mut tutorial = world.resource_mut::<Tutorial>();
+        assert_eq!(tutorial.attempt, 1);
+        tutorial.steps.truncate(2);
+        while status(&out).phase == Phase::Playing {
+            schedule.run(&mut world);
+        }
+        assert_eq!(status(&out).phase, Phase::Passed, "{:?}", status(&out).fail);
+        let alive = world
+            .query::<&IsAlive>()
+            .iter(&world)
+            .filter(|a| a.0)
+            .count();
+        assert_eq!(alive, 0, "nobody rides while the result shows");
+
+        let (mut world, mut schedule, _, out) = placed(2);
+        while status(&out).phase == Phase::Playing {
+            schedule.run(&mut world);
+        }
+        // Re-seating on the next attempt despawns replicated entities: the
+        // nettest `a_tutorial_scene_rider_reaches_the_client_and_is_reseated`.
+        assert_eq!(status(&out).fail, Some(Fail::RiderDead("victim".into())));
+    }
+
+    #[test]
+    fn a_scene_bot_is_placed_with_a_brain_and_rides() {
+        let (mut world, mut schedule, _, _) = placed(3);
+        let bot = rider(&mut world, "rival");
+        assert!(world.get::<BotBrain>(bot).is_some());
+        assert!(world.get::<Script>(bot).is_none());
+        for _ in 0..60 {
+            schedule.run(&mut world);
+        }
+        assert!(world.get::<IsAlive>(bot).unwrap().0);
     }
 
     #[test]

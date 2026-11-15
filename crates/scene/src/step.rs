@@ -32,6 +32,9 @@ use crate::{Action, Scene, Time, parse_script};
 
 /// The scene rider the human plays.
 pub const PLAYER: &str = "player";
+/// Every runner places a step's scene with this seed (`Scene::place`): the
+/// same spawns at every attempt, on the server as in the lab.
+pub const SEED: u64 = 0;
 /// How long the player must stay alive after a wall contact ends.
 pub const SURVIVE_SECS: f64 = 1.5;
 const SURVIVE_TICKS: u32 = (SURVIVE_SECS * shared::TICK_HZ) as u32;

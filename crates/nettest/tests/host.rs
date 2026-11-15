@@ -157,6 +157,79 @@ fn a_step_wall_reaches_the_client_and_stops_the_predicted_rider() {
     assert_eq!(status.fail, Some(tron_zero_server::embedded::Fail::Death));
 }
 
+/// One short step with a scripted rider beside the player: it times out, so
+/// attempts follow each other.
+const GUIDED_STEP: &str = r#"
+[[step]]
+prompt = "Watch the guide."
+timeout = 1
+solution = []
+goal = { kind = "reach", area = [600, 600, 900, 900] }
+
+[step.scene]
+[[step.scene.rider]]
+name = "player"
+at = [-600, -600]
+heading = "+x"
+
+[[step.scene.rider]]
+name = "guide"
+at = [0, 600]
+heading = "+x"
+script = ["0.5 left"]
+"#;
+
+#[test]
+fn a_tutorial_scene_rider_reaches_the_client_and_is_reseated() {
+    let _guard = serial();
+    let port = free_port();
+    let host = spawn(HostConfig {
+        transport: Transport::udp_loopback([port]),
+        mode: HostMode::Tutorial {
+            text: GUIDED_STEP.into(),
+        },
+    });
+    assert_eq!(settled(&host), HostStatus::Running { port });
+
+    let mut client = TestClient::new(Impairment::NONE);
+    client.connect(port);
+    let guides = |client: &mut TestClient| {
+        client
+            .rider_names()
+            .iter()
+            .filter(|name| *name == "guide")
+            .count()
+    };
+    let on = |host: &HostHandle, attempt: u32| {
+        host.tutorial()
+            .is_some_and(|s| s.attempt == attempt && s.phase == Phase::Playing)
+    };
+    let end = Instant::now() + WAIT;
+    let mut rode = false;
+    while !on(&host, 2) && Instant::now() < end {
+        client.update();
+        if on(&host, 1) {
+            // The guide's trail grows on the client while it rides.
+            rode |= client.trail_of("scene-1").is_some_and(|t| t.0.len() > 1);
+        }
+        // The old guide may linger a few frames into the countdown (both are
+        // dead then); never while anybody rides.
+        if on(&host, 1) {
+            assert!(guides(&mut client) <= 1, "one guide while riding");
+        }
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    assert!(rode, "the guide rode on the client in attempt 1");
+    assert!(on(&host, 2), "the step restarted");
+    // The second attempt's guide replaced the first one.
+    let settle = Instant::now() + Duration::from_millis(300);
+    while Instant::now() < settle {
+        client.update();
+        assert_eq!(guides(&mut client), 1, "one guide while riding");
+        std::thread::sleep(Duration::from_millis(1));
+    }
+}
+
 #[test]
 fn a_busy_port_fails_or_is_skipped() {
     let _guard = serial();

@@ -13,8 +13,12 @@ The lab wraps a scene in its scenario files; the tutorial's step file
 
 ## Boundaries
 
-- Depends on `shared/` and `bots/` only. No runner types, no ECS world access:
-  placing riders is the runner's job (`shared::spawn::placed_at`).
+- Depends on `shared/` and `bots/` only. No runner types, no ECS world access.
+  The scene decides where riders begin (`Scene::place` on a `SpawnField` the
+  runner gathers: file order, fixed `at` kept, else a safe spawn seeded by
+  `rider_seed`; bot brains seeded by `brain_seed`); the runner inserts
+  `shared::spawn::placed_at` on its own entities. Never copy this logic into
+  a runner.
 - Tutorial vocabulary (steps, goals, fails, prompts) stays in `step.rs`; the
   scene core (`lib.rs`) knows none of it.
 - `step::Judge` is the one evaluator of an attempt: pure, fed the player's
@@ -31,9 +35,13 @@ The lab wraps a scene in its scenario files; the tutorial's step file
 ## Map
 
 - `lib.rs` — `Scene`, `Rider`, `Time`, script parsing, `check_limits`.
+- `place.rs` — `Scene::place`, `Placement`, `rider_seed`, `brain_seed`.
 - `step.rs` — the step file (`parse`, `BUILTIN`), `Goal`, `Fail`, `Judge`.
 - `tutorials/basics.toml` — the shipped tutorial, embedded in the client
   through `server::embedded::TUTORIAL`.
+- `fixtures/riders.toml` — test steps with scripted riders and a bot, not
+  shipped; run by both the lab and the server tests (same turn tick, kill,
+  guarded death).
 
 ## Known facts
 

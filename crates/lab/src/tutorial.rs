@@ -12,18 +12,7 @@ use crate::{EventKind, Lab, Scenario};
 /// The attempt's outcome with the player riding `script` (ticks from
 /// placement): `Ok` on a pass, the fail otherwise.
 pub fn play(step: &Step, script: &BTreeMap<u32, Action>) -> Result<(), Fail> {
-    let mut scene = step.scene.clone();
-    scene.riders[step.player].script = script.clone();
-    let scenario = Scenario {
-        until: step.timeout,
-        arena: None,
-        seed: 0,
-        rules: None,
-        tier: None,
-        respawn_after: vec![None; scene.riders.len()],
-        scene,
-    };
-    let mut lab = Lab::new(&scenario);
+    let mut lab = Lab::new(&scenario(step, script));
     let mut judge = Judge::new(step);
     loop {
         let seen = lab.events().len();
@@ -49,5 +38,21 @@ pub fn play(step: &Step, script: &BTreeMap<u32, Action>) -> Result<(), Fail> {
         if let Some(outcome) = judge.observe(&state, &deaths) {
             return outcome;
         }
+    }
+}
+
+/// The lab run of `step` with the player riding `script`: the step seed
+/// (`scene::step::SEED`), no respawns, until the step's timeout.
+pub fn scenario(step: &Step, script: &BTreeMap<u32, Action>) -> Scenario {
+    let mut scene = step.scene.clone();
+    scene.riders[step.player].script = script.clone();
+    Scenario {
+        until: step.timeout,
+        arena: None,
+        seed: scene::step::SEED,
+        rules: None,
+        tier: None,
+        respawn_after: vec![None; scene.riders.len()],
+        scene,
     }
 }

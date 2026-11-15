@@ -11,6 +11,7 @@ use bots::drive::{Seat, drive};
 use bots::schedule::{SchedulerConfig, Tier};
 use bots::world::WorldSnapshotBuilder;
 use glam::Vec2;
+use scene::brain_seed;
 use serde::Serialize;
 use shared::spawn::{SpawnField, placed, placed_at};
 use shared::*;
@@ -181,10 +182,6 @@ pub struct Lab {
     rounds: Vec<RoundResult>,
 }
 
-/// Spreads a rider's life counter over the seed space (golden-ratio odd
-/// constant, as for the scenario seed).
-const LIFE_SEED_STEP: u64 = 0xA24B_AED4_963E_E407;
-
 impl Lab {
     pub fn new(scenario: &Scenario) -> Self {
         Self::with_seed(scenario, scenario.seed)
@@ -211,36 +208,21 @@ impl Lab {
         let specs = &scenario.scene.riders;
         let mut riders: Vec<LabRider> = Vec::with_capacity(specs.len());
         let mut field = SpawnField::walls(&mut world).expect("the arena was just spawned");
-        let mut slots = 0;
-        for (spec, respawn_after) in specs.iter().zip(&scenario.respawn_after) {
-            // Seed 0 keeps the plain name hash, so fixed-start goldens predate
-            // seeding unchanged.
-            let rider_seed =
-                fnv1a(&spec.name).wrapping_add(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15));
-            let mut lives = 0;
-            let spawn = match spec.at {
-                Some(at) => {
-                    field.occupy(at.position);
-                    at
-                }
-                None => {
-                    lives = 1;
-                    field
-                        .place(rider_seed)
-                        .unwrap_or_else(|| panic!("{}: no safe spawn", spec.name))
-                }
-            };
-            let entity = world.spawn((Player, placed_at(&spec.start(spawn)))).id();
-            let bot = spec.bot.clone().map(|build| {
-                slots += 1;
-                Brain::new(build, brain_seed(rider_seed, lives), slots - 1)
-            });
+        let placements = scenario
+            .scene
+            .place(&mut field, seed)
+            .unwrap_or_else(|e| panic!("{e}"));
+        for ((spec, respawn_after), placement) in
+            specs.iter().zip(&scenario.respawn_after).zip(placements)
+        {
+            let entity = world.spawn((Player, placed_at(&placement.start))).id();
+            let bot = placement.brain;
             riders.push(LabRider {
                 name: spec.name.clone(),
                 entity,
                 commands: spec.script.clone(),
-                seed: rider_seed,
-                lives,
+                seed: placement.seed,
+                lives: placement.lives,
                 deaths: Vec::new(),
                 was_colliding: false,
                 was_sliding: false,
@@ -768,11 +750,6 @@ impl Lab {
     }
 }
 
-/// Seed of a brain's misjudgments: the rider's seed, then its life counter.
-fn brain_seed(rider_seed: u64, lives: u64) -> u64 {
-    rider_seed ^ lives.wrapping_mul(LIFE_SEED_STEP)
-}
-
 /// Fold one tick the rider ended alive into its stats.
 fn track(rider: &mut LabRider, after: &RiderView, heads: &[Option<Vec2>]) {
     let nearest = heads
@@ -789,10 +766,4 @@ fn track(rider: &mut LabRider, after: &RiderView, heads: &[Option<Vec2>]) {
     stats.rubber_ticks += u64::from(after.colliding);
     stats.idle_ticks += u64::from(!near && !closing);
     stats.speed_sum += f64::from(after.speed);
-}
-
-fn fnv1a(text: &str) -> u64 {
-    text.bytes().fold(0xcbf29ce484222325, |hash, byte| {
-        (hash ^ byte as u64).wrapping_mul(0x100000001b3)
-    })
 }

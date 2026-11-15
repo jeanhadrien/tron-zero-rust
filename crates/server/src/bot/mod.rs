@@ -1,11 +1,12 @@
 //! Server-only bot management and the look → plan → emit AI loop.
 //!
 //! The brain itself lives in the `bots` crate; this module owns the ECS side:
-//! the roster, spawning, respawns and the `BotDebug` writer.
-//! `bot_brain_input` stays in the FixedUpdate chain before `simulate_players`
-//! and writes every alive bot's `ActionState` each tick. A bot is one entity
-//! for the life of the server: it dies, waits, and is placed again on a safe
-//! spot by `respawn_bots`, like a human.
+//! driving (`add_drive`: `bot_brain_input` before `simulate_players` writes
+//! every alive bot's `ActionState` each tick, whoever seated the bot), and the
+//! match's roster (`add_bots`: spawning, respawns), plus the `BotDebug`
+//! writer. A roster bot is one entity for the life of the server: it dies,
+//! waits, and is placed again on a safe spot by `respawn_bots`, like a human.
+//! The tutorial seats its own bots per attempt (`crate::tutorial`).
 
 pub(crate) mod debug;
 
@@ -40,26 +41,56 @@ struct RespawnIn(u32);
 #[derive(Resource)]
 pub struct BotRoster(pub Vec<BotBuild>);
 
-/// Seat `roster` (may be empty) and drive it: staggered decisions (one epoch
-/// per reaction period). Dead bots are placed after the humans' respawns, so
-/// both see each other; the brain then writes input before the shared
-/// simulation. Call after `add_core`.
+/// The tick the bots decide on: counts fixed ticks from server start, or from
+/// the moment a director resets it (a tutorial attempt starts at 0, as a lab
+/// run does). `bot_brain_input` reads it, then moves it on.
+#[derive(Resource, Default)]
+pub struct DriveTick(pub u32);
+
+/// Seat `roster` (may be empty) and drive it ([`add_drive`]). Dead bots are
+/// placed after the humans' respawns, so both see each other. Call after
+/// `add_core`.
 pub fn add_bots(app: &mut App, roster: Vec<BotBuild>, debug: BotDebugConfig) {
+    add_drive(app, debug);
     app.insert_resource(BotRoster(roster));
+    app.add_systems(
+        FixedUpdate,
+        respawn_bots
+            .after(crate::systems::handle_respawns)
+            .before(bot_brain_input),
+    );
+    app.add_systems(Startup, setup_bots);
+}
+
+/// Drive every rider with a `BotBrain`, whoever seated it: staggered
+/// decisions (one epoch per reaction period), input written before the shared
+/// simulation.
+pub fn add_drive(app: &mut App, debug: BotDebugConfig) {
     app.init_resource::<SchedulerConfig>();
+    app.init_resource::<DriveTick>();
     app.insert_resource(debug);
     app.add_systems(
         FixedUpdate,
-        (
-            respawn_bots
-                .after(crate::systems::handle_respawns)
-                .before(bot_brain_input),
-            bot_brain_input
-                .after(crate::systems::handle_respawns)
-                .before(shared::simulate_players),
-        ),
+        bot_brain_input
+            .after(crate::systems::handle_respawns)
+            .before(shared::simulate_players),
     );
-    app.add_systems(Startup, setup_bots);
+}
+
+/// What every server-seated rider carries (a bot, or a tutorial's scripted
+/// rider): replicated identity, color and score; seat `slot` picks the color.
+/// The rider starts dead until someone places it.
+pub(crate) fn seat(id: String, name: String, slot: usize) -> impl Bundle {
+    (
+        Player,
+        shared::PlayerId(id),
+        DisplayName(name),
+        PlayerColor(BOT_COLORS[slot % BOT_COLORS.len()]),
+        shared::Score::default(),
+        IsAlive(false),
+        Replicate::to_clients(NetworkTarget::All),
+        InterpolationTarget::to_clients(NetworkTarget::All),
+    )
 }
 
 /// Spawn one bot per build of the roster, dead and due at once: `respawn_bots`
@@ -68,18 +99,11 @@ pub fn setup_bots(mut commands: Commands, roster: Res<BotRoster>, debug_cfg: Res
     for (slot, build) in roster.0.iter().enumerate() {
         let entity = commands
             .spawn((
-                Player,
+                seat(format!("bot-{}", slot + 1), build.name.clone(), slot),
                 BotBrain {
                     brain: Brain::new(build.clone(), rand::random(), slot),
                 },
-                shared::PlayerId(format!("bot-{}", slot + 1)),
-                DisplayName(build.name.clone()),
-                PlayerColor(BOT_COLORS[slot % BOT_COLORS.len()]),
-                shared::Score::default(),
-                IsAlive(false),
                 RespawnIn(1),
-                Replicate::to_clients(NetworkTarget::All),
-                InterpolationTarget::to_clients(NetworkTarget::All),
             ))
             .id();
         // Inserts a default `shared::BotDebug` only when the debug gate is on;
@@ -96,13 +120,13 @@ pub fn bot_brain_input(
     mut commands: Commands,
     debug_cfg: Res<BotDebugConfig>,
     scheduler: Res<SchedulerConfig>,
-    mut ticks: Local<u32>,
+    mut ticks: ResMut<DriveTick>,
     builder: WorldSnapshotBuilder,
     mut brains: Query<(Entity, &mut BotBrain, &IsAlive), With<Player>>,
     mut inputs: Query<&mut ActionState<PlayerInput>, With<BotBrain>>,
 ) {
-    let tick = *ticks;
-    *ticks = ticks.wrapping_add(1);
+    let tick = ticks.0;
+    ticks.0 = tick.wrapping_add(1);
 
     let mut bots: Vec<_> = brains
         .iter_mut()

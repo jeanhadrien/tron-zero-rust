@@ -30,9 +30,14 @@
 //! caps, in-bounds poses and walls, trails the game could have laid, no
 //! respawn.
 //!
+//! [`Scene::place`] decides where each rider begins; runners apply it.
+//!
 //! [`step`] is the tutorial's step file, built on scenes.
 
+mod place;
 pub mod step;
+
+pub use place::{Placement, brain_seed, rider_seed};
 
 use std::collections::{BTreeMap, HashSet};
 

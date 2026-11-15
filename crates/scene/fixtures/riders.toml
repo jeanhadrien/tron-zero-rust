@@ -1,0 +1,78 @@
+# Test steps with riders besides the player, not shipped. Played by the lab
+# (`crates/lab/tests/tutorial.rs`) and the server (`server::tutorial` tests):
+# both must see the same thing. Times in seconds (120 ticks a second).
+
+# 1. A scripted rider turns left 0.5 s (tick 60) after placement.
+[[step]]
+prompt = "scripted turn"
+timeout = 5
+solution = []
+goal = { kind = "reach", area = [300, 200, 600, 500] }
+
+[step.scene]
+[[step.scene.rider]]
+name = "player"
+at = [-600, -600]
+heading = "+x"
+
+[[step.scene.rider]]
+name = "guide"
+at = [0, 600]
+heading = "+x"
+script = ["0.5 left"]
+
+# 2. A rider rides into the player's laid trail: a kill for the player.
+[[step]]
+prompt = "kill"
+timeout = 5
+solution = []
+goal = { kind = "kill", rider = "victim" }
+
+[step.scene]
+[[step.scene.rider]]
+name = "player"
+at = [0, 0]
+heading = "+x"
+trail = [[-400, 0]]
+
+[[step.scene.rider]]
+name = "victim"
+at = [-200, 300]
+heading = "-y"
+
+# 3. The same death, guarded: the attempt fails.
+[[step]]
+prompt = "guarded"
+timeout = 5
+solution = []
+goal = { kind = "reach", area = [300, 200, 600, 500] }
+fail = { rider_dead = ["victim"] }
+
+[step.scene]
+[[step.scene.rider]]
+name = "player"
+at = [0, 0]
+heading = "+x"
+trail = [[-400, 0]]
+
+[[step.scene.rider]]
+name = "victim"
+at = [-200, 300]
+heading = "-y"
+
+# 4. A bot on a safe spawn rides along an idle player.
+[[step]]
+prompt = "bot"
+timeout = 5
+solution = []
+goal = { kind = "reach", area = [300, 200, 600, 500] }
+
+[step.scene]
+[[step.scene.rider]]
+name = "player"
+at = [-600, -600]
+heading = "+x"
+
+[[step.scene.rider]]
+name = "rival"
+bot = "duelist"
