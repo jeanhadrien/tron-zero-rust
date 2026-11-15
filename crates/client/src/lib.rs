@@ -9,6 +9,7 @@ pub mod browser;
 pub mod chat;
 pub mod config;
 pub mod connection;
+pub mod host;
 pub mod input;
 pub mod local_scan;
 pub mod look;

@@ -44,6 +44,9 @@ pub fn is_local_dev_host(hostname: &str) -> bool {
 /// Whether the player can quit the app (there is no such thing in a browser tab).
 pub const CAN_QUIT: bool = cfg!(not(target_family = "wasm"));
 
+/// Whether the player can host a server (a browser cannot bind a socket).
+pub const CAN_HOST: bool = cfg!(not(target_family = "wasm"));
+
 #[cfg(test)]
 mod tests {
     use super::is_local_dev_host;

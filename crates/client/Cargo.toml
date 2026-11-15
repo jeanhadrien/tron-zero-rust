@@ -46,6 +46,8 @@ serde_json = "1"
 
 # Native: raw UDP and a config file in the platform config dir.
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
+# Only `embedded`: the "Host a server" button (`host.rs`).
+server = { path = "../server", package = "tron-zero-server" }
 lightyear = { workspace = true, features = ["udp"] }
 bevy = { workspace = true, features = ["multi_threaded", "x11", "wayland"] }
 dirs = "6"
