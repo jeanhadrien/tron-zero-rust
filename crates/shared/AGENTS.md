@@ -33,7 +33,7 @@ build on it.
 - **Determinism:** `f32`/`Vec2` only, headings as ±X/±Y swaps (no trig at turn sites), arithmetic `+ - * /` only (no `powi`/`exp`), no unsorted `HashMap` iteration. Client and server must stay bit-identical.
 - **Constants:** gameplay numbers are named consts in `constants.rs` (or module-local next to their sole use). Promote to a `Resource` only if it must vary at runtime.
 - **System order:** a new `FixedUpdate` system declares `.after(simulate_players)` / `.before(...)` with a comment saying why. Build the obstacle snapshot in one piece before any mutation.
-- **Replication:** every replicated component gets one line in `protocol.rs` with its reason: `predict()` (position, rubber), `replicate_once()` (id, name), plain `replicate()` (color, shape), or local-only (`ActionState<PlayerInput>`). Cardinal turns and trail heads use discrete `step` interpolation.
+- **Replication:** every replicated component gets one line in `protocol.rs` with its reason: `predict()` (position, rubber), `replicate_once()` (id, name), plain `replicate()` (color, shape, `WallSegments`: a director changes walls only while every rider is retired), or local-only (`ActionState<PlayerInput>`). Cardinal turns and trail heads use discrete `step` interpolation.
 - **Messages vs inputs:** a one-shot action is a Lightyear message, never a `PlayerInput`.
 - **Protocol id:** `PROTOCOL_ID` = hand-bumped `PROTOCOL_VERSION` + fingerprint of every sim constant. A constant change bumps it by itself; a logic change with the same constants, or a change to a replicated type, needs a manual bump and a re-stamp of the lab goldens.
 

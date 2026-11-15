@@ -3,8 +3,8 @@
 //! director places riders itself, and the replicated `MatchStatus` is a
 //! constant so the client and the protocol stay as they are.
 //!
-//! An attempt: retire everyone, hold a countdown, place the player in a new
-//! life (stale turns die), then judge every tick after the deaths are
+//! An attempt: retire everyone, set the step's walls, hold a countdown, place
+//! the player in a new life (stale turns die), then judge every tick after the deaths are
 //! resolved: pass or fail, show the result for a moment, then the next step or
 //! the same step again. The status goes out through a shared [`TutorialStatus`]
 //! (the hosted server's handle), never on the wire.
@@ -17,8 +17,8 @@ use lightyear::prelude::*;
 use scene::step::{Area, Judge, RiderState, Step};
 use shared::spawn::{SpawnField, placed_at};
 use shared::{
-    IsAlive, IsColliding, LifeGeneration, MatchPhase, MatchStatus, Player, Position, Rubber,
-    SpeedMult, TICK_HZ,
+    Arena, ArenaSize, IsAlive, IsColliding, LifeGeneration, MatchPhase, MatchStatus, Player,
+    Position, Rubber, SpeedMult, TICK_HZ, WallSegments,
 };
 
 pub use scene::step::Fail;
@@ -31,15 +31,15 @@ pub const COUNTDOWN_TICKS: u32 = 2 * TICK_HZ as u32;
 pub const RESULT_TICKS: u32 = TICK_HZ as u32;
 
 /// Parse a step file and check it is playable here. On top of
-/// `scene::step::parse`: no walls and no riders but the player, until the
-/// server applies whole scenes (walls replicated, scripted riders and bots
-/// seated), so a step never plays differently here than in the lab.
+/// `scene::step::parse`: no riders but the player, until the server seats
+/// scripted riders and bots, so a step never plays differently here than in
+/// the lab.
 pub fn load(text: &str) -> Result<Vec<Step>, String> {
     let steps = scene::step::parse(text)?;
     for (i, step) in steps.iter().enumerate() {
-        if !step.scene.walls.is_empty() || step.scene.riders.len() != 1 {
+        if step.scene.riders.len() != 1 {
             return Err(format!(
-                "step {}: walls and riders other than the player are not hosted yet",
+                "step {}: riders other than the player are not hosted yet",
                 i + 1
             ));
         }
@@ -185,7 +185,8 @@ pub fn advance_tutorial(world: &mut World) {
     publish(world);
 }
 
-/// Retire every rider and hold the countdown of a new attempt.
+/// Retire every rider, set the step's walls and hold the countdown of a new
+/// attempt.
 fn start_attempt(world: &mut World) {
     let alive: Vec<Entity> = world
         .query_filtered::<(Entity, &IsAlive), With<Player>>()
@@ -194,6 +195,7 @@ fn start_attempt(world: &mut World) {
         .map(|(entity, _)| entity)
         .collect();
     crate::game::retire(world, &alive);
+    set_walls(world);
     let mut tutorial = world.resource_mut::<Tutorial>();
     tutorial.attempt += 1;
     tutorial.fail = None;
@@ -203,6 +205,24 @@ fn start_attempt(world: &mut World) {
         attempt = tutorial.attempt,
         "Tutorial: attempt starts"
     );
+}
+
+/// The arena boundary plus the current step's walls. Called only while every
+/// rider is retired, and the countdown that follows is longer than a client
+/// rollback: no simulated tick, here or re-simulated on a client, sees a
+/// rider and a wall change together. Unchanged walls are not replicated
+/// again.
+fn set_walls(world: &mut World) {
+    let tutorial = world.resource::<Tutorial>();
+    let extra = tutorial.current().scene.walls.clone();
+    let mut arena = world.query_filtered::<(&ArenaSize, &mut WallSegments), With<Arena>>();
+    let Ok((size, mut walls)) = arena.single_mut(world) else {
+        warn!("Tutorial: no arena to set the walls on");
+        return;
+    };
+    let mut next = shared::arena_walls(size.width, size.height);
+    next.extend(extra);
+    walls.set_if_neq(WallSegments(next));
 }
 
 /// Put the player at the step's start in a new life, so turns sent for an
@@ -383,11 +403,22 @@ mod tests {
     #[test]
     fn the_shipped_tutorial_loads_here_and_unhosted_scenes_do_not() {
         assert!(!load(scene::step::BUILTIN).unwrap().is_empty());
-        let walled = scene::step::BUILTIN.replace(
-            "[step.scene]",
-            "[step.scene]
-walls = [[0, 0, 0, 100]]",
+        let crowded = format!(
+            "{}\n[[step.scene.rider]]\nname = \"other\"\n",
+            scene::step::BUILTIN
         );
-        assert!(load(&walled).unwrap_err().contains("not hosted yet"));
+        assert!(load(&crowded).unwrap_err().contains("not hosted yet"));
+    }
+
+    #[test]
+    fn an_attempt_sets_the_steps_walls_on_the_arena() {
+        let text = scene::step::BUILTIN
+            .replace("[step.scene]", "[step.scene]\nwalls = [[0, -100, 0, 100]]");
+        let (mut world, _, _) = setup();
+        world.insert_resource(Tutorial::new(load(&text).unwrap(), StatusCell::default()));
+        run(&mut world, 1);
+        let walls = world.query::<&WallSegments>().single(&world).unwrap();
+        assert_eq!(walls.0.len(), 5);
+        assert_eq!(walls.0[4], [0.0, -100.0, 0.0, 100.0]);
     }
 }

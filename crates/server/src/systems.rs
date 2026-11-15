@@ -66,7 +66,7 @@ pub fn spawn_server_arena_and_start(
     web: Option<Res<crate::web::WebEndpoint>>,
     mut commands: Commands,
 ) {
-    // Arena — replicated once to all clients.
+    // Arena — replicated to all clients; a director may change its walls.
     let size = shared::ArenaSize::default();
     commands.spawn((
         shared::Arena,

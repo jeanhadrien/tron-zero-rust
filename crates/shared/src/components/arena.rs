@@ -27,6 +27,7 @@ impl Default for ArenaSize {
     }
 }
 
-/// Boundary wall segments as `(x1, y1, x2, y2)` line segments.
-#[derive(Component, Clone, Debug, Default, Serialize, Deserialize, Reflect)]
+/// Wall segments as `(x1, y1, x2, y2)`: the arena boundary first, then any
+/// walls a scene adds.
+#[derive(Component, Clone, Debug, Default, PartialEq, Serialize, Deserialize, Reflect)]
 pub struct WallSegments(pub Vec<[f32; 4]>);

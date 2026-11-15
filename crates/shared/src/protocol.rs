@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize};
 /// fine and then silently mispredict. The lab's golden traces back this up:
 /// blessing changed goldens fails unless this was bumped (see
 /// `golden_traces_match` and `scenarios/goldens.protocol`).
-pub const PROTOCOL_VERSION: u32 = 12;
+pub const PROTOCOL_VERSION: u32 = 13;
 
 /// Bits of one sim constant, checked against its declared type: a constant
 /// listed under the wrong type does not compile.
@@ -565,7 +565,11 @@ pub fn register_protocol(app: &mut App) {
 
     app.component::<Arena>().replicate_once();
     app.component::<ArenaSize>().replicate_once();
-    app.component::<WallSegments>().replicate_once();
+    // Changeable between attempts of a scene (the walls a step sets up). Not
+    // predicted: a director changes them only while every rider is retired,
+    // with a hold longer than a rollback, so a re-simulated tick never sees
+    // other walls than the server did.
+    app.component::<WallSegments>().replicate();
 
     // ActionState is local per-tick state (written by input systems, read by
     // simulate_players). Not replicated — the lightyear input system handles

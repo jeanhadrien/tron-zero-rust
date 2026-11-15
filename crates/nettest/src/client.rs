@@ -316,6 +316,25 @@ impl TestClient {
         query.iter(world).next().is_some_and(|alive| alive.0)
     }
 
+    /// The local rider's predicted head, once it exists.
+    pub fn rider_position(&mut self) -> Option<glam::Vec2> {
+        let world = self.app.world_mut();
+        let mut query =
+            world.query_filtered::<&shared::Position, (With<Predicted>, With<Controlled>)>();
+        query.iter(world).next().map(|p| p.0)
+    }
+
+    /// The arena's wall segments as this client has them.
+    pub fn walls(&mut self) -> Vec<[f32; 4]> {
+        let world = self.app.world_mut();
+        let mut query = world.query_filtered::<&shared::WallSegments, With<shared::Arena>>();
+        query
+            .iter(world)
+            .next()
+            .map(|w| w.0.clone())
+            .unwrap_or_default()
+    }
+
     pub fn rider_generation(&mut self) -> Option<u128> {
         let world = self.app.world_mut();
         let mut query =
