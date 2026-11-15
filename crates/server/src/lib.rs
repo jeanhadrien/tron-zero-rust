@@ -11,6 +11,7 @@ pub mod budget;
 pub mod chat;
 pub mod config;
 pub mod elimination;
+pub mod embedded;
 pub mod game;
 mod look;
 pub mod probe;
