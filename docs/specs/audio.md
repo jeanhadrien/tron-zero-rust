@@ -30,7 +30,7 @@ together, and every rider is an instrument in it.
   must never accumulate it). Death *cause* (wall, own trail, someone's trail)
   is not replicated. Neither is grind *side*, nor whose trail is being ground.
   Everything below is either derived from replicated state or explicitly
-  marked as an inference. No protocol change (in line with `NOTES.md`).
+  marked as an inference. No protocol change.
 
 ## 2. What the simulation gives us
 

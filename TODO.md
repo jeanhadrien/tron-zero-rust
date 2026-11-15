@@ -32,3 +32,25 @@ Free-to-edit list of things to do or keep in mind. Agents may write here.
 - AGENT: Adaptive difficulty from the player's win rate (may feel like rubber-banding).
 - AGENT: Persistent bot identity across matches (stats, grudges).
 - AGENT: Offline self-play to evolve personality weights.
+
+## Bots: CPU budget
+
+- AGENT: The load tiers (`[tuning.tiers]`) and the search budget (`verify_top`, `race_top`, `reply_top`) are CPU budgets, yet they sit in the roster's tuning, hashed into every bot's rating id.
+- AGENT: Extract them into one budget piece: a cost model per decision and a per-tick budget the server owns (it knows its hardware), separate from what defines a bot.
+- AGENT: Open question: a budget that changes with the machine makes the same rated bot play differently across servers. Decide whether ratings should care.
+
+## Audio (not implemented)
+
+- AGENT: Design proposal (generative, synthesized from sim state): `docs/specs/audio.md`.
+- AGENT: Engine hum scaled with the rider's speed multiplier; explosion on death.
+- AGENT: Spatial listener on the local rider, so opponents' sounds pan and fade with distance.
+- AGENT: Volume setting in the settings screen (persisted in `client.json`).
+- AGENT: Client-only: no sim or protocol change. Keep it out of `shared/` and the server.
+- AGENT: The `bevy` feature set is trimmed (no audio compiled in, see `docs/guides/building.md`). Enabling it grows the wasm size, so measure first.
+
+## Spectator mode (not implemented)
+
+- AGENT: After death, follow another rider instead of freezing on the dead one (cycle with a key).
+- AGENT: Camera work only, if the client already receives every rider's state. Check what replication and interpolation give a dead player before assuming so.
+- AGENT: Must not interfere with manual respawn: Space still requests it, and the death overlay stays.
+- AGENT: A true spectator that joins without a rider needs a protocol change (admission without spawning, capacity rules). Decide whether it is wanted.
