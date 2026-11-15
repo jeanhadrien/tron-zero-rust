@@ -10,7 +10,7 @@ seat bots, announce to the lobby. Lib + bin: logic stays in the lib so
 
 ## Boundaries
 
-- Depends on `shared/` and `bots/`. Never on `lab/` or `client/`.
+- Depends on `shared/` and `bots/`. Never on `lab/` or `client/`. The client runs `embedded` (a server on its own thread, local-play rules, no announce/ranked/web): keep it free of process-wide parts (`exit`, signals, env vars, logger).
 - The only place with secrets, manager HTTP, admission and ranked reporting.
 - Game rules do not live here. If the lab would need the same logic (rider
   reset, spawn inputs, round flow, bot driving), it belongs in `shared/` or
@@ -24,14 +24,14 @@ seat bots, announce to the lobby. Lib + bin: logic stays in the lib so
 - `systems` (connect/disconnect, arena, respawn queue), `game` (runs `shared::MatchFlow` on every server: scores, placement, bots off while no human is here, replicated `MatchStatus`; respawns ask `MatchState::may_spawn`).
 - `config` — the server config file (room, `[match]` and `[round]` rules, bots); `config/official.toml` is embedded, `config/local.toml` (`just play`) and `dev-cloud.toml` (`just dev-cloud`) are the local configs.
 - `bot/` — seats the roster named by the config, drives brains through `bots::drive`, respawns a dead bot as the same entity on a safe spot, debug overlay.
-- `look`, `chat`, `probe`, `web` (WebTransport, certificate rotation), `announce` (manager HTTP), `ranked` and `elimination` (results reporting).
+- `embedded` (`spawn` -> `HostHandle`, the server a client hosts), `look`, `chat`, `probe`, `web` (WebTransport, certificate rotation), `announce` (manager HTTP), `ranked` and `elimination` (results reporting).
 
 ## Rules
 
 - A new `FixedUpdate` system states its order against `simulate_players` with a comment saying why.
 - Every message a client can send freely gets a per-link budget in `budget.rs`.
 - Logging: `warn!` = denied/degraded, `info!` = lifecycle, `debug!` = per-tick noise. Install the log subscriber before reading config.
-- Game settings (room, match rules, bots) come from the config file (`SERVER_CONFIG`, else the embedded official one), every key required unless documented optional; deployment settings and secrets (ports, advertised host, manager, `RANKED_*`) from env vars. Never put one in the other. Both are read at start; an invalid value stops the server (exit code 2), it never silently runs other rules. Full list: `docs/guides/building.md`.
+- Game settings (room, match rules, bots) come from the config file (`SERVER_CONFIG`, else the embedded official one), every key required unless documented optional; deployment settings and secrets (ports, advertised host, manager, `RANKED_*`) from env vars. Never put one in the other. Both are read at start; an invalid value stops the server (`main` exits with code 2; the lib only returns `Err`), it never silently runs other rules. Full list: `docs/guides/building.md`.
 
 ## Test
 

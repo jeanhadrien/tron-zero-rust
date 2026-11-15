@@ -49,6 +49,16 @@ next one. Hold Tab for the scoreboard. No lobby involved. `just` reads
 bash, before `just play`. Restart on save instead: `bacon server` and
 `bacon client` (see `docs/guides/dev.md`).
 
+### 1b. Host a server from the client (desktop)
+
+Menu, **Host a server**: the client runs a server with the built-in bots on its
+own thread (local-play rules, `crates/server/config/local.toml`). It listens on
+all interfaces, on the first free UDP port of 5000-5003, so friends on the LAN
+can join (Windows asks for a firewall permission the first time). **Join my
+server** dials it; **Stop server** or quitting the client stops it. It does not
+announce to a lobby. Use `play-local` instead for separate logs or the latency
+simulator.
+
 ### 2. Web client against a local server
 
 ```

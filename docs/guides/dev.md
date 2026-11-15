@@ -579,7 +579,9 @@ The client starts disconnected, with a menu over an empty grid (unless
 saved), start the server separately, then open **Server browser** and click
 **Connect** on the localhost row (always listed first). It appears once a
 server answers a probe on `127.0.0.1` ports 5000-5003; the menu re-probes
-about every 1.5 s while it is open and offline (never during play). A second
+about every 1.5 s while it is open and offline (never during play). A server
+hosted from the menu (**Host a server**, see `docs/guides/run.md`) is listed
+too. A second
 local server needs its own `PORT` and `WEB_PORT` (e.g.
 `PORT=5002 WEB_PORT=5012`); 5001 is the default WebTransport port and never
 answers. The browser build cannot probe UDP, so it lists localhost
