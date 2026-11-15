@@ -8,6 +8,7 @@ use crate::account::{Accounts, RankedJoin, Standing};
 use crate::browser::{self, BrowserRow, BrowserState, FetchStatus, ManagerConfig};
 use crate::chat::ChatState;
 use crate::connection::{AutoConnect, ConnectionPhase, Endpoint, IDLE_STATUS, Session};
+use crate::host::{HostAction, HostPanel, HostState};
 use crate::input::PendingInput;
 use crate::local_scan::LocalServers;
 use crate::look::{Look, random_look};
@@ -112,6 +113,10 @@ enum UiAction {
     Back,
     Refresh,
     ConnectRoom(Endpoint),
+    /// Start or stop the server this client hosts.
+    Host(HostAction),
+    /// Join the server this client hosts, on its port.
+    JoinMine(u16),
     /// A ranked room: sign in and fetch a join ticket first.
     ConnectRanked(Endpoint, String),
     StartCapture(TurnSide, usize),
@@ -161,6 +166,7 @@ fn main_screen(
     phase: ConnectionPhase,
     status: &str,
     name_edit: &mut String,
+    host: &HostPanel,
     action: &mut UiAction,
 ) {
     heading(ui, theme, "TRON ZERO", 34.0);
@@ -197,11 +203,42 @@ fn main_screen(
     if theme::action_button(ui, "Server browser").clicked() {
         action.set_once(UiAction::GotoRooms);
     }
+    if crate::platform::CAN_HOST {
+        host_buttons(ui, theme, phase, host, action);
+    }
     if theme::action_button(ui, "Settings").clicked() {
         action.set_once(UiAction::GotoSettings);
     }
     if crate::platform::CAN_QUIT && theme::action_button(ui, "Quit game").clicked() {
         action.set_once(UiAction::Quit);
+    }
+}
+
+/// "Host a server" / "Stop server", its status line and "Join my server".
+fn host_buttons(
+    ui: &mut egui::Ui,
+    theme: &Theme,
+    phase: ConnectionPhase,
+    host: &HostPanel,
+    action: &mut UiAction,
+) {
+    let host_click = ui
+        .add_enabled_ui(host.action.is_some(), |ui| {
+            theme::action_button(ui, host.caption)
+        })
+        .inner
+        .clicked();
+    if let (true, Some(next)) = (host_click, host.action) {
+        action.set_once(UiAction::Host(next));
+    }
+    if let Some(line) = &host.line {
+        body_label(ui, theme, line, 14.0);
+    }
+    if let Some(port) = host.join_port
+        && phase == ConnectionPhase::Offline
+        && theme::action_button(ui, "Join my server").clicked()
+    {
+        action.set_once(UiAction::JoinMine(port));
     }
 }
 
@@ -628,6 +665,7 @@ pub fn menu_ui(
     ranked_ui: RankedUi,
     config: Res<ManagerConfig>,
     servers: Res<LocalServers>,
+    mut host: ResMut<HostState>,
     time: Res<Time<Real>>,
 ) {
     if !menu.open {
@@ -653,6 +691,7 @@ pub fn menu_ui(
     let now = time.elapsed_secs_f64();
     let mut action = UiAction::None;
     let joinable = phase == ConnectionPhase::Offline && !ranked.busy();
+    let host_panel = host.view().panel();
     let rating = standing.me.as_ref().map(|me| me.summary());
     // Detected local servers are pinned above the manager's rooms.
     let rows = if screen == MenuScreen::Rooms {
@@ -681,7 +720,15 @@ pub fn menu_ui(
                 theme::panel_spacing(ui);
                 ui.vertical_centered(|ui| match screen {
                     MenuScreen::Main => {
-                        main_screen(ui, &theme, phase, &status, &mut name_edit, &mut action);
+                        main_screen(
+                            ui,
+                            &theme,
+                            phase,
+                            &status,
+                            &mut name_edit,
+                            &host_panel,
+                            &mut action,
+                        );
                         if !side_panel {
                             // Too narrow for a panel beside the menu: stack it below.
                             ui.separator();
@@ -755,6 +802,17 @@ pub fn menu_ui(
                 menu.screen = MenuScreen::Main;
                 menu.block_this_frame = true;
                 session.connect(endpoint, &join_name, now, &mut commands);
+            }
+        }
+        UiAction::Host(HostAction::Start) => host.start(),
+        UiAction::Host(HostAction::Stop) => host.stop(&mut session),
+        UiAction::JoinMine(port) => {
+            if session.phase() == ConnectionPhase::Offline {
+                menu.screen = MenuScreen::Main;
+                menu.block_this_frame = true;
+                host.joined_own();
+                let addr = std::net::SocketAddr::from((std::net::Ipv4Addr::LOCALHOST, port));
+                session.connect(addr, &join_name, now, &mut commands);
             }
         }
         UiAction::ConnectRanked(endpoint, room_id) => {
