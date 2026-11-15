@@ -105,6 +105,7 @@ impl HostState {
             return;
         }
         self.view = HostView::Starting;
+        self.stop_when_offline = false;
         self.handle = Some(server::embedded::spawn(server::embedded::HostConfig {
             transport: server::embedded::Transport::udp_any(crate::local_scan::LOCAL_PORTS),
             bots: true,
@@ -158,19 +159,32 @@ fn poll_host(mut host: ResMut<HostState>, session: Res<Session>) {
             }
         }
     }
+    // No server: a pending stop has nothing to stop and must not hit the next one.
     let Some(handle) = &host.handle else {
+        host.stop_when_offline = false;
         return;
     };
-    host.view = match handle.status() {
+    // Finished first, status second: a thread writes its final status before
+    // it ends, so a finished thread's status is final.
+    let finished = handle.is_finished();
+    let view = resolve_view(handle.status(), finished);
+    // A finished thread is joined at once; the view keeps the failure.
+    if finished {
+        host.handle = None;
+    }
+    host.view = view;
+}
+
+/// The view for a thread status. A finished thread never shows a live status.
+#[cfg(not(target_family = "wasm"))]
+fn resolve_view(status: HostStatus, finished: bool) -> HostView {
+    match status {
+        HostStatus::Failed(reason) => HostView::Failed(reason),
+        HostStatus::Stopped => HostView::Stopped,
+        _ if finished => HostView::Stopped,
         HostStatus::Starting => HostView::Starting,
         HostStatus::Running { port } => HostView::Running { port },
-        HostStatus::Failed(reason) => HostView::Failed(reason),
         HostStatus::Stopping => HostView::Stopping,
-        HostStatus::Stopped => HostView::Stopped,
-    };
-    // A finished thread is joined at once; the view keeps the failure.
-    if handle.is_finished() {
-        host.handle = None;
     }
 }
 
@@ -187,6 +201,27 @@ fn stop_host_on_exit(mut exits: MessageReader<AppExit>, mut host: ResMut<HostSta
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(not(target_family = "wasm"))]
+    #[test]
+    fn finished_thread_never_shows_live_view() {
+        let live = [
+            HostStatus::Starting,
+            HostStatus::Running { port: 5000 },
+            HostStatus::Stopping,
+        ];
+        for status in live {
+            assert_eq!(resolve_view(status, true), HostView::Stopped);
+        }
+        assert_eq!(
+            resolve_view(HostStatus::Running { port: 5000 }, false),
+            HostView::Running { port: 5000 }
+        );
+        assert_eq!(
+            resolve_view(HostStatus::Failed("x".into()), true),
+            HostView::Failed("x".into())
+        );
+    }
 
     #[test]
     fn buttons_follow_the_host_status() {
