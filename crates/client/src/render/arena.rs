@@ -12,6 +12,7 @@ use bevy::gizmos::config::{DefaultGizmoConfigGroup, GizmoConfigStore, GizmoLineJ
 use bevy::prelude::*;
 use shared::{ARENA_HEIGHT, ARENA_WIDTH, Arena, WallSegments};
 
+use super::fog::{FogGizmos, FogScene};
 use super::layers::Z_GRID;
 use crate::theme::Theme;
 
@@ -74,18 +75,29 @@ pub fn apply_world_theme(
     config.line.width = theme.line_width;
     // Sharp corners where a trail turns, however thick the line.
     config.line.joints = GizmoLineJoint::Miter;
+    let line = config.line.clone();
+    gizmo_config.config_mut::<FogGizmos>().0.line = line;
 }
 
-/// Draw the boundary walls when replicated state is present.
-pub fn draw_arena(walls: Query<&WallSegments, With<Arena>>, theme: Res<Theme>, mut gizmos: Gizmos) {
+/// Draw the boundary walls when replicated state is present. Under fog they
+/// go to the gizmo group the fog camera draws, above the fog.
+pub fn draw_arena(
+    walls: Query<&WallSegments, With<Arena>>,
+    theme: Res<Theme>,
+    fog: Option<Res<FogScene>>,
+    mut gizmos: Gizmos,
+    mut above_fog: Gizmos<FogGizmos>,
+) {
     let Ok(segments) = walls.single() else {
         return;
     };
+    let color = theme.wall.bevy();
     for seg in &segments.0 {
-        gizmos.line_2d(
-            Vec2::new(seg[0], seg[1]),
-            Vec2::new(seg[2], seg[3]),
-            theme.wall.bevy(),
-        );
+        let (a, b) = (Vec2::new(seg[0], seg[1]), Vec2::new(seg[2], seg[3]));
+        if fog.is_some() {
+            above_fog.line_2d(a, b, color);
+        } else {
+            gizmos.line_2d(a, b, color);
+        }
     }
 }

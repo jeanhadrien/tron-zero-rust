@@ -7,7 +7,7 @@ use super::layers::{CAMERA_FAR, CAMERA_Z};
 use super::smooth::{OwnRider, Rendered};
 
 /// Vertical world-units visible in the follow camera.
-const CAMERA_VIEW_HEIGHT: f32 = 800.0;
+pub(super) const CAMERA_VIEW_HEIGHT: f32 = 800.0;
 /// Duration of the camera glide after the rider respawns somewhere else.
 const RESPAWN_EASE_SECS: f32 = 0.2;
 

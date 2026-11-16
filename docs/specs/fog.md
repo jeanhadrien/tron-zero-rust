@@ -1,6 +1,6 @@
 # Fog of war
 
-Status: proposal 2026-11. Step 1 implemented (config, replicated `FogRules`, `shared::visibility`); rendering not yet. A room option, off by default. v1
+Status: proposal 2026-11. Implemented: config, replicated `FogRules`, `shared::visibility`, and in the client the fog layer with cone, proximity, glow and sparks (`crates/client/src/render/fog.rs`). Not yet: ghosts, vision of the dead (while dead there is no fog). A room option, off by default. v1
 is a client-side experiment to find out whether fog is fun: the server only
 says whether fog is on, and each client hides what its rider cannot see.
 
@@ -77,7 +77,7 @@ phase. `local.toml` (`just play`) turns fog on, for testing.
   floor grid under the fog is drawn dimmed by the fog shader itself (from
   world coordinates), so the grid is never drawn over trails.
 - **Tutorial:** no fog.
-- **Debug:** a client key shows the arena without fog, for development.
+- **Debug:** F3 shows the arena without fog (debug builds only).
 
 ## Implementation
 
@@ -119,14 +119,22 @@ Research notes (2026-11). No new dependency is needed.
 - Glow areas are rectangles: an axis-aligned segment grown by the radius in
   both axes (square ends instead of round ones). Proximity and Sparks are
   `Circle` meshes.
-- A mask camera renders these shapes white on black into a texture
-  (Bevy `render_to_texture` example), on its own `RenderLayers`, with the
-  main camera's transform and projection. Half resolution with linear
-  filtering gives soft edges for free.
-- A second camera (`order = 1`, no clear) draws a full-screen fog quad with a
-  `Material2d` (Bevy `shader_material_2d` example) that darkens where the
-  mask is black. Ghosts and arena walls are drawn by that camera too: gizmos
-  pick a camera through a `GizmoConfigGroup` with `render_layers`.
+- One mesh, rebuilt every frame on the CPU (cone fan, proximity and sparks
+  circles as 32-gon fans, glow rectangles), is drawn white on black by a mask
+  camera on its own `RenderLayers` into a texture at half the window size
+  (linear filtering gives soft edges). It has the main camera's transform and
+  projection (all cameras are `Camera2d`, so `follow_player` moves them).
+- Gizmos draw after every sprite and mesh of their camera, so a fog quad in
+  the main camera could not sit over trails. While fog is on, the world is
+  drawn by a *scene camera* (order -1) and the main camera (order 0, the one
+  that carries egui, so the UI stays on top) moves to its own layer and draws
+  only the fog quad (`Material2d`, `fog.wgsl`, alpha = 1 - mask, dim grid from
+  world coordinates) and the walls (gizmo group `FogGizmos` with
+  `render_layers`). Ghosts will go on that layer too.
+- Sparks state (a circle per grinding rider, `FOG_SPARKS_SECS` countdown) is
+  kept client-side. Glow is one rectangle per seen trail leg (the hull of its
+  visible pieces) plus one per leg of the own trail.
+- Debug builds: F3 toggles fog off and on.
 
 **Ghosts:**
 

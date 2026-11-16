@@ -123,6 +123,7 @@ fn main() {
     app.add_systems(Update, render::apply_world_theme);
     render::add_smoothing(&mut app);
     render::add_fx(&mut app);
+    render::add_fog(&mut app);
     app.add_systems(
         Update,
         (
