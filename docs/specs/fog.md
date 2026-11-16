@@ -10,7 +10,7 @@ You see the union of these areas:
 
 | Source | Area | Blocked by trails |
 |--------|------|-------------------|
-| **Cone** | `FOG_CONE_ANGLE` (120°) wide, `FOG_CONE_RANGE` (700 units) deep, centered on the rider's heading. | Yes: every trail, your own included. |
+| **Cone** | `fog.cone_angle` (120°) wide, `fog.cone_range` (380 units) deep, centered on the rider's heading. | Yes: every trail, your own included. |
 | **Proximity** | A circle of `FOG_PROXIMITY_RADIUS` (90) around your rider. | No. |
 | **Glow** | `FOG_GLOW_RADIUS` (72, = `GRIND_RANGE`) around every trail part you can see (cone or proximity), and around **all of your own trail**, seen or not. | No: the glow reaches behind the trail. |
 | **Sparks** | A circle of `FOG_SPARKS_RADIUS` (150) around a grinding rider, visible to everyone. It stays `FOG_SPARKS_SECS` (2 s) after the grind ends and shrinks to nothing. | No. |
@@ -39,10 +39,9 @@ trail you can see is inside its glow.
 
 Numbers in parentheses are starting values, to tune by playing. The cone
 range should stay below what the camera shows, or the fog edge is never on
-screen. At the 3.0x cap, 700 units is about 0.65 s of travel. Today the
-camera shows 800 units of height (`CAMERA_VIEW_HEIGHT`), so 400 above and
-below the rider: a 700 cone pointing up or down never shows its edge. Either
-the cone drops to ~380, or the camera zooms out while fog is on (open).
+screen. The camera shows 800 units of height (`CAMERA_VIEW_HEIGHT`), so 400
+above and below the rider, hence the default of 380. The camera does not zoom
+out with fog. At the 3.0x cap, 380 units is about 0.35 s of travel.
 
 ## Config
 
@@ -54,10 +53,12 @@ Without it, there is no fog.
 | `fog.enabled` | Turn fog on. |
 | `fog.glow` | Optional, `true` by default. The Glow rule. |
 | `fog.sparks` | Optional, `true` by default. The Sparks rule. |
+| `fog.cone_angle` | Optional, `120` by default. Full width of the cone, in degrees. |
+| `fog.cone_range` | Optional, `380` by default. Depth of the cone, in world units. |
 
 The cone and the proximity circle are not optional. The server replicates
 these settings on the match status entity. The client reads them and never
-decides on its own. The radii and angles are named consts, not config keys.
+decides on its own. The other radii are named consts, not config keys.
 
 ## Design
 
