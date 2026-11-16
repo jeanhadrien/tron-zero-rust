@@ -1,5 +1,24 @@
 # Changelog
 
+## [2.0.0](https://github.com/jeanhadrien/tron-zero-rust/compare/client-v1.0.0...client-v2.0.0) (2026-11-16)
+
+
+### Features
+
+* **client:** Host a server, Stop server and Join my server in the menu ([1502b3f](https://github.com/jeanhadrien/tron-zero-rust/commit/1502b3f1878c42acfeddc3ce3060b20ad9d12341))
+* **client:** host state and shutdown for a client-hosted server ([5b88d7e](https://github.com/jeanhadrien/tron-zero-rust/commit/5b88d7e0ed8ea9cc84c40e18e8481d6016ad84ed))
+* **fog:** client fog layer with cone, proximity, glow and sparks ([15b19ee](https://github.com/jeanhadrien/tron-zero-rust/commit/15b19eedbe27f5f2770d0eff75b6e11daffc2174))
+* **fog:** ghosts of seen trail legs and frozen vision of the dead ([5c85ec7](https://github.com/jeanhadrien/tron-zero-rust/commit/5c85ec7f6fed31f115c18b3f418a3ca690227a7a))
+* **tutorial:** step file, closed goal set and a shared judge ([b715b6e](https://github.com/jeanhadrien/tron-zero-rust/commit/b715b6eb4e1b853a8cc357c34b01e14bb6bff321))
+* **tutorial:** tutorial director on a hosted loopback server ([85c1334](https://github.com/jeanhadrien/tron-zero-rust/commit/85c1334442d2d198701ffdfb10fbefe595f1c000))
+
+
+### Bug Fixes
+
+* **client:** a finished host thread never leaves a Running view, clear stale stop flag ([316b3ef](https://github.com/jeanhadrien/tron-zero-rust/commit/316b3ef06f5152c09065251a8d5ff0ad118f02e7))
+* **fog:** review fixes ([fc22e36](https://github.com/jeanhadrien/tron-zero-rust/commit/fc22e36b192eaa7d1ef30bd3c222587ae0b19483))
+* **tutorial:** keep spawns clear of laid trails and count rubber survival after contact ([872c575](https://github.com/jeanhadrien/tron-zero-rust/commit/872c575bd9dec665d6e8880db6c905e777ce915b))
+
 ## [1.0.0](https://github.com/jeanhadrien/tron-zero-rust/compare/client-v0.16.0...client-v1.0.0) (2026-11-14)
 
 
