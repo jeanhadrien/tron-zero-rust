@@ -39,7 +39,10 @@ trail you can see is inside its glow.
 
 Numbers in parentheses are starting values, to tune by playing. The cone
 range should stay below what the camera shows, or the fog edge is never on
-screen. At the 3.0x cap, 700 units is about 0.65 s of travel.
+screen. At the 3.0x cap, 700 units is about 0.65 s of travel. Today the
+camera shows 800 units of height (`CAMERA_VIEW_HEIGHT`), so 400 above and
+below the rider: a 700 cone pointing up or down never shows its edge. Either
+the cone drops to ~380, or the camera zooms out while fog is on (open).
 
 ## Config
 
@@ -66,26 +69,67 @@ decides on its own. The radii and angles are named consts, not config keys.
   ids out. Only the client calls it in v1. Bots and server-side fog can call
   it later without moving code.
 - **Rendering:** fog is an opaque overlay with holes cut where you can see.
-  Riders, trails and effects are drawn below the overlay, so the fog hides
-  them for free. Ghosts and arena walls are drawn above it.
+  Riders, trails, name labels and effects are drawn below the overlay, so the
+  fog hides them for free. Ghosts and arena walls are drawn above it.
 - **Tutorial:** no fog.
 - **Debug:** a client key shows the arena without fog, for development.
 
-## Cost
+## Implementation
 
-The cone is the only expensive part: rays against trails. Glow, proximity
-and sparks are circles and capsules with no rays.
+Research notes (2026-11). No new dependency is needed.
 
-- Run it once per rendered frame, for the local rider only.
-- Broad phase: keep only the segments whose bounding box meets the cone's
-  bounding box. A 700-unit cone covers a small part of the 2000x2000 arena.
-- Visibility polygon: one ray toward each kept segment end (plus and minus a
-  tiny angle), plus fixed rays along the cone's edges and its arc. The cost
-  is rays x segments. Each hit names its segment, which feeds the ghosts.
-  `shortcut: O(rays x segments), switch to a sorted angular sweep if
-  profiling shows it.`
-- Ghosts: per trail, the seen state of each segment. A laid segment never
-  moves, so only the head segment changes.
+**Libraries considered, none fits:**
+
+| Option | Why not |
+|--------|---------|
+| `bevy_firefly` (2D lights, polyline occluders, Bevy 0.19) | WebGPU only. The browser client renders with WebGL2 (`docs/specs/web.md`). |
+| `bevy_fog_of_war` (foxzool) | Compute shaders (not in WebGL2), tile chunks, no segment occluders. |
+| `geo-visibility` (angular sweep) | `f64` and `geo` types, pulls `geo-clipper` (C++ bindings), a poor fit for wasm and `shared/`. |
+| Grid shadowcasting crates | For tile maps; we have segments. |
+
+**Visibility polygon (CPU, `shared/`, about 100 lines, glam `f32`):**
+
+- Every trail and wall is axis-aligned, so a ray against a segment is one
+  division and a range check.
+- Input size is small: at most `TRAIL_MAX_LENGTH` (2400) units of trail per
+  rider, so a few hundred segments for ten riders, plus four walls.
+- Broad phase: keep the segments whose bounding box meets the cone's.
+- Rays: toward each kept segment end, plus and minus a tiny angle (the
+  classic method: [Red Blob Games, 2D visibility](https://www.redblobgames.com/articles/visibility/),
+  [ncase, Sight & Light](https://ncase.me/sight-and-light/)), plus fixed rays
+  every ~2° for the cone's arc and edges. A hit past the range is cut to the
+  range. Sort the hits by angle.
+- Each polygon vertex keeps the id of the segment it hit. Two neighbouring
+  vertices on the same segment are a visible part of it. That gives the
+  Glow area and the ghosts, with no extra query.
+- Estimate: ~600 rays x ~300 segments = ~200k cheap tests, below 1 ms native
+  in release. `shortcut: O(rays x segments), switch to a sorted angular
+  sweep (Red Blob's article, or geo-visibility's algorithm) if
+  \`just profile client\` shows it.`
+
+**Mask (GPU, WebGL2-safe, Bevy built-ins only):**
+
+- The visibility polygon is star-shaped around the viewer, so a triangle fan
+  from the head is a valid mesh. No triangulation library is needed.
+- Glow areas are rectangles: an axis-aligned segment grown by the radius in
+  both axes (square ends instead of round ones). Proximity and Sparks are
+  `Circle` meshes.
+- A mask camera renders these shapes white on black into a texture
+  (Bevy `render_to_texture` example), on its own `RenderLayers`, with the
+  main camera's transform and projection. Half resolution with linear
+  filtering gives soft edges for free.
+- A second camera (`order = 1`, no clear) draws a full-screen fog quad with a
+  `Material2d` (Bevy `shader_material_2d` example) that darkens where the
+  mask is black. Ghosts and arena walls are drawn by that camera too: gizmos
+  pick a camera through a `GizmoConfigGroup` with `render_layers`.
+
+**Ghosts:**
+
+- Store the seen interval (one `lo..hi` hull per segment, a shortcut) per
+  laid segment. A laid segment never moves; only the head leg grows.
+- `Trail::prune` drops corners at the tail, so corner indices shift. Key
+  segments by their corner coordinates, or count pruned corners. A pruned
+  segment loses its ghost.
 
 ## Out of scope (v1)
 
