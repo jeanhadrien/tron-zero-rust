@@ -1,4 +1,5 @@
-//! Fog of war (`docs/specs/fog.md`): cone, proximity, glow and sparks.
+//! Fog of war (`docs/specs/fog.md`): cone, proximity, glow, sparks, ghosts and
+//! the frozen vision of the dead.
 //!
 //! When the server announces `FogRules` (and this is no tutorial) the scene is
 //! rebuilt around four cameras, back to front:
@@ -16,9 +17,10 @@
 use bevy::asset::{RenderAssetUsages, embedded_asset};
 use bevy::camera::visibility::{NoFrustumCulling, RenderLayers};
 use bevy::camera::{ClearColorConfig, RenderTarget};
+use bevy::color::Mix;
 use bevy::gizmos::config::{GizmoConfigGroup, GizmoConfigStore};
 use bevy::mesh::{Indices, PrimitiveTopology};
-use bevy::platform::collections::HashMap;
+use bevy::platform::collections::{HashMap, HashSet};
 use bevy::prelude::*;
 use bevy::render::render_resource::{AsBindGroup, Extent3d, TextureFormat};
 use bevy::shader::ShaderRef;
@@ -30,7 +32,9 @@ use shared::visibility::{
     FOG_GLOW_RADIUS, FOG_PROXIMITY_RADIUS, FOG_SPARKS_RADIUS, FOG_SPARKS_SECS, Vertex,
     visibility_polygon, visible_parts,
 };
-use shared::{ARENA_HEIGHT, ARENA_WIDTH, Arena, Direction, FogRules, IsAlive, IsSliding, Player};
+use shared::{
+    ARENA_HEIGHT, ARENA_WIDTH, Arena, Direction, FogRules, IsAlive, IsSliding, Player, PlayerColor,
+};
 
 use super::arena::{GRID_STEP, GRID_THICKNESS};
 use super::camera::CAMERA_VIEW_HEIGHT;
@@ -48,6 +52,8 @@ const MASK_DOWNSCALE: u32 = 2;
 const CIRCLE_SIDES: u32 = 32;
 /// Distance of the fog quad in front of its camera.
 const QUAD_DEPTH: f32 = 100.0;
+/// How far a ghost's color is mixed toward the floor color.
+const GHOST_DIM: f32 = 0.6;
 
 /// Gizmo group drawn by the fog camera, above the fog (arena walls).
 #[derive(Default, Reflect, GizmoConfigGroup)]
@@ -71,6 +77,9 @@ pub struct FogScene {
     shapes: Handle<Mesh>,
     material: Handle<FogMaterial>,
     sparks: Sparks,
+    ghosts: Ghosts,
+    /// Eye and heading of the local rider when it last rode in this scene.
+    pose: Option<(Vec2, Vec2)>,
 }
 
 /// The fog quad: opaque where the mask is black, with the dim grid drawn on it
@@ -237,6 +246,8 @@ fn fog_lifecycle(
         shapes,
         material,
         sparks: Sparks::default(),
+        ghosts: Ghosts::default(),
+        pose: None,
     });
 }
 
@@ -248,9 +259,10 @@ fn update_fog(
     theme: Res<Theme>,
     window: Query<&Window, With<PrimaryWindow>>,
     rules: Query<&FogRules>,
-    own: Query<(&Rendered, &Direction, &IsAlive), (With<Player>, With<OwnRider>)>,
-    riders: Query<(Entity, &Rendered, &IsSliding, &IsAlive), With<Player>>,
+    own: Query<(Entity, &Rendered, &Direction, &IsAlive), (With<Player>, With<OwnRider>)>,
+    riders: Query<(Entity, &Rendered, &IsSliding, &IsAlive, &PlayerColor), With<Player>>,
     walls: Query<&WallSegments, With<Arena>>,
+    mut ghosts: Gizmos<FogGizmos>,
     mut quad: Query<(&mut Transform, &mut Visibility), With<FogQuad>>,
     scene: Option<ResMut<FogScene>>,
     mut images: ResMut<Assets<Image>>,
@@ -285,22 +297,31 @@ fn update_fog(
         material.grid = theme.grid.bevy().to_linear();
     }
 
-    // Dead or not yet riding: nothing to see from, no fog for now.
-    let Ok((own, dir, alive)) = own.single() else {
-        *quad_vis = Visibility::Hidden;
-        return;
-    };
-    if !alive.0 {
-        *quad_vis = Visibility::Hidden;
-        return;
-    }
     *quad_vis = Visibility::Inherited;
 
-    let eye = own.head;
-    let heading = own.heading(dir.0);
+    // The dead and the waiting keep the last pose they rode with.
+    let own = own.single().ok();
+    let live = own.filter(|o| o.3.0);
+    if let Some((_, rendered, dir, _)) = live {
+        scene.pose = Some((rendered.head, rendered.heading(dir.0)));
+    }
+    let pose = scene.pose;
+
     let mut segments: Vec<Segment> = Vec::new();
-    for (entity, rendered, _, _) in &riders {
+    // Per trail leg: ghost key and color; `None` for the own trail.
+    let mut legs: Vec<Option<(GhostKey, Color)>> = Vec::new();
+    for (entity, rendered, _, _, color) in &riders {
+        let from = segments.len();
         segments.extend(Segment::trail_legs(&rendered.trail, entity.to_bits()));
+        let mine = own.is_some_and(|o| o.0 == entity);
+        legs.extend(segments[from..].iter().map(|s| {
+            (!mine).then(|| {
+                // shortcut: the oldest leg's start moves while the tail is cut,
+                // so it never keeps a ghost; upgrade if that shows.
+                let key = (entity, s.a.to_array().map(f32::to_bits));
+                (key, Color::srgb_u32(color.0))
+            })
+        }));
     }
     let trail_legs = segments.len();
     if let Ok(walls) = walls.single() {
@@ -312,26 +333,47 @@ fn update_fog(
         }));
     }
 
-    let polygon = visibility_polygon(eye, heading, rules.cone_angle, rules.cone_range, &segments);
+    let polygon = pose.map_or_else(Vec::new, |(eye, heading)| {
+        visibility_polygon(eye, heading, rules.cone_angle, rules.cone_range, &segments)
+    });
     let mut mask = Mask::default();
-    mask.fan(eye, polygon.iter().map(|v| v.point));
-    mask.circle(eye, FOG_PROXIMITY_RADIUS);
+    if let Some((eye, _)) = pose {
+        mask.fan(eye, polygon.iter().map(|v| v.point));
+        mask.circle(eye, FOG_PROXIMITY_RADIUS);
+    }
+    let seen = seen_spans(&polygon, trail_legs);
     if rules.glow {
         let grow = Vec2::splat(FOG_GLOW_RADIUS);
-        for (lo, hi) in seen_spans(&polygon, trail_legs) {
+        for &(lo, hi) in seen.values() {
             mask.rect(lo - grow, hi + grow);
         }
         // Your whole trail lights the map, seen or not.
-        for leg in own.trail.windows(2) {
-            mask.rect(leg[0].min(leg[1]) - grow, leg[0].max(leg[1]) + grow);
+        if let Some((_, rendered, _, _)) = live {
+            for leg in rendered.trail.windows(2) {
+                mask.rect(leg[0].min(leg[1]) - grow, leg[0].max(leg[1]) + grow);
+            }
         }
     }
+
+    let mut seen_now = HashMap::default();
+    for (leg, &(lo, hi)) in &seen {
+        if let Some((key, color)) = legs[*leg] {
+            scene.ghosts.remember(key, lo, hi, color);
+            seen_now.insert(key, (lo, hi));
+        }
+    }
+    let live_keys: HashSet<GhostKey> = legs.iter().flatten().map(|l| l.0).collect();
+    scene.ghosts.forget_gone(&live_keys);
+    scene
+        .ghosts
+        .draw(&seen_now, theme.background.bevy(), &mut ghosts);
+
     if rules.sparks {
         scene.sparks.step(
             time.delta_secs(),
             riders
                 .iter()
-                .map(|(e, r, sliding, alive)| (e, r.head, sliding.0 && alive.0)),
+                .map(|(e, r, sliding, alive, _)| (e, r.head, sliding.0 && alive.0)),
         );
         for (at, radius) in scene.sparks.circles() {
             mask.circle(at, radius);
@@ -342,17 +384,67 @@ fn update_fog(
     }
 }
 
-/// The seen stretch of each trail leg (`min`, `max` corners), merged from the
-/// pieces of the polygon. Indices from `trail_legs` on are walls, which need
-/// no glow.
-fn seen_spans(polygon: &[Vertex], trail_legs: usize) -> Vec<(Vec2, Vec2)> {
+/// The seen stretch of each trail leg by leg index (`min`, `max` corners),
+/// merged from the pieces of the polygon. Indices from `trail_legs` on are
+/// walls, which need no glow nor ghost.
+fn seen_spans(polygon: &[Vertex], trail_legs: usize) -> HashMap<usize, (Vec2, Vec2)> {
     let mut spans: HashMap<usize, (Vec2, Vec2)> = HashMap::default();
     for (leg, a, b) in visible_parts(polygon).filter(|p| p.0 < trail_legs) {
         let span = spans.entry(leg).or_insert((a, a));
         span.0 = span.0.min(a).min(b);
         span.1 = span.1.max(a).max(b);
     }
-    spans.into_values().collect()
+    spans
+}
+
+/// A trail leg across frames: its rider and the bits of its start corner. A
+/// laid leg never moves and only the head leg grows, so its start stays put;
+/// a leg dropped from the trail (death, tail cut) has no key any more.
+type GhostKey = (Entity, [u32; 2]);
+
+struct Ghost {
+    lo: Vec2,
+    hi: Vec2,
+    color: Color,
+}
+
+/// Memory: the seen stretch of every leg of other riders, as last seen.
+#[derive(Default)]
+struct Ghosts(HashMap<GhostKey, Ghost>);
+
+impl Ghosts {
+    /// Grow the ghost of `key` to cover the span `lo..hi` (one hull per leg).
+    fn remember(&mut self, key: GhostKey, lo: Vec2, hi: Vec2, color: Color) {
+        let g = self.0.entry(key).or_insert(Ghost { lo, hi, color });
+        g.lo = g.lo.min(lo);
+        g.hi = g.hi.max(hi);
+        g.color = color;
+    }
+
+    /// Drop the ghosts of legs that are not in the trails any more.
+    fn forget_gone(&mut self, live: &HashSet<GhostKey>) {
+        self.0.retain(|k, _| live.contains(k));
+    }
+
+    /// Draw each ghost dimmed toward `floor`, except where the leg is seen
+    /// right now (`seen_now`): the real trail shows there.
+    fn draw(
+        &self,
+        seen_now: &HashMap<GhostKey, (Vec2, Vec2)>,
+        floor: Color,
+        gizmos: &mut Gizmos<FogGizmos>,
+    ) {
+        for (key, g) in &self.0 {
+            let color = g.color.mix(&floor, GHOST_DIM);
+            match seen_now.get(key) {
+                Some(&(lo, hi)) => {
+                    gizmos.line_2d(g.lo, lo, color);
+                    gizmos.line_2d(hi, g.hi, color);
+                }
+                None => gizmos.line_2d(g.lo, g.hi, color),
+            }
+        }
+    }
 }
 
 /// Grinding circles, kept client-side: a rider that grinds reveals a circle
@@ -459,7 +551,24 @@ mod tests {
         ];
         // Leg 1 is a wall: only legs below `trail_legs` count.
         let spans = seen_spans(&polygon, 1);
-        assert_eq!(spans, vec![(Vec2::new(5.0, 0.0), Vec2::new(5.0, 40.0))]);
+        assert_eq!(spans.len(), 1);
+        assert_eq!(spans[&0], (Vec2::new(5.0, 0.0), Vec2::new(5.0, 40.0)));
+    }
+
+    #[test]
+    fn ghosts_merge_seen_intervals_and_vanish_with_their_leg() {
+        let rider = Entity::from_raw_u32(1).unwrap();
+        let (a, b) = ((rider, [0, 0]), (rider, [1, 0]));
+        let mut ghosts = Ghosts::default();
+        let y = |lo, hi| (Vec2::new(0.0, lo), Vec2::new(0.0, hi));
+        for (key, (lo, hi)) in [(a, y(10.0, 20.0)), (a, y(0.0, 5.0)), (b, y(1.0, 2.0))] {
+            ghosts.remember(key, lo, hi, Color::WHITE);
+        }
+        let g = &ghosts.0[&a];
+        assert_eq!((g.lo, g.hi), (Vec2::new(0.0, 0.0), Vec2::new(0.0, 20.0)));
+        // Leg `b` left the trail (cleared or cut at the tail).
+        ghosts.forget_gone(&[a].into_iter().collect());
+        assert!(ghosts.0.contains_key(&a) && !ghosts.0.contains_key(&b));
     }
 
     #[test]

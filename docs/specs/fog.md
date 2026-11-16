@@ -1,6 +1,6 @@
 # Fog of war
 
-Status: proposal 2026-11. Implemented: config, replicated `FogRules`, `shared::visibility`, and in the client the fog layer with cone, proximity, glow and sparks (`crates/client/src/render/fog.rs`). Not yet: ghosts, vision of the dead (while dead there is no fog). A room option, off by default. v1
+Status: proposal 2026-11. All steps implemented: config, replicated `FogRules`, `shared::visibility`, and in the client the fog layer with cone, proximity, glow, sparks, ghosts and the vision of the dead (`crates/client/src/render/fog.rs`). A room option, off by default. v1
 is a client-side experiment to find out whether fog is fun: the server only
 says whether fog is on, and each client hides what its rider cannot see.
 
@@ -138,11 +138,20 @@ Research notes (2026-11). No new dependency is needed.
 
 **Ghosts:**
 
-- Store the seen interval (one `lo..hi` hull per segment, a shortcut) per
-  laid segment. A laid segment never moves; only the head leg grows.
-- `Trail::prune` drops corners at the tail, so corner indices shift. Key
-  segments by their corner coordinates, or count pruned corners. A pruned
-  segment loses its ghost.
+- One `lo..hi` hull per leg (a shortcut), kept per leg of other riders.
+  A laid leg never moves; only the head leg grows.
+- `Trail::prune` shifts leg indices, so a ghost is keyed by rider and the
+  bits of its leg's start corner. A leg no longer in the trail (death, tail
+  cut) loses its ghost. Shortcut: the oldest leg's start moves while the
+  tail is cut, so that leg never keeps a ghost.
+- Ghosts are drawn dimmed toward the floor color (`GHOST_DIM`) as gizmos on
+  `FOG_LAYER`, except over the part of a leg seen right now, where the real
+  trail shows. They are never drawn for the own trail.
+- The dead: the scene keeps the local rider's last alive pose (eye, heading);
+  cone and proximity use it while the rider is dead or waiting. It starts
+  empty, and dies with the fog scene.
+- Not handled: a new round that places a rider with the same start corner
+  in the same frame its trail was replaced would keep a stale ghost.
 
 ## Out of scope (v1)
 
