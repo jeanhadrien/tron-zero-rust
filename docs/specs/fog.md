@@ -57,8 +57,10 @@ Without it, there is no fog.
 | `fog.cone_range` | Optional, `380` by default. Depth of the cone, in world units. |
 
 The cone and the proximity circle are not optional. The server replicates
-these settings on the match status entity. The client reads them and never
-decides on its own. The other radii are named consts, not config keys.
+these settings as a `FogRules` component on the match status entity (absent
+when fog is off). The client reads them and never decides on its own. The
+other radii are named consts, not config keys. Fog applies in every match
+phase. `local.toml` (`just play`) turns fog on, for testing.
 
 ## Design
 
@@ -71,7 +73,9 @@ decides on its own. The other radii are named consts, not config keys.
   it later without moving code.
 - **Rendering:** fog is an opaque overlay with holes cut where you can see.
   Riders, trails, name labels and effects are drawn below the overlay, so the
-  fog hides them for free. Ghosts and arena walls are drawn above it.
+  fog hides them for free. Ghosts and arena walls are drawn above it. The
+  floor grid under the fog is drawn dimmed by the fog shader itself (from
+  world coordinates), so the grid is never drawn over trails.
 - **Tutorial:** no fog.
 - **Debug:** a client key shows the arena without fog, for development.
 
