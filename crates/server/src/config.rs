@@ -23,6 +23,13 @@
 //!
 //! [bots]
 //! roster = "builtin"          # or a roster file, relative to this file
+//!
+//! [fog]                       # optional table: without it, no fog
+//! enabled = true
+//! glow = true                 # optional, true by default
+//! sparks = true               # optional, true by default
+//! cone_angle = 120            # optional, degrees, 120 by default
+//! cone_range = 380            # optional, world units, 380 by default
 //! ```
 //!
 //! Every key is required unless marked optional. An invalid file stops the
@@ -33,7 +40,7 @@ use std::path::{Path, PathBuf};
 use bots::config::BotBuild;
 use serde::Deserialize;
 use shared::match_rules::secs_to_ticks;
-use shared::{EndRules, MatchRules, Respawn};
+use shared::{EndRules, FogRules, MatchRules, Respawn};
 
 /// Env var naming the config file.
 pub const CONFIG_ENV: &str = "SERVER_CONFIG";
@@ -47,6 +54,7 @@ pub struct ServerConfig {
     pub r#match: Match,
     pub round: Round,
     pub bots: Bots,
+    pub fog: Option<Fog>,
     /// Directory relative paths resolve against: the file's.
     #[serde(skip)]
     dir: PathBuf,
@@ -107,6 +115,29 @@ fn yes() -> bool {
 #[serde(deny_unknown_fields)]
 pub struct Bots {
     pub roster: String,
+}
+
+/// Fog of war (`docs/specs/fog.md`).
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Fog {
+    pub enabled: bool,
+    #[serde(default = "yes")]
+    pub glow: bool,
+    #[serde(default = "yes")]
+    pub sparks: bool,
+    #[serde(default = "cone_angle")]
+    pub cone_angle: f32,
+    #[serde(default = "cone_range")]
+    pub cone_range: f32,
+}
+
+fn cone_angle() -> f32 {
+    120.0
+}
+
+fn cone_range() -> f32 {
+    380.0
 }
 
 impl ServerConfig {
@@ -175,6 +206,23 @@ impl ServerConfig {
         Ok(rules)
     }
 
+    /// The fog rules to replicate; `None` without a `[fog]` table or when it
+    /// is not enabled.
+    pub fn fog(&self) -> Result<Option<FogRules>, String> {
+        let Some(fog) = self.fog.as_ref().filter(|f| f.enabled) else {
+            return Ok(None);
+        };
+        if !(fog.cone_angle > 0.0 && fog.cone_angle < 360.0 && fog.cone_range > 0.0) {
+            return Err("fog.cone_angle must be in (0, 360) and fog.cone_range above 0".into());
+        }
+        Ok(Some(FogRules {
+            glow: fog.glow,
+            sparks: fog.sparks,
+            cone_angle: fog.cone_angle,
+            cone_range: fog.cone_range,
+        }))
+    }
+
     /// The builds to seat, one bot each.
     pub fn roster(&self) -> Result<Vec<BotBuild>, String> {
         match self.bots.roster.as_str() {
@@ -225,5 +273,59 @@ mod tests {
         assert!(file(&bad).unwrap().rules().is_err());
         assert!(file("secs = 90").is_err());
         assert!(file(&rounds.replace("next_round", "sometimes")).is_err());
+    }
+
+    #[test]
+    fn fog_is_off_without_its_table_and_has_defaults() {
+        let text = |fog: &str| {
+            format!(
+                "[server]
+name = \"t\"
+max_players = 4
+                 [match]
+rounds = 1
+intermission_secs = 3
+end_screen_secs = 8
+                 [round]
+secs = 0
+respawn = \"anytime\"
+last_standing = false
+                 [bots]
+roster = \"builtin\"
+{fog}"
+            )
+        };
+        let fog = |fog: &str| {
+            ServerConfig::parse(&text(fog), Path::new(""))
+                .unwrap()
+                .fog()
+        };
+        assert_eq!(fog("").unwrap(), None);
+        assert_eq!(
+            fog("[fog]
+enabled = false")
+            .unwrap(),
+            None
+        );
+        let on = fog("[fog]
+enabled = true")
+        .unwrap()
+        .unwrap();
+        assert_eq!(
+            (on.glow, on.sparks, on.cone_angle, on.cone_range),
+            (true, true, 120.0, 380.0)
+        );
+        let tuned = fog("[fog]
+enabled = true
+glow = false
+cone_range = 200")
+        .unwrap();
+        assert_eq!(tuned.map(|f| (f.glow, f.cone_range)), Some((false, 200.0)));
+        assert!(
+            fog("[fog]
+enabled = true
+cone_angle = 400")
+            .is_err()
+        );
     }
 }

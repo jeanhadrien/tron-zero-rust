@@ -20,6 +20,7 @@ invalid file stops the server (exit 2). Format in `crates/server/src/config.rs`.
 | `server.name` | Name shown in the server browser. |
 | `server.max_players` | Human capacity; the next player is rejected `ServerFull`. Bots do not count. |
 | `match.*`, `round.*` | Match and round rules: `match.rounds`, `match.intermission_secs`, `match.end_screen_secs`; `round.secs` (0: no limit), `round.respawn` (`anytime` or `next_round`), `round.last_standing`, `round.end_without_humans` (optional, true), `round.end_without_humans_secs` (optional, 4). See `docs/specs/match-rules.md`. |
+| `fog.*` | Optional `[fog]` table, no fog without it: `fog.enabled`, `fog.glow` (true), `fog.sparks` (true), `fog.cone_angle` (degrees, 120), `fog.cone_range` (units, 380). See `docs/specs/fog.md`. |
 | `bots.roster` | `builtin` (`crates/bots/rosters/default.toml`) or a roster file path, relative to the config file. One bot per build. |
 
 The official config plays five 90-second last-standing rounds. Other files there: `local.toml` (the same rules, `just play`), `dev-cloud.toml` (`just dev-cloud`).

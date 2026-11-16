@@ -45,6 +45,21 @@ pub struct MatchStatus {
     pub respawn_now: bool,
 }
 
+/// Fog-of-war settings (`docs/specs/fog.md`), on the match status entity.
+/// Absent when the server has no fog. Clients read it and never decide fog on
+/// their own.
+#[derive(Component, Clone, Copy, Debug, PartialEq, Serialize, Deserialize, Reflect)]
+pub struct FogRules {
+    /// The Glow rule.
+    pub glow: bool,
+    /// The Sparks rule.
+    pub sparks: bool,
+    /// Full width of the vision cone, in degrees.
+    pub cone_angle: f32,
+    /// Depth of the vision cone, in world units.
+    pub cone_range: f32,
+}
+
 /// A rider's record this match, reset when a new match starts. Replicated on
 /// the rider for the scoreboard.
 #[derive(

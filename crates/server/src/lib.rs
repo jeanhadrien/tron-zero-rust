@@ -59,7 +59,9 @@ pub fn add_game(
     let rules = config.rules()?;
     tracing::info!(?rules, "Match rules");
     app.insert_resource(admission::MaxPlayers(config.server.max_players));
+    let fog = config.fog()?;
     add_core(app, bind, Director::Match(rules));
+    app.world_mut().resource_mut::<game::MatchState>().fog = fog;
     tracing::info!(roster = %config.bots.roster, bots = roster.len(), "Bot roster");
     bot::add_bots(app, roster, debug);
     Ok(())

@@ -29,6 +29,8 @@ A round may have no end condition (it lasts until the match is dropped), but
 only with `anytime` respawns: with `next_round` and no end condition the dead
 would never come back, so the config is refused.
 
+The optional `[fog]` table is documented in `docs/specs/fog.md`.
+
 Shipped configs (`crates/server/config/`): `official.toml`, `dev-cloud.toml`
 and `local.toml` (`just play`) all play five 90 s last-standing
 rounds.

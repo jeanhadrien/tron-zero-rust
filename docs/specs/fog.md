@@ -1,6 +1,6 @@
 # Fog of war
 
-Status: proposal 2026-11, not implemented. A room option, off by default. v1
+Status: proposal 2026-11. Step 1 implemented (config, replicated `FogRules`, `shared::visibility`); rendering not yet. A room option, off by default. v1
 is a client-side experiment to find out whether fog is fun: the server only
 says whether fog is on, and each client hides what its rider cannot see.
 

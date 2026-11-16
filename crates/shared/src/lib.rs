@@ -15,6 +15,7 @@ pub mod probe;
 pub mod protocol;
 pub mod spawn;
 pub mod systems;
+pub mod visibility;
 
 // Re-export everything at the crate root for ergonomic access.
 pub use components::arena::*;

@@ -11,9 +11,9 @@ use bevy::prelude::*;
 use lightyear::prelude::*;
 use shared::spawn::{SpawnField, placed};
 use shared::{
-    DeathLog, DisplayName, IsAlive, IsColliding, IsSliding, LifeGeneration, MatchFlow, MatchRules,
-    MatchStatus, MatchStep, Player, Roster, Rubber, Score, ShouldHandleDeath, SpeedMult,
-    TargetSpeedMult, Trail, round_winner,
+    DeathLog, DisplayName, FogRules, IsAlive, IsColliding, IsSliding, LifeGeneration, MatchFlow,
+    MatchRules, MatchStatus, MatchStep, Player, Roster, Rubber, Score, ShouldHandleDeath,
+    SpeedMult, TargetSpeedMult, Trail, round_winner,
 };
 
 use crate::systems::{Human, InitialSpawn};
@@ -29,6 +29,8 @@ pub struct MatchState {
     begun: u64,
     /// The replicated status entity, spawned on first use.
     status: Option<Entity>,
+    /// Fog settings put on the status entity; `None`: no fog.
+    pub(crate) fog: Option<FogRules>,
 }
 
 impl MatchState {
@@ -38,6 +40,7 @@ impl MatchState {
             winner: None,
             begun: 0,
             status: None,
+            fog: None,
         }
     }
 
@@ -268,9 +271,12 @@ fn publish_status(world: &mut World, riders: &Riders) {
             current.set_if_neq(status);
         }
         None => {
-            let entity = world
-                .spawn((status, Replicate::to_clients(NetworkTarget::All)))
-                .id();
+            let fog = world.resource::<MatchState>().fog;
+            let mut entity = world.spawn((status, Replicate::to_clients(NetworkTarget::All)));
+            if let Some(fog) = fog {
+                entity.insert(fog);
+            }
+            let entity = entity.id();
             world.resource_mut::<MatchState>().status = Some(entity);
         }
     }

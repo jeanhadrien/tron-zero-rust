@@ -25,6 +25,7 @@ build on it.
 - `components/` — incl. `trail.rs` (the rollbackable trail of corners) and `round.rs` (replicated `MatchStatus`, `Score` and its credits from the death log).
 - `spawn.rs` — safe-spawn search, `SpawnField` (spawn inputs), `placed_at` (a rider placed with a `Start`: pose, speed, rubber, laid trail) and `placed` (its fresh-life case). `math.rs` — rotations, arena walls, seeded spawn.
 - `match_rules.rs` — `MatchRules` (respawn, end conditions, rounds, start condition), `Roster` (what the flow sees) and `MatchFlow`, the pure match state machine, incl. `may_spawn`. Outside the sim: not read by `simulate_players`, not in `PROTOCOL_ID`.
+- `visibility.rs` — fog of war: `visibility_polygon` (cone fan around a viewer, blocked by `Segment`s) and `visible_parts`, plus the fog radii consts (render-only, not sim, so not in `constants.rs` or `PROTOCOL_ID`). `FogRules` (replicated, on the status entity) is in `components/round.rs`. Spec: `docs/specs/fog.md`.
 - `elimination.rs` — rated elimination events from the death log.
 - `protocol.rs` — components, messages, channels, `PROTOCOL_ID`, turn constants. `probe.rs` — UDP discovery datagram. `polyline.rs` — render-only helpers.
 

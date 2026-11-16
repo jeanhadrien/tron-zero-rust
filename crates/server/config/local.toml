@@ -17,3 +17,7 @@ last_standing = true
 
 [bots]
 roster = "builtin"
+
+# Fog of war, on for testing (`docs/specs/fog.md`).
+[fog]
+enabled = true

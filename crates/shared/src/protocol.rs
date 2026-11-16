@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize};
 /// fine and then silently mispredict. The lab's golden traces back this up:
 /// blessing changed goldens fails unless this was bumped (see
 /// `golden_traces_match` and `scenarios/goldens.protocol`).
-pub const PROTOCOL_VERSION: u32 = 13;
+pub const PROTOCOL_VERSION: u32 = 14;
 
 /// Bits of one sim constant, checked against its declared type: a constant
 /// listed under the wrong type does not compile.
@@ -560,6 +560,8 @@ pub fn register_protocol(app: &mut App) {
     // once a second (clock, ping) or on deaths at most, never read by the sim,
     // so no prediction.
     app.component::<MatchStatus>().replicate();
+    // Constant for a server's life, shown by clients only: plain replication.
+    app.component::<FogRules>().replicate();
     app.component::<Score>().replicate();
     app.component::<RoundTrip>().replicate();
 
