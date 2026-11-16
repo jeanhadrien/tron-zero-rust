@@ -22,3 +22,6 @@ last_standing = true
 
 [bots]
 roster = "builtin"
+
+[fog]
+enabled = true
