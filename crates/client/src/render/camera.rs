@@ -46,21 +46,24 @@ pub fn follow_player(
         Ok((rendered, own)) => (rendered.head, own.teleported()),
         Err(_) => (Vec2::ZERO, false),
     };
-    for mut transform in &mut camera {
-        let shown = transform.translation.truncate();
-        if teleported {
-            *ease = RespawnEase {
-                from: shown,
-                left: RESPAWN_EASE_SECS,
-            };
-        }
-        let at = if ease.left > 0.0 {
-            ease.left = (ease.left - time.delta_secs()).max(0.0);
-            let progress = 1.0 - ease.left / RESPAWN_EASE_SECS;
-            ease.from.lerp(target, smoothstep(progress))
-        } else {
-            target
+    // One position for every camera (fog adds more), eased from the first.
+    let Some(shown) = camera.iter().next().map(|t| t.translation.truncate()) else {
+        return;
+    };
+    if teleported {
+        *ease = RespawnEase {
+            from: shown,
+            left: RESPAWN_EASE_SECS,
         };
+    }
+    let at = if ease.left > 0.0 {
+        ease.left = (ease.left - time.delta_secs()).max(0.0);
+        let progress = 1.0 - ease.left / RESPAWN_EASE_SECS;
+        ease.from.lerp(target, smoothstep(progress))
+    } else {
+        target
+    };
+    for mut transform in &mut camera {
         transform.translation.x = at.x;
         transform.translation.y = at.y;
     }

@@ -1,6 +1,6 @@
 # Fog of war
 
-Status: proposal 2026-11. All steps implemented: config, replicated `FogRules`, `shared::visibility`, and in the client the fog layer with cone, proximity, glow, sparks, ghosts and the vision of the dead (`crates/client/src/render/fog.rs`). A room option, off by default. v1
+Status: implemented 2026-11 (config, replicated `FogRules`, `shared::visibility`, client fog in `crates/client/src/render/fog.rs`). A room option, off by default. v1
 is a client-side experiment to find out whether fog is fun: the server only
 says whether fog is on, and each client hides what its rider cannot see.
 
@@ -130,10 +130,11 @@ Research notes (2026-11). No new dependency is needed.
   that carries egui, so the UI stays on top) moves to its own layer and draws
   only the fog quad (`Material2d`, `fog.wgsl`, alpha = 1 - mask, dim grid from
   world coordinates) and the walls (gizmo group `FogGizmos` with
-  `render_layers`). Ghosts will go on that layer too.
+  `render_layers`). Ghosts are drawn on that layer too.
 - Sparks state (a circle per grinding rider, `FOG_SPARKS_SECS` countdown) is
   kept client-side. Glow is one rectangle per seen trail leg (the hull of its
-  visible pieces) plus one per leg of the own trail.
+  visible pieces, the parts inside the proximity circle included, clipped by
+  `clip_to_circle`) plus one per leg of the own trail.
 - Debug builds: F3 toggles fog off and on.
 
 **Ghosts:**
@@ -145,8 +146,9 @@ Research notes (2026-11). No new dependency is needed.
   cut) loses its ghost. Shortcut: the oldest leg's start moves while the
   tail is cut, so that leg never keeps a ghost.
 - Ghosts are drawn dimmed toward the floor color (`GHOST_DIM`) as gizmos on
-  `FOG_LAYER`, except over the part of a leg seen right now, where the real
-  trail shows. They are never drawn for the own trail.
+  `FOG_LAYER`, except over the part of a leg seen right now (cone or
+  proximity, plus its glow margin), where the real trail shows. Shortcut:
+  a part revealed only by Sparks still gets a ghost over the real trail. They are never drawn for the own trail.
 - The dead: the scene keeps the local rider's last alive pose (eye, heading);
   cone and proximity use it while the rider is dead or waiting. It starts
   empty, and dies with the fog scene.

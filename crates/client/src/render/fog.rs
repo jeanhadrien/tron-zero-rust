@@ -2,7 +2,7 @@
 //! the frozen vision of the dead.
 //!
 //! When the server announces `FogRules` (and this is no tutorial) the scene is
-//! rebuilt around four cameras, back to front:
+//! rebuilt around three cameras, back to front:
 //!
 //! * mask camera (order -2, layer [`MASK_LAYER`]): draws the visible area
 //!   white on black into a half-resolution texture, from one mesh rebuilt each
@@ -30,7 +30,7 @@ use shared::WallSegments;
 use shared::physics::Segment;
 use shared::visibility::{
     FOG_GLOW_RADIUS, FOG_PROXIMITY_RADIUS, FOG_SPARKS_RADIUS, FOG_SPARKS_SECS, Vertex,
-    visibility_polygon, visible_parts,
+    clip_to_circle, visibility_polygon, visible_parts,
 };
 use shared::{
     ARENA_HEIGHT, ARENA_WIDTH, Arena, Direction, FogRules, IsAlive, IsSliding, Player, PlayerColor,
@@ -134,7 +134,6 @@ fn toggle_debug_off(keys: Res<ButtonInput<KeyCode>>, mut off: ResMut<FogDebugOff
 }
 
 /// Build the fog scene when fog turns on, tear it down when it turns off.
-#[allow(clippy::too_many_arguments)]
 fn fog_lifecycle(
     mut commands: Commands,
     rules: Query<(), With<FogRules>>,
@@ -207,7 +206,6 @@ fn fog_lifecycle(
         MeshMaterial2d(material.clone()),
         Transform::from_xyz(0.0, 0.0, -QUAD_DEPTH),
         RenderLayers::layer(FOG_LAYER),
-        Visibility::Hidden,
     ));
     commands.spawn((
         FogEntity,
@@ -253,7 +251,6 @@ fn fog_lifecycle(
 
 /// Each frame: size the mask and the quad to the window, rebuild the visible
 /// area from the local rider's pose and every trail drawn.
-#[allow(clippy::too_many_arguments)]
 fn update_fog(
     time: Res<Time>,
     theme: Res<Theme>,
@@ -263,13 +260,13 @@ fn update_fog(
     riders: Query<(Entity, &Rendered, &IsSliding, &IsAlive, &PlayerColor), With<Player>>,
     walls: Query<&WallSegments, With<Arena>>,
     mut ghosts: Gizmos<FogGizmos>,
-    mut quad: Query<(&mut Transform, &mut Visibility), With<FogQuad>>,
+    mut quad: Query<&mut Transform, With<FogQuad>>,
     scene: Option<ResMut<FogScene>>,
     mut images: ResMut<Assets<Image>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<FogMaterial>>,
 ) {
-    let (Some(mut scene), Ok(window), Ok(rules), Ok((mut quad_at, mut quad_vis))) =
+    let (Some(mut scene), Ok(window), Ok(rules), Ok(mut quad_at)) =
         (scene, window.single(), rules.single(), quad.single_mut())
     else {
         return;
@@ -286,9 +283,14 @@ fn update_fog(
         && let Some(mut image) = images.get_mut(&scene.mask)
     {
         image.resize(size);
+        // The material's bind group still holds the old texture: re-prepare it.
+        let _ = materials.get_mut(&scene.material);
     }
     let aspect = window.width() / window.height().max(1.0);
-    quad_at.scale = Vec3::new(CAMERA_VIEW_HEIGHT * aspect, CAMERA_VIEW_HEIGHT, 1.0);
+    let scale = Vec3::new(CAMERA_VIEW_HEIGHT * aspect, CAMERA_VIEW_HEIGHT, 1.0);
+    if quad_at.scale != scale {
+        quad_at.scale = scale;
+    }
 
     if (theme.is_changed() || scene.is_added())
         && let Some(mut material) = materials.get_mut(&scene.material)
@@ -296,8 +298,6 @@ fn update_fog(
         material.floor = theme.background.bevy().to_linear();
         material.grid = theme.grid.bevy().to_linear();
     }
-
-    *quad_vis = Visibility::Inherited;
 
     // The dead and the waiting keep the last pose they rode with.
     let own = own.single().ok();
@@ -341,11 +341,22 @@ fn update_fog(
         mask.fan(eye, polygon.iter().map(|v| v.point));
         mask.circle(eye, FOG_PROXIMITY_RADIUS);
     }
-    let seen = seen_spans(&polygon, trail_legs);
+    let mut seen = seen_spans(&polygon, trail_legs);
+    // The proximity circle sees every leg part inside it, trails do not block.
+    if let Some((eye, _)) = pose {
+        for (leg, s) in segments[..trail_legs].iter().enumerate() {
+            if let Some((a, b)) = clip_to_circle(s.a, s.b, eye, FOG_PROXIMITY_RADIUS) {
+                merge_span(seen.entry(leg).or_insert((a, a)), a, b);
+            }
+        }
+    }
     if rules.glow {
         let grow = Vec2::splat(FOG_GLOW_RADIUS);
-        for &(lo, hi) in seen.values() {
-            mask.rect(lo - grow, hi + grow);
+        // Your own legs are lit by the whole-trail loop below.
+        for (leg, &(lo, hi)) in &seen {
+            if legs[*leg].is_some() {
+                mask.rect(lo - grow, hi + grow);
+            }
         }
         // Your whole trail lights the map, seen or not.
         if let Some((_, rendered, _, _)) = live {
@@ -359,6 +370,7 @@ fn update_fog(
     for (leg, &(lo, hi)) in &seen {
         if let Some((key, color)) = legs[*leg] {
             scene.ghosts.remember(key, lo, hi, color);
+            // The glow around the seen part shows the real trail too.
             seen_now.insert(key, (lo, hi));
         }
     }
@@ -390,11 +402,17 @@ fn update_fog(
 fn seen_spans(polygon: &[Vertex], trail_legs: usize) -> HashMap<usize, (Vec2, Vec2)> {
     let mut spans: HashMap<usize, (Vec2, Vec2)> = HashMap::default();
     for (leg, a, b) in visible_parts(polygon).filter(|p| p.0 < trail_legs) {
-        let span = spans.entry(leg).or_insert((a, a));
-        span.0 = span.0.min(a).min(b);
-        span.1 = span.1.max(a).max(b);
+        merge_span(spans.entry(leg).or_insert((a, a)), a, b);
     }
     spans
+}
+
+/// Grow `span` (`min`, `max` corners) to cover the points `a` and `b`.
+// shortcut: a hull of corners is the leg's seen stretch only because every
+// leg is axis-aligned (true for every line in this game), keep it so.
+fn merge_span(span: &mut (Vec2, Vec2), a: Vec2, b: Vec2) {
+    span.0 = span.0.min(a).min(b);
+    span.1 = span.1.max(a).max(b);
 }
 
 /// A trail leg across frames: its rider and the bits of its start corner. A
@@ -427,7 +445,9 @@ impl Ghosts {
     }
 
     /// Draw each ghost dimmed toward `floor`, except where the leg is seen
-    /// right now (`seen_now`): the real trail shows there.
+    /// right now (`seen_now`, plus its glow margin): the real trail shows there.
+    // shortcut: parts revealed only by sparks circles still get a ghost over
+    // the real trail; upgrade if that shows.
     fn draw(
         &self,
         seen_now: &HashMap<GhostKey, (Vec2, Vec2)>,
@@ -438,8 +458,9 @@ impl Ghosts {
             let color = g.color.mix(&floor, GHOST_DIM);
             match seen_now.get(key) {
                 Some(&(lo, hi)) => {
-                    gizmos.line_2d(g.lo, lo, color);
-                    gizmos.line_2d(hi, g.hi, color);
+                    let grow = Vec2::splat(FOG_GLOW_RADIUS);
+                    gizmos.line_2d(g.lo, (lo - grow).max(g.lo), color);
+                    gizmos.line_2d((hi + grow).min(g.hi), g.hi, color);
                 }
                 None => gizmos.line_2d(g.lo, g.hi, color),
             }
@@ -521,7 +542,11 @@ impl Mask {
             .extend([base, base + 1, base + 2, base, base + 2, base + 3]);
     }
 
-    fn apply(self, mesh: &mut Mesh) {
+    fn apply(mut self, mesh: &mut Mesh) {
+        // A mesh with no vertices at all is not worth finding out about.
+        if self.idx.is_empty() {
+            self.rect(Vec2::ZERO, Vec2::ZERO);
+        }
         mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, self.pos);
         mesh.insert_indices(Indices::U32(self.idx));
     }

@@ -115,6 +115,25 @@ pub fn visible_parts(polygon: &[Vertex]) -> impl Iterator<Item = (usize, Vec2, V
         })
 }
 
+/// The part of the segment `a..b` inside the circle (`center`, `radius`), if any.
+pub fn clip_to_circle(a: Vec2, b: Vec2, center: Vec2, radius: f32) -> Option<(Vec2, Vec2)> {
+    let d = b - a;
+    let (f, len2) = (a - center, d.length_squared());
+    if len2 == 0.0 {
+        return (f.length_squared() <= radius * radius).then_some((a, a));
+    }
+    // Solve |f + t d|^2 = r^2 for t, keep the part within 0..=1.
+    let half_b = f.dot(d);
+    let disc = half_b * half_b - len2 * (f.length_squared() - radius * radius);
+    if disc < 0.0 {
+        return None;
+    }
+    let root = disc.sqrt();
+    let (t0, t1) = ((-half_b - root) / len2, (-half_b + root) / len2);
+    let (t0, t1) = (t0.max(0.0), t1.min(1.0));
+    (t0 <= t1).then(|| (a + d * t0, a + d * t1))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -180,5 +199,16 @@ mod tests {
         assert!(parts.iter().all(|p| p.0 == 0));
         let seen: f32 = parts.iter().map(|p| p.1.distance(p.2)).sum();
         assert!((seen - 100.0).abs() < 0.1, "{seen}");
+    }
+
+    #[test]
+    fn clip_keeps_the_part_inside_the_circle() {
+        let (a, b) = (Vec2::new(-100.0, 0.0), Vec2::new(100.0, 0.0));
+        let (p, q) = clip_to_circle(a, b, Vec2::ZERO, 10.0).unwrap();
+        assert!((p.x + 10.0).abs() < 1e-3 && (q.x - 10.0).abs() < 1e-3);
+        assert_eq!(clip_to_circle(a, b, Vec2::new(0.0, 50.0), 10.0), None);
+        // Ends inside stay put.
+        let inside = clip_to_circle(Vec2::ZERO, Vec2::new(5.0, 0.0), Vec2::ZERO, 10.0);
+        assert_eq!(inside, Some((Vec2::ZERO, Vec2::new(5.0, 0.0))));
     }
 }

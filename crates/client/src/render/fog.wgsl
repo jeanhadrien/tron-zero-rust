@@ -19,8 +19,12 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let p = in.world_position.xy;
     let cell = (p + arena.xy) / arena.z;
     let dist = abs(cell - round(cell)) * arena.z;
+    // Antialiased: one screen pixel of falloff around the line's edge.
+    let px = fwidth(p);
+    let d = min(dist.x, dist.y);
+    let w = max(px.x, px.y);
     let inside = abs(p.x) <= arena.x + arena.w && abs(p.y) <= arena.y + arena.w;
-    let line = select(0.0, 1.0, inside && min(dist.x, dist.y) <= arena.w * 0.5);
+    let line = select(0.0, 1.0 - smoothstep(arena.w * 0.5 - w, arena.w * 0.5 + w, d), inside);
     let color = mix(floor_color, grid_color, line * DIM);
     return vec4<f32>(color.rgb, 1.0 - seen);
 }
